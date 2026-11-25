@@ -8,7 +8,11 @@ public partial class OnboardingWindow : Window
 {
     private int _step = 1;
 
-    public OnboardingWindow() => InitializeComponent();
+    public OnboardingWindow()
+    {
+        InitializeComponent();
+        Localization.Loc.Translate(this);
+    }
 
     /// <summary>Choix de l'utilisateur, appliqués par la fenêtre principale.</summary>
     public bool FleetMode => UseFleet.IsChecked == true;
@@ -31,9 +35,9 @@ public partial class OnboardingWindow : Window
         Step1.Visibility = _step == 1 ? Visibility.Visible : Visibility.Collapsed;
         Step2.Visibility = _step == 2 ? Visibility.Visible : Visibility.Collapsed;
         Step3.Visibility = _step == 3 ? Visibility.Visible : Visibility.Collapsed;
-        StepLabel.Text = $"Étape {_step} sur 3";
+        StepLabel.Text = Localization.Loc.T($"Étape {_step} sur 3");
         BackButton.IsEnabled = _step > 1;
-        NextButton.Content = _step == 3 ? "Commencer" : "Suivant";
+        NextButton.Content = Localization.Loc.T(_step == 3 ? "Commencer" : "Suivant");
     }
 
     private void OnNext(object sender, RoutedEventArgs e)
@@ -42,7 +46,7 @@ public partial class OnboardingWindow : Window
             !ServerUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase) &&
             !ServerUrl.StartsWith("http://localhost", StringComparison.OrdinalIgnoreCase))
         {
-            MessageBox.Show(this, "L'adresse de la console doit commencer par https:// (connexion chiffrée).",
+            MessageBox.Show(this, Localization.Loc.T("L'adresse de la console doit commencer par https:// (connexion chiffrée)."),
                 "SpokaPilote", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }

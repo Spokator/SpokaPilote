@@ -8,6 +8,11 @@ public partial class App : Application
 {
     protected override void OnStartup(StartupEventArgs e)
     {
+        // Langue : préférence de l'utilisateur, « --lang en|fr » (captures), sinon langue de Windows.
+        var args = Environment.GetCommandLineArgs();
+        var langIndex = Array.IndexOf(args, "--lang");
+        var language = langIndex >= 0 && langIndex + 1 < args.Length ? args[langIndex + 1] : UiPreferences.Load().Language;
+        Localization.Loc.Initialize(language);
         DispatcherUnhandledException += OnUnhandled;
         base.OnStartup(e);
     }

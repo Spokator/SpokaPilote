@@ -522,6 +522,19 @@
                         <TextBlock Style="{StaticResource PageTitle}" Text="Paramètres" />
                         <TextBlock Style="{StaticResource PageSubtitle}"
                                    Text="Enregistrés dans %ProgramData%\SpokaPilote\settings.json : le même fichier peut être déployé sur tout le parc (GPO, Intune, script)." />
+                        <Border Style="{StaticResource Card}" Margin="0,0,0,16">
+                            <StackPanel>
+                                <TextBlock FontWeight="SemiBold" Text="Interface" Margin="0,0,0,8" />
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="Langue de l'interface" VerticalAlignment="Center" Margin="0,0,12,0" />
+                                    <ComboBox ItemsSource="{Binding LanguageChoices}" SelectedIndex="{Binding LanguageIndex}" Width="260"
+                                              AutomationProperties.Name="Langue de l'interface" />
+                                </StackPanel>
+                                <TextBlock Margin="0,8,0,0" Opacity="0.75" TextWrapping="Wrap" Text="{Binding LanguageNote, Mode=OneWay}" />
+                                <TextBlock Margin="0,8,0,0" Opacity="0.75" TextWrapping="Wrap"
+                                           Text="Raccourcis : F5 analyser · Ctrl+1 à Ctrl+8 changer d'onglet · F1 aide en ligne." />
+                            </StackPanel>
+                        </Border>
                         <Border Style="{StaticResource Card}">
                             <StackPanel>
                                 <TextBlock FontWeight="SemiBold" Text="Sources de pilotes" Margin="0,0,0,8" />

@@ -1,3 +1,4 @@
+using SpokaPilote.App.Localization;
 using SpokaPilote.Core.Install;
 using SpokaPilote.Core.Models;
 using SpokaPilote.Core.Printers;
@@ -18,12 +19,12 @@ public sealed class CandidateItem : ObservableObject
         _isSelected = candidate.BlockedReason is null && !candidate.IsInformational && candidate.Kind is CandidateKind.MissingDriver or CandidateKind.Update;
         if (candidate.BlockedReason is not null)
         {
-            _status = "⛔ Bloqué par la politique";
+            _status = Loc.T("⛔ Bloqué par la politique");
             _statusDetail = candidate.BlockedReason;
         }
         else if (candidate.IsInformational)
         {
-            _status = "🔗 Site officiel (manuel)";
+            _status = Loc.T("🔗 Site officiel (manuel)");
             _statusDetail = candidate.InfoUrl ?? "";
         }
     }
@@ -53,11 +54,11 @@ public sealed class CandidateItem : ObservableObject
     {
         Status = outcome.Status switch
         {
-            InstallStatus.Installed => outcome.RebootRequired ? "✓ Installé (redémarrage)" : "✓ Installé",
-            InstallStatus.NotApplicable => "= Déjà à jour",
-            InstallStatus.Skipped => "· Vérifié (simulation)",
-            InstallStatus.Blocked => "⛔ Bloqué",
-            _ => "✗ Échec",
+            InstallStatus.Installed => outcome.RebootRequired ? Loc.T("✓ Installé (redémarrage)") : Loc.T("✓ Installé"),
+            InstallStatus.NotApplicable => Loc.T("= Déjà à jour"),
+            InstallStatus.Skipped => Loc.T("· Vérifié (simulation)"),
+            InstallStatus.Blocked => Loc.T("⛔ Bloqué"),
+            _ => Loc.T("✗ Échec"),
         };
         StatusDetail = outcome.Message;
     }

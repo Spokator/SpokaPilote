@@ -15,14 +15,27 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        try
+        {
+            Localization.Loc.Translate(this);
+        }
+        catch (Exception ex)
+        {
+            // La traduction ne doit jamais empêcher l'application de s'ouvrir.
+            Core.Infrastructure.Log.Error("Traduction de l'interface", ex);
+            Core.Infrastructure.Log.Debug(ex.ToString());
+        }
         _vm = new MainViewModel();
         DataContext = _vm;
         ContentRendered += OnContentRendered;
         PreviewKeyDown += OnPreviewKeyDown;
         Closing += (_, _) =>
         {
-            _prefs.LastTab = Tabs.SelectedIndex;
-            _prefs.Save();
+            // Relecture : la langue a pu être changée dans les Paramètres pendant la session.
+            var prefs = UiPreferences.Load();
+            prefs.LastTab = Tabs.SelectedIndex;
+            prefs.OnboardingCompleted |= _prefs.OnboardingCompleted;
+            prefs.Save();
         };
     }
 

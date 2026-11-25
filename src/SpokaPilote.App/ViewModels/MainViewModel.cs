@@ -11,6 +11,7 @@ using SpokaPilote.Core.Models;
 using SpokaPilote.Core.Printers;
 using SpokaPilote.Core.Repository;
 using SpokaPilote.Core.Sources;
+using SpokaPilote.App.Localization;
 
 namespace SpokaPilote.App.ViewModels;
 
@@ -71,14 +72,14 @@ public sealed class MainViewModel : ObservableObject
 
     public string PolicySummary => LastScan?.Policy is { } p
         ? p.Summary + (p.Messages.Count > 0 ? "\n" + string.Join("\n", p.Messages) : "")
-        : "Politique : chargée à la prochaine analyse.";
+        : Loc.T("Politique : chargée à la prochaine analyse.");
     public int BlockedCount => LastScan?.Candidates.Count(c => c.BlockedReason is not null) ?? 0;
 
     // ------------------------------------------------------------------ packs officiels des constructeurs
 
     private string _packModel = "";
     public string PackModel { get => _packModel; set => Set(ref _packModel, value); }
-    public string[] PackOsChoices { get; } = { "Windows 11", "Windows 10" };
+    public string[] PackOsChoices { get; } = { Loc.T("Windows 11"), Loc.T("Windows 10") };
     private int _packOs;
     public int PackOs { get => _packOs; set => Set(ref _packOs, value); }
     public ObservableCollection<DriverPackMatch> DriverPacks { get; } = new();
@@ -147,7 +148,7 @@ public sealed class MainViewModel : ObservableObject
 
     private async Task TestServerAsync()
     {
-        if (!Core.Online.ServerClient.IsConfigured(Settings)) { ServerStatusText = "Aucune adresse de console renseignée."; return; }
+        if (!Core.Online.ServerClient.IsConfigured(Settings)) { ServerStatusText = Loc.T("Aucune adresse de console renseignée."); return; }
         try
         {
             var status = await new Core.Online.ServerClient(Settings).TestAsync();
@@ -229,9 +230,9 @@ public sealed class MainViewModel : ObservableObject
 
     // ------------------------------------------------------------------ maintenance planifiée
 
-    public string[] ScheduleTriggers { get; } = { "Chaque semaine", "Chaque jour", "Au démarrage du poste" };
-    public string[] ScheduleDays { get; } = { "lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche" };
-    public string[] ScheduleModes { get; } = { "Pilotes manquants seulement", "Pilotes manquants + mises à jour", "Analyse seule (rapport)" };
+    public string[] ScheduleTriggers { get; } = new[] { "Chaque semaine", "Chaque jour", "Au démarrage du poste" }.Select(Loc.T).ToArray();
+    public string[] ScheduleDays { get; } = new[] { "lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche" }.Select(Loc.T).ToArray();
+    public string[] ScheduleModes { get; } = new[] { "Pilotes manquants seulement", "Pilotes manquants + mises à jour", "Analyse seule (rapport)" }.Select(Loc.T).ToArray();
 
     private int _scheduleTrigger;
     public int ScheduleTrigger { get => _scheduleTrigger; set => Set(ref _scheduleTrigger, value); }
@@ -243,7 +244,7 @@ public sealed class MainViewModel : ObservableObject
     public int ScheduleMode { get => _scheduleMode; set => Set(ref _scheduleMode, value); }
     private string _scheduleOutputDir = "";
     public string ScheduleOutputDir { get => _scheduleOutputDir; set => Set(ref _scheduleOutputDir, value); }
-    private string _scheduleStatus = "État : vérification...";
+    private string _scheduleStatus = Loc.T("État : vérification...");
     public string ScheduleStatusText { get => _scheduleStatus; private set => Set(ref _scheduleStatus, value); }
     private bool _scheduleExists;
     public bool ScheduleExists { get => _scheduleExists; private set => Set(ref _scheduleExists, value); }
@@ -261,7 +262,7 @@ public sealed class MainViewModel : ObservableObject
             var s = await MaintenanceScheduler.StatusAsync();
             ScheduleExists = s.Exists;
             ScheduleStatusText = !s.Exists
-                ? "État : maintenance automatique désactivée."
+                ? Loc.T("État : maintenance automatique désactivée.")
                 : $"État : active — {s.TriggerSummary}" +
                   $"\nProchaine exécution : {(s.NextRun is { } n ? n.ToString("dddd dd/MM/yyyy HH:mm") : "—")}" +
                   $" · dernière : {(s.LastRun is { } l ? $"{l:dd/MM/yyyy HH:mm} (code {s.LastResult})" : "jamais")}";
@@ -367,7 +368,7 @@ public sealed class MainViewModel : ObservableObject
         get => _selectedIntervention;
         set { Set(ref _selectedIntervention, value); OnPropertyChanged(nameof(SelectedInterventionDetails)); }
     }
-    public string SelectedInterventionDetails => SelectedIntervention is null ? "Sélectionnez une intervention."
+    public string SelectedInterventionDetails => SelectedIntervention is null ? Loc.T("Sélectionnez une intervention.")
         : string.Join("\n", SelectedIntervention.Items.Select(i => $"{StatusIcon(i.Status)} {i.Title} {i.Version} — {i.Message}"))
           + (SelectedIntervention.AddedDriverPackages.Count > 0 ? $"\n\nPaquets ajoutés : {string.Join(", ", SelectedIntervention.AddedDriverPackages)}" : "")
           + (SelectedIntervention.BackupFolder is null ? "" : $"\nSauvegarde : {SelectedIntervention.BackupFolder}")
@@ -497,6 +498,25 @@ public sealed class MainViewModel : ObservableObject
         return Task.CompletedTask;
     }
 
+    // ------------------------------------------------------------------ langue de l'interface
+
+    public string[] LanguageChoices { get; } = { Loc.T("Automatique (langue de Windows)"), "Français", "English" };
+    private int _languageIndex = UiPreferences.Load().Language switch { "fr" => 1, "en" => 2, _ => 0 };
+    private string _languageNote = "";
+    public string LanguageNote { get => _languageNote; private set => Set(ref _languageNote, value); }
+    public int LanguageIndex
+    {
+        get => _languageIndex;
+        set
+        {
+            if (!Set(ref _languageIndex, value)) return;
+            var prefs = UiPreferences.Load();
+            prefs.Language = value switch { 1 => "fr", 2 => "en", _ => null };
+            prefs.Save();
+            LanguageNote = Loc.T("La nouvelle langue s'appliquera au prochain démarrage de SpokaPilote.");
+        }
+    }
+
     /// <summary>Configuration « parc » saisie dans l'assistant de premier lancement.</summary>
     public void ApplyFleetSetup(string repository, string serverUrl, string serverToken)
     {
@@ -525,7 +545,7 @@ public sealed class MainViewModel : ObservableObject
     public bool IsBusy { get => _isBusy; private set { if (Set(ref _isBusy, value)) OnPropertyChanged(nameof(IsIdle)); } }
     public bool IsIdle => !IsBusy;
 
-    private string _status = "Prêt. Lancez une analyse pour inventorier ce poste.";
+    private string _status = Loc.T("Prêt. Lancez une analyse pour inventorier ce poste.");
     public string Status { get => _status; private set => Set(ref _status, value); }
 
     private double _progress;
@@ -566,10 +586,10 @@ public sealed class MainViewModel : ObservableObject
     {
         get
         {
-            if (LastScan is null) return "Machine non analysée";
+            if (LastScan is null) return Loc.T("Machine non analysée");
             var s = LastScan.System;
             var parts = new List<string> { $"{s.OsCaption} {s.OsDisplayVersion} ({s.OsVersion}, {s.Architecture})" };
-            if (s.SerialNumber is not null) parts.Add($"N° de série {s.SerialNumber}");
+            if (s.SerialNumber is not null) parts.Add(Loc.F("N° de série {0}", s.SerialNumber));
             if (s.BiosVersion is not null) parts.Add($"BIOS {s.BiosVersion}");
             return string.Join("  ·  ", parts);
         }
@@ -586,14 +606,14 @@ public sealed class MainViewModel : ObservableObject
     {
         get
         {
-            if (LastScan is null) return "Analysez ce poste pour savoir ce qui manque.";
+            if (LastScan is null) return Loc.T("Analysez ce poste pour savoir ce qui manque.");
             var missing = LastScan.Candidates.Count(c => c.Kind == CandidateKind.MissingDriver);
             var updates = LastScan.Candidates.Count(c => c.Kind == CandidateKind.Update);
-            if (missing == 0 && updates == 0 && !LastScan.UnresolvedDevices.Any()) return "Tout est en ordre : aucun pilote manquant.";
+            if (missing == 0 && updates == 0 && !LastScan.UnresolvedDevices.Any()) return Loc.T("Tout est en ordre : aucun pilote manquant.");
             var parts = new List<string>();
-            if (missing > 0) parts.Add($"{missing} pilote(s) manquant(s)");
-            if (updates > 0) parts.Add($"{updates} mise(s) à jour");
-            if (LastScan.UnresolvedDevices.Any()) parts.Add($"{LastScan.UnresolvedDevices.Count()} périphérique(s) sans solution automatique");
+            if (missing > 0) parts.Add(Loc.F("{0} pilote(s) manquant(s)", missing));
+            if (updates > 0) parts.Add(Loc.F("{0} mise(s) à jour", updates));
+            if (LastScan.UnresolvedDevices.Any()) parts.Add(Loc.F("{0} périphérique(s) sans solution automatique", LastScan.UnresolvedDevices.Count()));
             return string.Join(", ", parts) + ".";
         }
     }
@@ -627,7 +647,7 @@ public sealed class MainViewModel : ObservableObject
 
     private async Task ScanAsync()
     {
-        await RunBusyAsync("Analyse en cours...", async ct =>
+        await RunBusyAsync(Loc.T("Analyse en cours..."), async ct =>
         {
             var engine = new DriverScanEngine(Settings);
             var scan = await engine.ScanAsync(new ScanOptions { DeepScan = DeepScan },
@@ -642,7 +662,7 @@ public sealed class MainViewModel : ObservableObject
             Candidates.Clear();
             foreach (var c in scan.Candidates) Candidates.Add(new CandidateItem(c));
             RefreshDevices();
-            Status = $"Analyse terminée en {scan.Duration.TotalSeconds:0} s — {HealthHeadline}";
+            Status = Loc.F("Analyse terminée en {0:0} s — {1}", scan.Duration.TotalSeconds, HealthHeadline);
             await UploadToServerAsync(scan, null, ct);
         });
     }
@@ -952,7 +972,7 @@ public sealed class MainViewModel : ObservableObject
         }
         catch (OperationCanceledException)
         {
-            Status = "Opération annulée.";
+            Status = Loc.T("Opération annulée.");
         }
         catch (Exception ex)
         {

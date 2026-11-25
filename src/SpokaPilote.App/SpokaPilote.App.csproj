@@ -16,5 +16,6 @@
   </ItemGroup>
   <ItemGroup>
     <Resource Include="Assets\SpokaPilote.ico" />
+    <EmbeddedResource Include="Localization\en.json" />
   </ItemGroup>
 </Project>
