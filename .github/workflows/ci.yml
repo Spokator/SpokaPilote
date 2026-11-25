@@ -28,11 +28,11 @@ jobs:
       - name: Test
         env:
           SPOKAPILOTE_HOME: ${{ runner.temp }}\spokapilote
-        run: dotnet test tests/SpokaPilote.Core.Tests -c Release --no-build --logger "trx;LogFileName=results.trx"
+        run: dotnet test SpokaPilote.sln -c Release --no-build --logger "trx;LogFilePrefix=results"
 
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: test-results
-          path: tests/SpokaPilote.Core.Tests/TestResults/*.trx
+          path: tests/**/TestResults/*.trx
