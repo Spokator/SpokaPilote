@@ -1,4 +1,4 @@
-﻿# Publie SpokaPilote (interface + ligne de commande) en autonome dans .\dist\app (aucune installation de .NET requise).
+﻿# Publie SpokaPilote (interface + ligne de commande) en autonome dans .\dist\app-<arch> (aucune installation de .NET requise).
 param(
     [string]$Configuration = "Release",
     [ValidateSet("x64", "arm64")] [string]$Arch = "x64",
@@ -16,7 +16,7 @@ if (-not $SkipTests) {
     Remove-Item Env:\SPOKAPILOTE_HOME
 }
 
-$out = Join-Path $root "dist\app"
+$out = Join-Path $root "dist\app-$Arch"
 if (Test-Path $out) { Remove-Item $out -Recurse -Force }
 
 # Les deux exécutables partagent le même runtime .NET dans un seul dossier (installeur plus léger).
@@ -28,6 +28,12 @@ foreach ($project in "src\SpokaPilote.App\SpokaPilote.App.csproj", "src\SpokaPil
 # Contrôles : deux projets publiés dans le même dossier ne doivent jamais s'écraser (Windows ignore la casse).
 foreach ($required in "SpokaPilote.App.exe", "SpokaPilote.App.dll", "spokapilote.exe", "spokapilote.dll", "SpokaPilote.Core.dll") {
     if (-not (Test-Path (Join-Path $out $required))) { throw "Fichier attendu absent après publication : $required" }
+}
+# Les contrôles d'exécution ne sont possibles que pour l'architecture de ce poste (un PC x64 n'exécute pas l'ARM64).
+$hostArch = if ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq 'Arm64') { "arm64" } else { "x64" }
+if ($Arch -ne $hostArch) {
+    Write-Host "OK -> $out ($Arch : contrôles d'exécution impossibles sur ce poste $hostArch)" -ForegroundColor Yellow
+    return
 }
 $cliVersion = & (Join-Path $out "spokapilote.exe") version
 if ($LASTEXITCODE -ne 0) { throw "spokapilote.exe ne démarre pas." }

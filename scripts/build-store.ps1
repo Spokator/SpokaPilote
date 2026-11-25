@@ -27,7 +27,7 @@ $distStore = Join-Path $root "dist-store"
 $layout = Join-Path $distStore "layout-$Arch"
 if (Test-Path $layout) { Remove-Item $layout -Recurse -Force }
 New-Item -ItemType Directory -Force $layout | Out-Null
-Copy-Item "$root\dist\app\*" $layout -Recurse
+Copy-Item "$root\dist\app-$Arch\*" $layout -Recurse
 
 # 2. Manifeste et visuels.
 Copy-Item (Join-Path $root "packaging\Assets") (Join-Path $layout "Assets") -Recurse -Force
@@ -54,7 +54,7 @@ if (-not $makeappx) {
 }
 $signtool = Join-Path $makeappx.DirectoryName "signtool.exe"
 
-$msix = Join-Path $distStore "SpokaPilote-$version.msix"
+$msix = Join-Path $distStore "SpokaPilote-$version-$Arch.msix"
 & $makeappx.FullName pack /d $layout /p $msix /o /nv | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "makeappx a échoué." }
 

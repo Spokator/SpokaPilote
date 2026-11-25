@@ -25,18 +25,19 @@ if ($exists) { throw "La Release $tag existe déjà : augmentez la version dans 
 
 & "$PSScriptRoot\build-installer.ps1" -SkipTests:$SkipTests
 $setup = Join-Path $root "dist\SpokaPilote-Setup-$version.exe"
-if (-not (Test-Path $setup)) { throw "Installeur introuvable : $setup" }
+$setupArm = Join-Path $root "dist\SpokaPilote-Setup-$version-arm64.exe"
+foreach ($f in $setup, $setupArm) { if (-not (Test-Path $f)) { throw "Installeur introuvable : $f" } }
 
 # Notes : la section du CHANGELOG correspondant à la version.
 $changelog = Get-Content "$root\CHANGELOG.md" -Raw -Encoding UTF8
 $section = [regex]::Match($changelog, "(?ms)^## $([regex]::Escape($version))\b.*?\r?\n(.*?)(?=^## |\z)").Groups[1].Value.Trim()
 if (-not $section) { throw "Aucune section « ## $version » dans CHANGELOG.md." }
 $notes = Join-Path $env:TEMP "spokapilote-notes-$version.md"
-"## Nouveautés de la $version`n`n$section`n`n**Installation :** téléchargez ``SpokaPilote-Setup-$version.exe`` ci-dessous et lancez-le. Pour un parc : ``SpokaPilote-Setup-$version.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART``." |
+"## Nouveautés de la $version`n`n$section`n`n**Installation :** téléchargez ``SpokaPilote-Setup-$version.exe`` (PC Intel/AMD) ou ``SpokaPilote-Setup-$version-arm64.exe`` (PC ARM64 : Snapdragon, Surface) ci-dessous et lancez-le. Pour un parc : ``SpokaPilote-Setup-$version.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART``." |
     Set-Content $notes -Encoding UTF8
 
 git push origin HEAD
-$ghArgs = @("release", "create", $tag, $setup, "--title", "SpokaPilote $version", "--notes-file", $notes)
+$ghArgs = @("release", "create", $tag, $setup, $setupArm, "--title", "SpokaPilote $version", "--notes-file", $notes)
 if ($Draft) { $ghArgs += "--draft" }
 gh @ghArgs
 if ($LASTEXITCODE -ne 0) { throw "La création de la Release a échoué." }

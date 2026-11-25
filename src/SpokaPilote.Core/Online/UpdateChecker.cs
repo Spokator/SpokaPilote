@@ -43,7 +43,13 @@ public static class UpdateChecker
         return Parse(doc.RootElement, current);
     }
 
-    internal static UpdateInfo? Parse(JsonElement release, Version current)
+    /// <summary>« arm64 » ou « x64 » : l'installeur publié pour cette architecture.</summary>
+    public static string HostArchitecture =>
+        System.Runtime.InteropServices.RuntimeInformation.OSArchitecture == System.Runtime.InteropServices.Architecture.Arm64 ? "arm64" : "x64";
+
+    internal static UpdateInfo? Parse(JsonElement release, Version current) => Parse(release, current, HostArchitecture);
+
+    internal static UpdateInfo? Parse(JsonElement release, Version current, string architecture)
     {
         if (release.TryGetProperty("draft", out var draft) && draft.GetBoolean()) return null;
         if (release.TryGetProperty("prerelease", out var pre) && pre.GetBoolean()) return null;
@@ -58,7 +64,9 @@ public static class UpdateChecker
             foreach (var asset in assets.EnumerateArray())
             {
                 var name = asset.GetProperty("name").GetString() ?? "";
-                if (name.Contains("Setup", StringComparison.OrdinalIgnoreCase) && name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+                var isArm = name.Contains("arm64", StringComparison.OrdinalIgnoreCase);
+                if (name.Contains("Setup", StringComparison.OrdinalIgnoreCase) && name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
+                    && isArm == (architecture == "arm64"))
                 {
                     url = asset.GetProperty("browser_download_url").GetString();
                     if (asset.TryGetProperty("size", out var s) && s.ValueKind == JsonValueKind.Number) size = s.GetInt64();

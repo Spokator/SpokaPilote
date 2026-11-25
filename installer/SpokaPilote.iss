@@ -4,6 +4,16 @@
 #ifndef AppVersion
   #define AppVersion "0.1.0"
 #endif
+#ifndef AppArch
+  #define AppArch "x64"
+#endif
+#if AppArch == "arm64"
+  #define SetupSuffix "-arm64"
+  #define ArchAllowed "arm64"
+#else
+  #define SetupSuffix ""
+  #define ArchAllowed "x64compatible"
+#endif
 #define AppName "SpokaPilote"
 #define AppExe "SpokaPilote.App.exe"
 #define CliExe "spokapilote.exe"
@@ -24,11 +34,12 @@ DefaultDirName={autopf}\{#AppName}
 DisableProgramGroupPage=yes
 DisableDirPage=auto
 DisableWelcomePage=no
-ArchitecturesAllowed=x64compatible
-ArchitecturesInstallIn64BitMode=x64compatible
+; x64 : PC Intel/AMD ; arm64 : PC Snapdragon / Surface Pro X et suivantes (installeur distinct).
+ArchitecturesAllowed={#ArchAllowed}
+ArchitecturesInstallIn64BitMode={#ArchAllowed}
 MinVersion=10.0.17763
 OutputDir=..\dist
-OutputBaseFilename={#AppName}-Setup-{#AppVersion}
+OutputBaseFilename={#AppName}-Setup-{#AppVersion}{#SetupSuffix}
 SetupIconFile=..\src\SpokaPilote.App\Assets\SpokaPilote.ico
 UninstallDisplayIcon={app}\{#AppExe}
 UninstallDisplayName={#AppName}
@@ -60,7 +71,7 @@ Name: "desktopicon"; Description: "{cm:DesktopIcon}"; GroupDescription: "{cm:Opt
 Name: "addtopath"; Description: "{cm:AddToPath}"; GroupDescription: "{cm:Options}"
 
 [Files]
-Source: "..\dist\app\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\dist\app-{#AppArch}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\README.md"; DestDir: "{app}"; DestName: "LISEZ-MOI.md"; Flags: ignoreversion
 
 [Icons]
