@@ -33,4 +33,12 @@ $cliVersion = & (Join-Path $out "spokapilote.exe") version
 if ($LASTEXITCODE -ne 0) { throw "spokapilote.exe ne démarre pas." }
 $gui = [System.Diagnostics.FileVersionInfo]::GetVersionInfo((Join-Path $out "SpokaPilote.App.exe"))
 if ($gui.InternalName -notlike "SpokaPilote.App*") { throw "SpokaPilote.App.exe n'est pas l'interface graphique ($($gui.InternalName))." }
-Write-Host "OK -> $out (CLI $cliVersion)" -ForegroundColor Green
+# Contrôle de l'interface : elle doit s'ouvrir, afficher chaque onglet et se fermer sans erreur.
+$shots = Join-Path $env:TEMP "spokapilote-smoke"
+Remove-Item $shots -Recurse -Force -ErrorAction SilentlyContinue
+$ui = Start-Process (Join-Path $out "SpokaPilote.App.exe") -ArgumentList "--screenshot `"$shots`"" -PassThru
+if (-not $ui.WaitForExit(120000)) { $ui.Kill(); throw "L'interface ne s'est pas fermée (fenêtre d'erreur ?)." }
+if ($ui.ExitCode -ne 0) { throw "L'interface a rencontré une erreur (code $($ui.ExitCode)) : voir %ProgramData%\SpokaPilote\Logs." }
+$tabs = (Get-ChildItem $shots -Filter *.png).Count
+if ($tabs -lt 8) { throw "L'interface n'a affiché que $tabs onglet(s) sur 8." }
+Write-Host "OK -> $out (CLI $cliVersion, interface : $tabs onglets)" -ForegroundColor Green

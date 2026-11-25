@@ -1,5 +1,10 @@
 # Journal des versions
 
+## 1.0.1 — 25/11/2026
+
+- Interface : corrige une erreur de la barre de progression qui pouvait afficher « Erreur inattendue ».
+- Contrôle automatique de l'interface avant chaque publication (tous les onglets s'ouvrent sans erreur).
+
 ## 1.0.0 — 25/11/2026
 
 Première version complète de SpokaPilote.

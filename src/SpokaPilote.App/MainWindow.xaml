@@ -506,7 +506,7 @@
                 <Button DockPanel.Dock="Right" Content="Annuler" Command="{Binding CancelCommand}"
                         Visibility="{Binding IsBusy, Converter={StaticResource BoolToVisibility}}" />
                 <ProgressBar DockPanel.Dock="Right" Width="220" Height="6" Margin="12,0" VerticalAlignment="Center"
-                             Value="{Binding Progress}" IsIndeterminate="{Binding ProgressIndeterminate}"
+                             Value="{Binding Progress, Mode=OneWay}" IsIndeterminate="{Binding ProgressIndeterminate, Mode=OneWay}"
                              Visibility="{Binding IsBusy, Converter={StaticResource BoolToVisibility}}" />
                 <TextBlock DockPanel.Dock="Right" Margin="12,0" VerticalAlignment="Center" FontWeight="SemiBold"
                            Text="Redémarrage nécessaire" Visibility="{Binding RebootPending, Converter={StaticResource BoolToVisibility}}" />
