@@ -14,11 +14,20 @@ public sealed class CandidateItem : ObservableObject
     {
         Candidate = candidate;
         // Sélection par défaut : pilotes manquants et mises à jour ciblées ; optionnels et firmware à cocher manuellement.
-        _isSelected = candidate.Kind is CandidateKind.MissingDriver or CandidateKind.Update;
+        // Un pilote bloqué par la politique n'est jamais sélectionnable.
+        _isSelected = candidate.BlockedReason is null && candidate.Kind is CandidateKind.MissingDriver or CandidateKind.Update;
+        if (candidate.BlockedReason is not null)
+        {
+            _status = "⛔ Bloqué par la politique";
+            _statusDetail = candidate.BlockedReason;
+        }
     }
 
+    public bool IsBlocked => Candidate.BlockedReason is not null;
+    public bool IsSelectable => !IsBlocked;
+
     public DriverCandidate Candidate { get; }
-    public bool IsSelected { get => _isSelected; set => Set(ref _isSelected, value); }
+    public bool IsSelected { get => _isSelected; set => Set(ref _isSelected, value && !IsBlocked); }
     public string Kind => Candidate.KindLabel;
     public string Title => Candidate.Title;
     public string Version => Candidate.Version ?? "";
