@@ -15,7 +15,13 @@ $version = ($props.Project.PropertyGroup | Where-Object { $_.Version } | Select-
 $tag = "v$version"
 
 if (git status --porcelain) { throw "Des modifications ne sont pas commitées : commitez avant de publier." }
-if (gh release view $tag 2>$null) { throw "La Release $tag existe déjà : augmentez la version dans Directory.Build.props." }
+# Windows PowerShell 5.1 transforme le stderr d'un exécutable en erreur : on vérifie via le code de sortie.
+$previous = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+gh release view $tag *> $null
+$exists = $LASTEXITCODE -eq 0
+$ErrorActionPreference = $previous
+if ($exists) { throw "La Release $tag existe déjà : augmentez la version dans Directory.Build.props." }
 
 & "$PSScriptRoot\build-installer.ps1" -SkipTests:$SkipTests
 $setup = Join-Path $root "dist\SpokaPilote-Setup-$version.exe"
