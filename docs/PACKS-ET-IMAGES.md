@@ -119,6 +119,10 @@ Suivi : `spokapilote fleet-report \\srv\rapports` liste les postes qui ont encor
 
 ## 2. Injection de pilotes dans une image Windows
 
+> **Fonction expérimentale (v2.0).** Le montage, le contrôle des pilotes et le démontage sont validés ; l'ajout
+> effectif des pilotes (`/Add-Driver` puis enregistrement) n'a pas encore été validé sur une vraie image `install.wim`.
+> Travaillez toujours sur une **copie** de l'image et testez l'installation obtenue avant de la diffuser.
+
 Nécessite une **console administrateur** (DISM). Les commandes sont lancées avec `/English` : les messages de DISM
 ne dépendent pas de la langue de Windows (les analyseurs comprennent aussi le français).
 

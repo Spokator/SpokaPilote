@@ -1,5 +1,38 @@
 # Journal des versions
 
+## 2.0.0 — 26/11/2026
+
+SpokaPilote passe du poste au parc.
+
+**Parc**
+- **Console centrale « SpokaPilote Server »** (Docker, image `ghcr.io/spokator/spokapilote-server`) : les postes y
+  envoient leurs rapports après chaque analyse ou installation ; vue d'ensemble, postes à traiter, matériel sans pilote
+  sur tout le parc (export CSV), fiche détaillée et historique de chaque poste, postes non vus depuis 7 jours,
+  politique et profil d'imprimantes éditables en ligne. Jetons d'administration et d'enrôlement, conteneur non root
+  en lecture seule. `spokapilote server status|upload`.
+- **Politique de pilotes** (`driver-policy.json`, depuis la console, un partage ou une URL) : bloquer un pilote, une
+  version ou un matériel, figer une version, limiter les sources, délai de recul avant une nouvelle version. Un pilote
+  bloqué reste visible avec son motif et n'est jamais installé. Liste de référence intégrée (avis Microsoft sur des
+  pilotes Intel Smart Sound provoquant des écrans bleus), rafraîchie depuis GitHub. `spokapilote policy show|check|test|init`.
+- **Packs officiels des constructeurs** Dell, HP et Lenovo : le pack de déploiement d'un modèle, catalogues signés
+  vérifiés, téléchargé, extrait et rangé dans le dépôt (`spokapilote driverpack list|download`, et dans l'interface).
+- **Profils d'imprimantes** : exporter les imprimantes réseau d'un poste, les déployer sur les autres avec conditions
+  par sous-réseau ou nom de poste ; idempotent (créée / à jour / mise à jour) ; `printers export-profile|deploy|remove`.
+- **Maintenance planifiée** : tâche Windows en compte SYSTEM (hebdomadaire, quotidienne ou au démarrage, délai
+  aléatoire pour étaler le parc) : pilotes manquants, mises à jour ou analyse seule, dépôt des rapports, profil
+  d'imprimantes. `spokapilote schedule enable|status|run-now|disable`.
+- **Injection de pilotes dans une image Windows** (expérimental) : `install.wim` ou Windows hors ligne, avec contrôle
+  de signature et d'architecture de chaque pilote. `spokapilote image info|inject|cleanup`.
+
+**Poste**
+- **Pilotes graphiques** : NVIDIA entièrement automatique (service officiel, branche Studio par défaut ou Game Ready,
+  pilote graphique seul sans NVIDIA App, signature NVIDIA vérifiée) ; Intel et AMD : lien vers la page officielle.
+- **ARM64** : installeur dédié pour les PC Snapdragon et Surface ; la mise à jour automatique choisit le bon installeur.
+- Correction : un pilote dont le catalogue de signature n'est déclaré que pour son architecture (ex. MediaTek) n'est
+  plus refusé à tort.
+- Interface : pilotes bloqués et liens officiels non sélectionnables, résumé de la politique, packs constructeur,
+  profils d'imprimantes, maintenance planifiée, console centrale (test de connexion, envoi automatique des rapports).
+
 ## 1.0.1 — 25/11/2026
 
 - Interface : corrige une erreur de la barre de progression qui pouvait afficher « Erreur inattendue ».
