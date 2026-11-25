@@ -190,6 +190,16 @@
                             <DataGridTextColumn Header="Source" Binding="{Binding Source}" Width="150" IsReadOnly="True" />
                             <DataGridTextColumn Header="Taille" Binding="{Binding Size}" Width="70" IsReadOnly="True" />
                             <DataGridTextColumn Header="Périphérique(s)" Binding="{Binding Devices}" Width="1.5*" IsReadOnly="True" />
+                            <DataGridTemplateColumn Header="" Width="70" IsReadOnly="True">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <Button Content="Détails" Padding="6,2" FontSize="12" ToolTip="{Binding InfoUrl}"
+                                                Command="{Binding DataContext.OpenUrlCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                                CommandParameter="{Binding InfoUrl}"
+                                                Visibility="{Binding HasInfoUrl, Converter={StaticResource BoolToVisibility}}" />
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
                             <DataGridTemplateColumn Header="État" Width="1.5*" IsReadOnly="True">
                                 <DataGridTemplateColumn.CellTemplate>
                                     <DataTemplate>
@@ -492,6 +502,14 @@
                                 <CheckBox Content="Interroger Windows Update directement même si le poste est géré par WSUS" IsChecked="{Binding Settings.WindowsUpdateBypassWsus}" Margin="24,4,0,4" />
                                 <CheckBox Content="Microsoft Update Catalog (recherche par identifiant matériel)" IsChecked="{Binding Settings.UseMicrosoftCatalog}" Margin="0,4" />
                                 <CheckBox Content="Catalogues officiels des constructeurs (Dell, HP, Lenovo)" IsChecked="{Binding Settings.UseOemCatalogs}" Margin="0,4" />
+                                <CheckBox Content="Pilotes graphiques des fabricants (NVIDIA automatique ; Intel et AMD : lien officiel)" IsChecked="{Binding Settings.UseGpuVendorSources}" Margin="0,4" />
+                                <StackPanel Orientation="Horizontal" Margin="24,4,0,4">
+                                    <TextBlock Text="Branche NVIDIA :" VerticalAlignment="Center" Margin="0,0,8,0" />
+                                    <ComboBox SelectedValue="{Binding Settings.NvidiaBranch}" SelectedValuePath="Tag" Width="300">
+                                        <ComboBoxItem Tag="studio" Content="Studio (stable, recommandé pour un parc)" />
+                                        <ComboBoxItem Tag="gameready" Content="Game Ready (la plus récente)" />
+                                    </ComboBox>
+                                </StackPanel>
                                 <CheckBox Content="Proposer aussi les mises à jour de BIOS et de firmware" IsChecked="{Binding Settings.IncludeBiosAndFirmware}" Margin="0,4" />
                             </StackPanel>
                         </Border>
