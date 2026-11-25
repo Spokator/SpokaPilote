@@ -1,6 +1,6 @@
 ﻿# Construit les installeurs Windows :
 #   dist\SpokaPilote-Setup-<version>.exe        (PC x64 : Intel / AMD)
-#   dist\SpokaPilote-Setup-<version>-arm64.exe  (PC ARM64 : Snapdragon, Surface)
+#   dist\SpokaPilote-Installer-<version>-arm64.exe  (PC ARM64 : Snapdragon, Surface)
 param(
     [ValidateSet("x64", "arm64", "all")] [string]$Arch = "all",
     [switch]$SkipTests
@@ -37,5 +37,5 @@ foreach ($a in $archs) {
     & $iscc "/DAppVersion=$version" "/DAppArch=$a" /Qp "$root\installer\SpokaPilote.iss"
     if ($LASTEXITCODE -ne 0) { throw "La compilation de l'installeur $a a échoué." }
     $suffix = if ($a -eq "arm64") { "-arm64" } else { "" }
-    Write-Host "OK -> $root\dist\SpokaPilote-Setup-$version$suffix.exe" -ForegroundColor Green
+    $kind = if ($a -eq "arm64") { "Installer" } else { "Setup" }; Write-Host "OK -> $root\dist\SpokaPilote-$kind-$version$suffix.exe" -ForegroundColor Green
 }

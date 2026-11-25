@@ -43,6 +43,14 @@ public class V1FeatureTests
         var release = JsonDocument.Parse(json).RootElement;
         Assert.Equal("https://github.com/a/x64.exe", UpdateChecker.Parse(release, new Version(1, 0), "x64")!.DownloadUrl);
         Assert.Equal("https://github.com/a/arm.exe", UpdateChecker.Parse(release, new Version(1, 0), "arm64")!.DownloadUrl);
+        // Nom réellement publié pour ARM64 (sans « Setup », pour ne pas piéger les clients 1.0.x).
+        var published = JsonDocument.Parse("""
+            {"tag_name":"v2.0.1","draft":false,"prerelease":false,"assets":[
+              {"name":"SpokaPilote-Installer-2.0.1-arm64.exe","browser_download_url":"https://github.com/a/arm.exe","size":2},
+              {"name":"SpokaPilote-Setup-2.0.1.exe","browser_download_url":"https://github.com/a/x64.exe","size":1}]}
+            """).RootElement;
+        Assert.Equal("https://github.com/a/arm.exe", UpdateChecker.Parse(published, new Version(1, 0), "arm64")!.DownloadUrl);
+        Assert.Equal("https://github.com/a/x64.exe", UpdateChecker.Parse(published, new Version(1, 0), "x64")!.DownloadUrl);
         // Release sans installeur ARM64 : pas de mise à jour proposée à un PC ARM64 (plutôt que d'installer du x64).
         Assert.Null(UpdateChecker.Parse(Release("v2.0.0"), new Version(1, 0), "arm64"));
     }

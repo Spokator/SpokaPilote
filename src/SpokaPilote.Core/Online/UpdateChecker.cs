@@ -65,8 +65,11 @@ public static class UpdateChecker
             {
                 var name = asset.GetProperty("name").GetString() ?? "";
                 var isArm = name.Contains("arm64", StringComparison.OrdinalIgnoreCase);
-                if (name.Contains("Setup", StringComparison.OrdinalIgnoreCase) && name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
-                    && isArm == (architecture == "arm64"))
+                // x64 : « SpokaPilote-Setup-X.exe » ; ARM64 : « SpokaPilote-Installer-X-arm64.exe ». L'installeur ARM64 ne
+                // contient volontairement pas « Setup » : les versions 1.0.x prennent le premier « Setup*.exe » venu.
+                var isInstaller = name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) &&
+                                  (name.Contains("Setup", StringComparison.OrdinalIgnoreCase) || name.Contains("Installer", StringComparison.OrdinalIgnoreCase));
+                if (isInstaller && isArm == (architecture == "arm64"))
                 {
                     url = asset.GetProperty("browser_download_url").GetString();
                     if (asset.TryGetProperty("size", out var s) && s.ValueKind == JsonValueKind.Number) size = s.GetInt64();

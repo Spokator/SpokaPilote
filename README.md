@@ -1,4 +1,4 @@
-# SpokaPilote
+﻿# SpokaPilote
 
 **Les bons pilotes, pour tout le poste et les imprimantes d'entreprise, depuis les sources officielles uniquement — et le suivi de tout le parc.**
 
@@ -60,7 +60,7 @@ Une chaîne de contrôle stricte, **non désactivable** :
 
 ### Installation
 Téléchargez l'installeur depuis les [Releases](https://github.com/Spokator/SpokaPilote/releases/latest) :
-`SpokaPilote-Setup-<version>.exe` (PC Intel/AMD) ou `SpokaPilote-Setup-<version>-arm64.exe` (Snapdragon, Surface).
+`SpokaPilote-Setup-<version>.exe` (PC Intel/AMD) ou `SpokaPilote-Installer-<version>-arm64.exe` (Snapdragon, Surface).
 Installation dans `Program Files`, menu Démarrer, commande `spokapilote` dans tous les terminaux, mise à jour
 automatique. Pour un parc : `SpokaPilote-Setup-<version>.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART`.
 

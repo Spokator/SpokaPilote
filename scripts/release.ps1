@@ -25,7 +25,7 @@ if ($exists) { throw "La Release $tag existe déjà : augmentez la version dans 
 
 & "$PSScriptRoot\build-installer.ps1" -SkipTests:$SkipTests
 $setup = Join-Path $root "dist\SpokaPilote-Setup-$version.exe"
-$setupArm = Join-Path $root "dist\SpokaPilote-Setup-$version-arm64.exe"
+$setupArm = Join-Path $root "dist\SpokaPilote-Installer-$version-arm64.exe"
 foreach ($f in $setup, $setupArm) { if (-not (Test-Path $f)) { throw "Installeur introuvable : $f" } }
 
 # Notes : la section du CHANGELOG correspondant à la version.
@@ -33,7 +33,7 @@ $changelog = Get-Content "$root\CHANGELOG.md" -Raw -Encoding UTF8
 $section = [regex]::Match($changelog, "(?ms)^## $([regex]::Escape($version))\b.*?\r?\n(.*?)(?=^## |\z)").Groups[1].Value.Trim()
 if (-not $section) { throw "Aucune section « ## $version » dans CHANGELOG.md." }
 $notes = Join-Path $env:TEMP "spokapilote-notes-$version.md"
-"## Nouveautés de la $version`n`n$section`n`n**Installation :** téléchargez ``SpokaPilote-Setup-$version.exe`` (PC Intel/AMD) ou ``SpokaPilote-Setup-$version-arm64.exe`` (PC ARM64 : Snapdragon, Surface) ci-dessous et lancez-le. Pour un parc : ``SpokaPilote-Setup-$version.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART``." |
+"## Nouveautés de la $version`n`n$section`n`n**Installation :** téléchargez ``SpokaPilote-Setup-$version.exe`` (PC Intel/AMD) ou ``SpokaPilote-Installer-$version-arm64.exe`` (PC ARM64 : Snapdragon, Surface) ci-dessous et lancez-le. Pour un parc : ``SpokaPilote-Setup-$version.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART``." |
     Set-Content $notes -Encoding UTF8
 
 git push origin HEAD

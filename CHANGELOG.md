@@ -1,5 +1,10 @@
 # Journal des versions
 
+## 2.0.1 — 26/11/2026
+
+- Mise à jour automatique : l'installeur ARM64 s'appelle désormais `SpokaPilote-Installer-<version>-arm64.exe`, pour
+  que les postes x64 encore en 1.0.x récupèrent bien l'installeur x64 (`SpokaPilote-Setup-<version>.exe`).
+
 ## 2.0.0 — 26/11/2026
 
 SpokaPilote passe du poste au parc.

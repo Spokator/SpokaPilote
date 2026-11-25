@@ -9,9 +9,12 @@
 #endif
 #if AppArch == "arm64"
   #define SetupSuffix "-arm64"
+  ; Pas de « Setup » dans le nom ARM64 : les versions 1.0.x prennent le premier « Setup*.exe » d'une Release.
+  #define SetupKind "Installer"
   #define ArchAllowed "arm64"
 #else
   #define SetupSuffix ""
+  #define SetupKind "Setup"
   #define ArchAllowed "x64compatible"
 #endif
 #define AppName "SpokaPilote"
@@ -39,7 +42,7 @@ ArchitecturesAllowed={#ArchAllowed}
 ArchitecturesInstallIn64BitMode={#ArchAllowed}
 MinVersion=10.0.17763
 OutputDir=..\dist
-OutputBaseFilename={#AppName}-Setup-{#AppVersion}{#SetupSuffix}
+OutputBaseFilename={#AppName}-{#SetupKind}-{#AppVersion}{#SetupSuffix}
 SetupIconFile=..\src\SpokaPilote.App\Assets\SpokaPilote.ico
 UninstallDisplayIcon={app}\{#AppExe}
 UninstallDisplayName={#AppName}
