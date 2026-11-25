@@ -51,6 +51,7 @@ public sealed class DriverScanEngine
     {
         DriverSourceKind.LocalRepository => 0,
         DriverSourceKind.Dell or DriverSourceKind.HP or DriverSourceKind.Lenovo => 1,
+        DriverSourceKind.Nvidia or DriverSourceKind.Intel or DriverSourceKind.Amd => 1,
         DriverSourceKind.WindowsUpdate => 2,
         DriverSourceKind.MicrosoftCatalog => 3,
         _ => 9,

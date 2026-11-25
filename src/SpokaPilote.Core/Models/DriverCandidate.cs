@@ -1,6 +1,6 @@
 namespace SpokaPilote.Core.Models;
 
-public enum DriverSourceKind { WindowsUpdate, MicrosoftCatalog, Dell, HP, Lenovo, LocalRepository }
+public enum DriverSourceKind { WindowsUpdate, MicrosoftCatalog, Dell, HP, Lenovo, LocalRepository, Nvidia, Intel, Amd }
 
 public enum DriverPackageKind
 {
@@ -70,8 +70,14 @@ public sealed class DriverCandidate
         DriverSourceKind.HP => "HP (catalogue officiel)",
         DriverSourceKind.Lenovo => "Lenovo (catalogue officiel)",
         DriverSourceKind.LocalRepository => "Dépôt local",
+        DriverSourceKind.Nvidia => "NVIDIA (site officiel)",
+        DriverSourceKind.Intel => "Intel (site officiel)",
+        DriverSourceKind.Amd => "AMD (site officiel)",
         _ => Source.ToString(),
     };
+
+    /// <summary>Motif de blocage par la politique de pilotes (null = autorisé). Un candidat bloqué n'est jamais installé.</summary>
+    public string? BlockedReason { get; set; }
 
     public string KindLabel => Kind switch
     {

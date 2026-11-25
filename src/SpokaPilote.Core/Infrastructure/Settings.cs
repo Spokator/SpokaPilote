@@ -28,6 +28,17 @@ public sealed class Settings
 
     public int CatalogConcurrency { get; set; } = 4;
 
+    /// <summary>Console centrale SpokaPilote Server (ex. https://spokapilote.mon-entreprise.fr). Null = désactivée.</summary>
+    public string? ServerUrl { get; set; }
+    /// <summary>Jeton d'enrôlement des postes auprès de la console centrale (en-tête Authorization: Bearer).</summary>
+    public string? ServerToken { get; set; }
+    /// <summary>
+    /// Politique de pilotes : chemin local/UNC ou URL HTTPS d'un fichier driver-policy.json.
+    /// Si null et qu'une console centrale est configurée : {ServerUrl}/api/policy.
+    /// </summary>
+    public string? PolicySource { get; set; }
+    public bool UseGpuVendorSources { get; set; } = true;
+
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         WriteIndented = true,
