@@ -52,18 +52,21 @@ public sealed class DriverInstaller
         var outcomes = new List<InstallOutcome>();
         if (candidates.Count == 0) return outcomes;
 
+        var intervention = new Intervention();
+        HashSet<string>? storeBefore = null;
         if (!options.DryRun)
         {
             if (options.CreateRestorePoint)
             {
                 progress?.Report(new InstallProgress(0, candidates.Count, "Préparation", "Création d'un point de restauration..."));
-                await SystemProtection.CreateRestorePointAsync($"SpokaPilote - {candidates.Count} pilote(s)", ct).ConfigureAwait(false);
+                intervention.RestorePointCreated = await SystemProtection.CreateRestorePointAsync($"SpokaPilote - {candidates.Count} pilote(s)", ct).ConfigureAwait(false);
             }
             if (options.BackupDrivers)
             {
                 progress?.Report(new InstallProgress(0, candidates.Count, "Préparation", "Sauvegarde des pilotes actuels..."));
-                await SystemProtection.BackupDriversAsync(ct).ConfigureAwait(false);
+                intervention.BackupFolder = await SystemProtection.BackupDriversAsync(ct).ConfigureAwait(false);
             }
+            storeBefore = InterventionHistory.SnapshotDriverStore();
         }
 
         for (var i = 0; i < candidates.Count; i++)
@@ -105,8 +108,27 @@ public sealed class DriverInstaller
             // Demande à Windows de réévaluer les périphériques avec les pilotes fraîchement ajoutés.
             await PnpUtil.ScanDevicesAsync(ct).ConfigureAwait(false);
         }
+
+        if (storeBefore is not null)
+        {
+            intervention.AddedDriverPackages = InterventionHistory.SnapshotDriverStore().Except(storeBefore, StringComparer.OrdinalIgnoreCase)
+                .OrderBy(n => n).ToList();
+            intervention.Items = outcomes.Select(o => new InterventionItem
+            {
+                Title = o.Candidate.Title,
+                Version = o.Candidate.Version,
+                Source = o.Candidate.SourceLabel,
+                Status = o.Status.ToString(),
+                Message = o.Message,
+            }).ToList();
+            InterventionHistory.Save(intervention);
+            LastIntervention = intervention;
+        }
         return outcomes;
     }
+
+    /// <summary>Intervention enregistrée par le dernier appel à <see cref="InstallAsync"/> (null en simulation).</summary>
+    public Intervention? LastIntervention { get; private set; }
 
     // ------------------------------------------------------------------ Windows Update
 
@@ -193,7 +215,8 @@ public sealed class DriverInstaller
             }
 
             progress.Report("Vérification de la signature et de la compatibilité...");
-            var (infs, why) = SelectVerifiedInfs(folder, attempt.LocalPath, targets);
+            var verified = PackageVerifier.SelectVerifiedInfs(folder, attempt.LocalPath, targets, _system.Architecture, _system.OsVersion);
+            var (infs, why) = (verified.Infs, verified.Reason);
             if (infs.Count == 0)
             {
                 reasons.Add($"{attempt.Title} : {why}");
@@ -228,58 +251,6 @@ public sealed class DriverInstaller
         }
 
         return new InstallOutcome(c, InstallStatus.Failed, string.Join(" | ", reasons));
-    }
-
-    /// <summary>
-    /// Garde-fou essentiel : on n'installe un INF que s'il déclare réellement un ID d'un périphérique ciblé
-    /// (pour cette architecture et cette version de Windows) et si son catalogue (.cat) est signé.
-    /// </summary>
-    private (List<string> Infs, string Reason) SelectVerifiedInfs(string folder, string? preferredInf, List<DeviceInfo> targets)
-    {
-        var infFiles = preferredInf is not null && File.Exists(preferredInf)
-            ? new List<string> { preferredInf }
-            : Directory.GetFiles(folder, "*.inf", SearchOption.AllDirectories).ToList();
-        if (infFiles.Count == 0) return (new(), "aucun fichier INF dans le paquet");
-
-        var selected = new List<string>();
-        var reason = "aucun INF ne correspond au matériel";
-        foreach (var infPath in infFiles)
-        {
-            InfInfo inf;
-            try { inf = InfParser.Parse(infPath); }
-            catch (Exception ex) { reason = $"INF illisible : {ex.Message}"; continue; }
-
-            var matches = targets.Count == 0
-                ? new List<DeviceMatch>()
-                : targets.Select(t => HardwareIdMatcher.BestMatch(t, inf, _system.Architecture, _system.OsVersion)).OfType<DeviceMatch>().ToList();
-            if (targets.Count > 0 && matches.Count == 0) continue;
-            if (matches.Count > 0 && matches.All(m => m.Rank >= HardwareIdMatcher.CompatibleIdOffset && HardwareIdMatcher.IsGenericCompatibleId(m.MatchedId)))
-            {
-                reason = "correspondance uniquement générique (refusée)";
-                continue;
-            }
-
-            if (string.IsNullOrEmpty(inf.CatalogFile))
-            {
-                reason = $"{Path.GetFileName(infPath)} n'est pas signé (pas de fichier .cat)";
-                continue;
-            }
-            var catPath = Path.Combine(Path.GetDirectoryName(infPath)!, inf.CatalogFile);
-            if (!File.Exists(catPath))
-            {
-                reason = $"catalogue {inf.CatalogFile} manquant";
-                continue;
-            }
-            var sig = SignatureVerifier.Verify(catPath);
-            if (!sig.IsValid)
-            {
-                reason = $"{inf.CatalogFile} : {sig.Detail}";
-                continue;
-            }
-            Log.Info($"{Path.GetFileName(infPath)} : {sig} ; correspondance {string.Join(", ", matches.Select(m => m.MatchedId).Distinct())}");
-            selected.Add(infPath);
-        }
-        return (selected, reason);
     }
 
     // ------------------------------------------------------------------ Installeurs constructeurs

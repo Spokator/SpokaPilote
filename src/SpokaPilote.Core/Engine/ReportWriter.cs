@@ -18,27 +18,7 @@ public static class ReportWriter
     };
 
     public static string ToJson(ScanResult scan, IReadOnlyList<InstallOutcome>? outcomes = null) =>
-        JsonSerializer.Serialize(new
-        {
-            generatedBy = "SpokaPilote",
-            scan.Timestamp,
-            durationSeconds = Math.Round(scan.Duration.TotalSeconds),
-            system = scan.System,
-            sources = scan.SourcesUsed,
-            sourceErrors = scan.SourceErrors,
-            problemDevices = scan.ProblemDevices.Select(d => new { d.Name, d.InstanceId, d.ErrorCode, d.StatusText, hardwareIds = d.HardwareIds }),
-            unresolvedDevices = scan.UnresolvedDevices.Select(d => new { d.Name, d.InstanceId, hardwareIds = d.HardwareIds }),
-            candidates = scan.Candidates.Select(c => new
-            {
-                c.Title, c.Version, c.Date, source = c.SourceLabel, kind = c.KindLabel, c.Category, c.SizeBytes,
-                devices = c.TargetDeviceNames, c.MatchedHardwareId, c.DownloadUrl, c.InfoUrl,
-            }),
-            installation = outcomes?.Select(o => new { o.Candidate.Title, o.Candidate.Version, status = o.Status.ToString(), o.Message, o.RebootRequired }),
-            devices = scan.Devices.Where(d => d.IsPresent).Select(d => new
-            {
-                d.Name, d.ClassName, d.Manufacturer, d.InstanceId, d.DriverVersion, d.DriverDate, d.DriverProvider, d.ErrorCode,
-            }),
-        }, Json);
+        ScanReport.From(scan, outcomes).ToJson();
 
     public static string ToHtml(ScanResult scan, IReadOnlyList<InstallOutcome>? outcomes = null)
     {

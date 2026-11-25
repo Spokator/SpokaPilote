@@ -35,6 +35,32 @@ public static partial class MicrosoftCatalogClient
     public static DateTime RateLimitedUntil { get; private set; } = DateTime.MinValue;
     public static bool IsRateLimited => DateTime.UtcNow < RateLimitedUntil;
 
+    /// <summary>
+    /// Mode automatisé (CLI, déploiement de parc) : en cas de limitation, attendre la fin de la pause puis reprendre
+    /// (au plus 2 fois) plutôt que de rendre un résultat partiel.
+    /// </summary>
+    public static bool WaitWhenRateLimited { get; set; }
+
+    public static async Task<List<CatalogEntry>> SearchAsync(string query, CancellationToken ct = default)
+    {
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                return await SearchOnceAsync(query, ct).ConfigureAwait(false);
+            }
+            catch (CatalogRateLimitedException) when (WaitWhenRateLimited && attempt < 2)
+            {
+                var wait = RateLimitedUntil - DateTime.UtcNow;
+                if (wait > TimeSpan.Zero)
+                {
+                    Log.Info($"Catalogue Microsoft saturé : reprise dans {Math.Ceiling(wait.TotalMinutes)} min.");
+                    await Task.Delay(wait, ct).ConfigureAwait(false);
+                }
+            }
+        }
+    }
+
     [GeneratedRegex(@"<tr id=""(?<id>[0-9a-f-]{36})_R\d+""(?<row>.*?)</tr>", RegexOptions.Singleline | RegexOptions.IgnoreCase)]
     private static partial Regex RowRegex();
 
@@ -53,7 +79,7 @@ public static partial class MicrosoftCatalogClient
     [GeneratedRegex(@"\s+")]
     private static partial Regex Spaces();
 
-    public static async Task<List<CatalogEntry>> SearchAsync(string query, CancellationToken ct = default)
+    private static async Task<List<CatalogEntry>> SearchOnceAsync(string query, CancellationToken ct)
     {
         var cacheFile = Path.Combine(AppPaths.Ensure(Path.Combine(AppPaths.Cache, "catalog")), AppPaths.SafeName(query, 120) + ".json");
         if (File.Exists(cacheFile) && DateTime.UtcNow - File.GetLastWriteTimeUtc(cacheFile) < TimeSpan.FromHours(12))

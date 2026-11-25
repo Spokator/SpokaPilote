@@ -26,7 +26,11 @@ public partial class MainWindow : Window
     {
         var args = Environment.GetCommandLineArgs();
         var idx = Array.IndexOf(args, "--screenshot");
-        if (idx < 0 || idx + 1 >= args.Length) return;
+        if (idx < 0 || idx + 1 >= args.Length)
+        {
+            await _vm.CheckForUpdateAsync();
+            return;
+        }
         var folder = args[idx + 1];
         Directory.CreateDirectory(folder);
 

@@ -67,6 +67,19 @@ public sealed class DeviceInfo
         _ => $"Erreur {ErrorCode}",
     };
 
+    /// <summary>Panne matérielle (USB qui ne répond pas...) : aucun pilote ne peut la corriger.</summary>
+    public bool IsHardwareFault
+    {
+        get
+        {
+            var id = HardwareIds.FirstOrDefault() ?? "";
+            return HasProblem && (id.Contains("DESCRIPTOR_FAILURE", StringComparison.OrdinalIgnoreCase) ||
+                                  id.Contains("RESET_FAILURE", StringComparison.OrdinalIgnoreCase) ||
+                                  id.Contains("SET_ADDRESS_FAILURE", StringComparison.OrdinalIgnoreCase) ||
+                                  id.Contains("DESCRIPTOR_VALIDATION_FAILURE", StringComparison.OrdinalIgnoreCase));
+        }
+    }
+
     /// <summary>Diagnostic lorsque le problème ne vient manifestement pas d'un pilote manquant.</summary>
     public string? Hint
     {

@@ -1,0 +1,40 @@
+# Journal des versions
+
+## 1.0.0 — 25/11/2026
+
+Première version complète de SpokaPilote.
+
+**Pilotes du poste**
+- Inventaire complet du matériel (identifiants matériels, pilote installé, état, diagnostic des pannes matérielles).
+- Sources officielles uniquement, interrogées en parallèle : dépôt interne, catalogues Dell / HP / Lenovo,
+  Windows Update, Microsoft Update Catalog.
+- Contrôles avant installation : domaines officiels en HTTPS, empreinte, signature Authenticode d'un éditeur
+  approuvé, l'INF doit déclarer l'identifiant exact du matériel pour l'architecture et la version de Windows.
+- Point de restauration et sauvegarde des pilotes avant chaque intervention.
+
+**Nouveautés de la 1.0**
+- **Historique et annulation** : chaque intervention est enregistrée ; « Annuler » retire les paquets ajoutés et
+  les périphériques reviennent à leur pilote précédent (`spokapilote history`, `spokapilote rollback last`).
+  Réinstallation d'une sauvegarde complète (`spokapilote restore`).
+- **Pack hors ligne** pour les postes sans réseau (PC neuf sans pilote de carte réseau) : rapport JSON du poste →
+  pack préparé et vérifié sur un poste connecté → installation hors ligne (`spokapilote pack`).
+- **Rapport de parc** : consolidation des rapports de tous les postes déposés sur un partage
+  (`--output-dir \\srv\rapports`, puis `spokapilote fleet-report \\srv\rapports`) — postes à traiter, matériel
+  sans pilote sur tout le parc, modèles. Les pannes matérielles sont distinguées des pilotes manquants.
+- **Mise à jour automatique** : SpokaPilote signale une nouvelle version et l'installe en un clic, après
+  vérification de la taille et du SHA-256 publiés sur GitHub (`spokapilote self-update` pour le parc).
+- `--only` / `--exclude` pour choisir précisément les pilotes à installer.
+- Le catalogue Microsoft est interrogé avec parcimonie (pas de recherche pour les pilotes Windows intégrés) ;
+  en ligne de commande, SpokaPilote attend la fin d'une limitation de débit au lieu de rendre un résultat partiel.
+
+**Imprimantes**
+- Découverte réseau (SNMP, IPP, page web), identification du modèle exact, choix du pilote (déjà présent, dépôt
+  interne, Microsoft WHQL exact puis universel, pilote IPP Windows), création du port et de la file d'impression.
+
+**Distribution**
+- Installeur Windows `SpokaPilote-Setup-1.0.0.exe` (Program Files, menu Démarrer, commande `spokapilote` dans le
+  PATH, installation silencieuse `/VERYSILENT`), paquet Microsoft Store en option.
+
+## 0.1.0 — 25/11/2026
+
+Prototype interne.

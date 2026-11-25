@@ -20,6 +20,18 @@ public static class PnpUtil
     public static Task<ProcessResult> ExportAllAsync(string destination, CancellationToken ct = default) =>
         ProcessRunner.RunAsync(Exe, $"/export-driver * \"{destination}\"", timeout: TimeSpan.FromMinutes(30), ct: ct);
 
+    /// <summary>Retire un paquet du magasin et le désinstalle des périphériques (ils reviennent au meilleur pilote restant).</summary>
+    public static Task<ProcessResult> DeleteDriverAsync(string publishedName, CancellationToken ct = default)
+    {
+        if (!IsPublishedOemName(publishedName))
+            throw new ArgumentException($"Nom de paquet inattendu : {publishedName}");
+        return ProcessRunner.RunAsync(Exe, $"/delete-driver {publishedName} /uninstall /force", timeout: TimeSpan.FromMinutes(10), ct: ct);
+    }
+
+    /// <summary>Seuls les paquets tiers publiés (oemNN.inf) peuvent être retirés : jamais un pilote Windows intégré.</summary>
+    internal static bool IsPublishedOemName(string name) =>
+        System.Text.RegularExpressions.Regex.IsMatch(name, @"^oem\d+\.inf$", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
     public static Task<ProcessResult> ScanDevicesAsync(CancellationToken ct = default) =>
         ProcessRunner.RunAsync(Exe, "/scan-devices", timeout: TimeSpan.FromMinutes(5), ct: ct);
 

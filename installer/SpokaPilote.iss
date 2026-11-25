@@ -74,8 +74,16 @@ Root: HKLM; Subkey: "SYSTEM\CurrentControlSet\Control\Session Manager\Environmen
 
 [Run]
 Filename: "{app}\{#AppExe}"; Description: "{cm:LaunchApp}"; Flags: nowait postinstall skipifsilent runasoriginaluser
+; Mise à jour depuis l'application (/RELAUNCH=1) : relance l'interface même en mode silencieux.
+; Un déploiement de parc (/VERYSILENT sans ce paramètre) n'ouvre rien sur les postes.
+Filename: "{app}\{#AppExe}"; Flags: nowait runasoriginaluser; Check: RelaunchRequested
 
 [Code]
+function RelaunchRequested(): Boolean;
+begin
+  Result := ExpandConstant('{param:RELAUNCH|0}') = '1';
+end;
+
 function NeedsAddPath(Dir: String): Boolean;
 var
   Paths: String;

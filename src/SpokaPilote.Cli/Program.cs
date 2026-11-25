@@ -3,6 +3,7 @@ using SpokaPilote.Core.Engine;
 using SpokaPilote.Core.Infrastructure;
 using SpokaPilote.Core.Install;
 using SpokaPilote.Core.Models;
+using SpokaPilote.Core.Online;
 using SpokaPilote.Core.Printers;
 using SpokaPilote.Core.Repository;
 using SpokaPilote.Core.Sources;
@@ -31,6 +32,8 @@ internal static class Program
             WriteLine($"  {e.Message}", color);
         });
 
+        // Usage automatisé : mieux vaut attendre quelques minutes que rendre un résultat partiel.
+        MicrosoftCatalogClient.WaitWhenRateLimited = true;
         using var cts = new CancellationTokenSource();
         Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); WriteLine("Annulation demandée...", ConsoleColor.Yellow); };
 
@@ -43,6 +46,12 @@ internal static class Program
                 "export" => await ExportAsync(a, cts.Token),
                 "import" => await ImportAsync(a, cts.Token),
                 "printers" => await PrintersAsync(a, cts.Token),
+                "pack" => await PackAsync(a, cts.Token),
+                "history" or "historique" => History(),
+                "rollback" or "annuler" => await RollbackAsync(a, cts.Token),
+                "restore" or "restaurer" => await RestoreAsync(a, cts.Token),
+                "fleet-report" or "parc" => FleetReportCommand(a),
+                "self-update" or "mise-a-jour" => await SelfUpdateAsync(a, cts.Token),
                 "config" => Config(a),
                 "version" or "--version" => Version(),
                 _ => Help(),
@@ -136,7 +145,15 @@ internal static class Program
     private static List<DriverCandidate> Select(List<DriverCandidate> candidates, Args a)
     {
         var onlyMissing = a.Flag("missing");
-        return candidates.Where(c => c.Kind switch
+        var only = a.Values("only").ToList();
+        var exclude = a.Values("exclude").ToList();
+        bool Matches(DriverCandidate c, string text) =>
+            c.Title.Contains(text, StringComparison.OrdinalIgnoreCase) ||
+            c.TargetDeviceNames.Any(n => n.Contains(text, StringComparison.OrdinalIgnoreCase));
+        return candidates
+            .Where(c => only.Count == 0 || only.Any(t => Matches(c, t)))
+            .Where(c => !exclude.Any(t => Matches(c, t)))
+            .Where(c => c.Kind switch
         {
             CandidateKind.MissingDriver => true,
             CandidateKind.Update => !onlyMissing,
@@ -200,6 +217,22 @@ internal static class Program
         {
             File.WriteAllText(html, ReportWriter.ToHtml(scan, outcomes));
             WriteLine($"Rapport HTML : {Path.GetFullPath(html)}", ConsoleColor.Gray);
+        }
+        if (a.Value("output-dir") is { } outDir)
+        {
+            // Dépôt sur un partage de parc : <POSTE>.json (consolidable avec « fleet-report ») + <POSTE>.html.
+            try
+            {
+                Directory.CreateDirectory(outDir);
+                var baseName = Path.Combine(outDir, scan.System.ComputerName);
+                File.WriteAllText(baseName + ".json", ReportWriter.ToJson(scan, outcomes));
+                File.WriteAllText(baseName + ".html", ReportWriter.ToHtml(scan, outcomes));
+                WriteLine($"Rapports déposés : {baseName}.json / .html", ConsoleColor.Gray);
+            }
+            catch (Exception ex)
+            {
+                WriteLine($"Dépôt des rapports impossible dans {outDir} : {ex.Message}", ConsoleColor.Yellow);
+            }
         }
         // Copie systématique dans %ProgramData%\SpokaPilote\Reports pour l'historique du poste.
         try
@@ -375,6 +408,131 @@ internal static class Program
         return Help();
     }
 
+    // ------------------------------------------------------------------ pack hors ligne, historique, parc, mise à jour
+
+    private static async Task<int> PackAsync(Args a, CancellationToken ct)
+    {
+        var source = a.Positional(0);
+        var output = a.Positional(1);
+        if (source is null || output is null)
+        {
+            WriteLine("Usage : spokapilote pack <rapport.json | ce-poste> <dossier-du-pack> [--all]", ConsoleColor.Yellow);
+            WriteLine("  1. Sur le poste sans réseau : spokapilote scan --json E:\\poste.json", ConsoleColor.Gray);
+            WriteLine("  2. Sur un poste connecté    : spokapilote pack E:\\poste.json E:\\pack", ConsoleColor.Gray);
+            WriteLine("  3. Sur le poste sans réseau : spokapilote install --repo E:\\pack --yes", ConsoleColor.Gray);
+            return ExitUsage;
+        }
+        Banner();
+        SystemInfo system;
+        List<DeviceInfo> devices;
+        if (source is "ce-poste" or "this" or ".")
+        {
+            system = Core.Inventory.SystemInfoProvider.Collect();
+            devices = Core.Inventory.DeviceInventory.Collect();
+        }
+        else
+        {
+            var report = ScanReport.Load(source);
+            system = report.System;
+            devices = report.Devices;
+        }
+        WriteLine($"Poste cible : {system.ComputerName} — {system.Manufacturer} {system.DisplayModel}, {system.OsCaption} {system.OsDisplayVersion} ({system.Architecture})", ConsoleColor.White);
+        WriteLine($"Périphériques en erreur : {devices.Count(d => d.IsPresent && d.HasProblem)}{(a.Flag("all") ? " (+ mises à jour de tout le matériel)" : "")}", ConsoleColor.White);
+
+        var result = await OfflinePackBuilder.BuildAsync(system, devices, output, a.Flag("all"), LoadSettings(a),
+            new Progress<string>(m => WriteLine($"› {m}", ConsoleColor.DarkGray)), ct);
+        WriteLine($"\n{result.Summary}", result.Drivers.Count > 0 ? ConsoleColor.Green : ConsoleColor.Yellow);
+        foreach (var d in result.Drivers) WriteLine($"  ✓ {d.Title} {d.Version} → {string.Join(", ", d.Devices)}", ConsoleColor.Gray);
+        foreach (var m in result.Missing) WriteLine($"  ? {m}", ConsoleColor.DarkYellow);
+        WriteLine($"\nSur le poste cible : spokapilote install --repo \"{Path.GetFullPath(output)}\" --yes", ConsoleColor.Cyan);
+        return result.Drivers.Count > 0 ? ExitOk : ExitError;
+    }
+
+    private static int History()
+    {
+        var list = InterventionHistory.List();
+        if (list.Count == 0)
+        {
+            WriteLine("Aucune intervention enregistrée sur ce poste.", ConsoleColor.Gray);
+            return ExitOk;
+        }
+        foreach (var i in list)
+        {
+            WriteLine($"{i.Id}  {i.Summary}", i.RolledBackAt is null ? ConsoleColor.White : ConsoleColor.DarkGray);
+            foreach (var item in i.Items) WriteLine($"    {item.Status,-13} {item.Title} {item.Version}", ConsoleColor.Gray);
+            if (i.AddedDriverPackages.Count > 0) WriteLine($"    paquets ajoutés : {string.Join(", ", i.AddedDriverPackages)}", ConsoleColor.DarkGray);
+            if (i.BackupFolder is not null) WriteLine($"    sauvegarde : {i.BackupFolder}", ConsoleColor.DarkGray);
+        }
+        WriteLine("\nAnnuler une intervention : spokapilote rollback <id|last>", ConsoleColor.Cyan);
+        return ExitOk;
+    }
+
+    private static async Task<int> RollbackAsync(Args a, CancellationToken ct)
+    {
+        var intervention = InterventionHistory.Find(a.Positional(0) ?? "last");
+        if (intervention is null)
+        {
+            WriteLine("Aucune intervention annulable trouvée (voir « spokapilote history »).", ConsoleColor.Yellow);
+            return ExitError;
+        }
+        WriteLine($"Intervention {intervention.Id} : {intervention.Summary}", ConsoleColor.White);
+        WriteLine($"Paquets qui seront retirés : {string.Join(", ", intervention.AddedDriverPackages)}", ConsoleColor.Gray);
+        if (!a.Flag("yes") && !Confirm("Annuler cette intervention ?")) return ExitOk;
+        var (ok, message) = await InterventionHistory.RollbackAsync(intervention, new Progress<string>(m => WriteLine($"› {m}", ConsoleColor.DarkGray)), ct);
+        WriteLine(message, ok ? ConsoleColor.Green : ConsoleColor.Red);
+        return ok ? ExitOk : ExitPartial;
+    }
+
+    private static async Task<int> RestoreAsync(Args a, CancellationToken ct)
+    {
+        var folder = a.Positional(0);
+        if (folder is null)
+        {
+            WriteLine("Sauvegardes disponibles :", ConsoleColor.White);
+            foreach (var b in InterventionHistory.Backups()) WriteLine($"  {b}", ConsoleColor.Gray);
+            WriteLine("Usage : spokapilote restore <dossier-de-sauvegarde>", ConsoleColor.Cyan);
+            return ExitUsage;
+        }
+        var (ok, message) = await InterventionHistory.RestoreBackupAsync(folder, ct);
+        WriteLine(message, ok ? ConsoleColor.Green : ConsoleColor.Red);
+        return ok ? ExitOk : ExitError;
+    }
+
+    private static int FleetReportCommand(Args a)
+    {
+        var folder = a.Positional(0) ?? throw new ArgumentException("Usage : spokapilote fleet-report <dossier-des-rapports> [--out parc.html]");
+        var machines = FleetReport.Load(folder);
+        if (machines.Count == 0)
+        {
+            WriteLine($"Aucun rapport SpokaPilote dans {folder}.", ConsoleColor.Yellow);
+            return ExitError;
+        }
+        var output = a.Value("out") ?? Path.Combine(folder, "parc.html");
+        File.WriteAllText(output, FleetReport.ToHtml(machines, folder));
+        WriteLine($"{machines.Count} poste(s), {machines.Count(m => !m.Healthy)} à traiter → {Path.GetFullPath(output)}", ConsoleColor.Green);
+        foreach (var m in machines.Where(m => !m.Healthy))
+            WriteLine($"  ⚠ {m.Name} ({m.Model}) : {m.Problems} en erreur, {m.Unresolved} sans solution, {m.Failed} échec(s)", ConsoleColor.Yellow);
+        return ExitOk;
+    }
+
+    private static async Task<int> SelfUpdateAsync(Args a, CancellationToken ct)
+    {
+        var current = UpdateChecker.CurrentVersion;
+        WriteLine($"Version installée : {current.ToString(3)}", ConsoleColor.White);
+        var update = await UpdateChecker.CheckAsync(current, ct);
+        if (update is null)
+        {
+            WriteLine("SpokaPilote est à jour.", ConsoleColor.Green);
+            return ExitOk;
+        }
+        WriteLine($"Nouvelle version disponible : {update.Version.ToString(3)} ({update.ReleaseUrl})", ConsoleColor.Cyan);
+        if (!a.Flag("yes") && !Confirm("Installer la mise à jour ?")) return ExitOk;
+        var file = await UpdateChecker.DownloadAsync(update, null, ct);
+        WriteLine("Installeur téléchargé et vérifié (taille + SHA-256). Installation silencieuse lancée.", ConsoleColor.Green);
+        UpdateChecker.LaunchInstaller(file, relaunch: false);
+        return ExitOk;
+    }
+
     // ------------------------------------------------------------------ configuration
 
     private static int Config(Args a)
@@ -478,13 +636,27 @@ internal static class Program
                                   [--dry-run] [--yes] [--no-restore-point] [--no-backup] [--report rapport.html]
                 --deep               interroge aussi le catalogue Microsoft pour les composants qui fonctionnent
                 --missing            n'installe que les pilotes manquants (périphériques en erreur)
+                --only <texte>       n'installe que les pilotes dont le titre ou le périphérique contient ce texte
+                --exclude <texte>    exclut ces pilotes (ex. --exclude NVIDIA) ; options répétables
                 --sources wu,catalog,oem,repo   limite les sources interrogées
                 --repo <chemin>      ajoute un dépôt local/réseau pour cette exécution (répétable)
+                --output-dir <dir>   dépose <POSTE>.json et <POSTE>.html (ex. \\srv\rapports) pour le rapport de parc
 
-            DÉPÔT DE PILOTES (déploiement de parc, hors ligne)
+            HISTORIQUE ET RETOUR ARRIÈRE
+              spokapilote history                          interventions passées sur ce poste
+              spokapilote rollback [id|last] [--yes]       annule une intervention (retour aux pilotes précédents)
+              spokapilote restore [dossier-de-sauvegarde]  réinstalle une sauvegarde de pilotes
+
+            DÉPÔT DE PILOTES ET POSTES SANS RÉSEAU
               spokapilote export <\\serveur\pilotes>       exporte les pilotes de ce poste de référence
               spokapilote import <archive.zip|dossier> [dépôt]
               spokapilote config add-repo <\\serveur\pilotes>
+              spokapilote pack <rapport.json|ce-poste> <dossier> [--all]
+                                   prépare sur un poste connecté les pilotes d'un poste sans réseau
+
+            PARC
+              spokapilote fleet-report <\\srv\rapports> [--out parc.html]   consolide les rapports de tous les postes
+              spokapilote self-update [--yes]              met SpokaPilote à jour (Release GitHub vérifiée)
 
             IMPRIMANTES
               spokapilote printers discover [--range 192.168.1.0/24] [--drivers] [--json imprimantes.json]
@@ -508,7 +680,7 @@ internal sealed class Args
 {
     private static readonly HashSet<string> ValueOptions = new(StringComparer.OrdinalIgnoreCase)
     {
-        "json", "html", "report", "sources", "repo", "range", "name", "driver", "location",
+        "json", "html", "report", "sources", "repo", "range", "name", "driver", "location", "output-dir", "out", "only", "exclude",
     };
 
     private readonly List<string> _positionals = new();

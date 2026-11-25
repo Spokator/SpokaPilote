@@ -21,7 +21,9 @@ public sealed class MicrosoftCatalogSource : IDriverSource
     {
         var targets = context.Devices
             .Where(d => d.IsPresent && d.HardwareIds.Count > 0 && !IsUnusableId(d.HardwareIds[0]))
-            .Where(d => d.HasProblem || (context.Options.DeepScan && d.IsHardware))
+            // En analyse approfondie, un composant sur pilote Windows intégré n'est jamais remplacé automatiquement :
+            // inutile de l'interroger (le catalogue limite le nombre de recherches).
+            .Where(d => d.HasProblem || (context.Options.DeepScan && d.IsHardware && !IsInboxDriver(d)))
             .ToList();
 
         // Un même composant peut apparaître plusieurs fois (ex. 4 ports USB identiques) : une seule recherche.

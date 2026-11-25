@@ -51,10 +51,19 @@ exact puis universel du constructeur : HP UPD, Xerox GPD, Lexmark, Ricoh...) →
 **Diagnostic** — les périphériques en erreur sans solution reçoivent une explication (ex. *« échec de descripteur USB :
 problème matériel, câble ou port, aucun pilote ne peut le corriger »*).
 
+**Historique et annulation** — chaque intervention est enregistrée ; « Annuler » retire les paquets ajoutés et les
+périphériques reviennent à leur pilote précédent. Sauvegardes complètes réinstallables.
+
+**Postes sans réseau** — pack hors ligne préparé sur un autre poste à partir du rapport JSON de la machine cible.
+
+**Parc** — rapport consolidé de tous les postes : postes à traiter, matériel sans pilote sur tout le parc, modèles.
+
+**Mise à jour automatique** — depuis les Releases GitHub, installeur vérifié (taille + SHA-256).
+
 ## Démarrage rapide
 
 ### Installation
-Lancez `SpokaPilote-Setup-<version>.exe` : installation dans `Program Files`, raccourci dans le menu Démarrer
+Téléchargez `SpokaPilote-Setup-<version>.exe` depuis les [Releases](https://github.com/Spokator/SpokaPilote/releases/latest) et lancez-le : installation dans `Program Files`, raccourci dans le menu Démarrer
 (et sur le Bureau en option), désinstallation depuis *Paramètres > Applications*. L'option cochée par défaut ajoute
 la commande `spokapilote` à tous les terminaux. Installation silencieuse pour le parc :
 `SpokaPilote-Setup-<version>.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART`.
@@ -72,6 +81,9 @@ spokapilote install --dry-run                        # télécharge et vérifie 
 spokapilote printers discover --drivers              # imprimantes du réseau + pilote recommandé
 spokapilote printers install 10.0.1.25 --name "Copieur RDC" --yes
 spokapilote printers find-driver "KYOCERA TASKalfa 3253ci" --verify
+spokapilote history                                  # interventions passées
+spokapilote rollback last --yes                      # annule la dernière intervention
+spokapilote self-update --yes                        # met SpokaPilote à jour
 ```
 Codes de sortie : `0` OK · `1` erreur · `2` échec partiel · `3010` redémarrage requis.
 Journaux : `%ProgramData%\SpokaPilote\Logs` · rapports : `%ProgramData%\SpokaPilote\Reports`.
@@ -85,9 +97,18 @@ Journaux : `%ProgramData%\SpokaPilote\Logs` · rapports : `%ProgramData%\SpokaPi
    `spokapilote config add-repo \\srv\pilotes`
 4. **Sur chaque poste** (script de démarrage, RMM, Intune Win32, tâche planifiée) :
    ```powershell
-   spokapilote install --yes --report \\srv\rapports\$env:COMPUTERNAME.html
+   spokapilote install --yes --output-dir \\srv\rapports
    ```
    Le dépôt interne passe en priorité (rapide, hors ligne) ; ce qui manque est complété depuis le constructeur et Microsoft.
+5. **Suivez le parc** : `spokapilote fleet-report \\srv\rapports` génère `parc.html` (postes à traiter, matériel sans
+   pilote sur tout le parc, modèles). Aussi disponible dans l'interface, onglet *Dépôt de pilotes*.
+
+### Poste sans réseau (pilote de carte réseau manquant)
+```powershell
+spokapilote scan --json E:\poste.json        # 1. sur le poste sans réseau (SpokaPilote portable sur la clé USB)
+spokapilote pack E:\poste.json E:\pack        # 2. sur un poste connecté : télécharge et vérifie ses pilotes
+spokapilote install --repo E:\pack --yes      # 3. de retour sur le poste sans réseau
+```
 
 Configuration centralisée : `%ProgramData%\SpokaPilote\settings.json` (dépôts, sources, domaines et éditeurs
 supplémentaires autorisés, URL d'un catalogue d'imprimantes propre à l'organisation).
@@ -107,10 +128,10 @@ src/
     Engine/                  orchestration, fusion des sources, rapports HTML/JSON
   SpokaPilote.Cli/           spokapilote.exe
   SpokaPilote.App/           SpokaPilote.App.exe (WPF .NET 10, thème Fluent)
-tests/SpokaPilote.Core.Tests 78 tests (INF, catalogue, SNMP/IPP, Dell/HP/Lenovo, confiance, fusion)
+tests/SpokaPilote.Core.Tests 92 tests (INF, catalogue, SNMP/IPP, Dell/HP/Lenovo, confiance, fusion, parc, mise à jour)
 installer/                   installeur Inno Setup (SpokaPilote.iss + images de l'assistant)
 packaging/                   manifeste MSIX et visuels du Store
-scripts/                     publish.ps1, build-installer.ps1, build-store.ps1
+scripts/                     publish.ps1, build-installer.ps1, build-store.ps1, release.ps1
 ```
 
 ## Construire
@@ -121,30 +142,34 @@ dotnet run --project src\SpokaPilote.App           # interface
 dotnet run --project src\SpokaPilote.Cli -- scan   # CLI
 .\scripts\build-installer.ps1                      # -> dist\SpokaPilote-Setup-<version>.exe
 .\scripts\build-store.ps1                          # -> dist-store\SpokaPilote-<version>.msix (Store)
+.\scripts\release.ps1                              # -> Release GitHub vX.Y.Z avec l'installeur (notes du CHANGELOG)
 ```
 La version se règle à un seul endroit : `Directory.Build.props`. Les visuels (icône, Store, assistant
 d'installation) se régénèrent avec `tools\make-assets.ps1`.
 
 Publication sur le Microsoft Store : voir [docs/PUBLICATION-STORE.md](docs/PUBLICATION-STORE.md).
 
-## État et limites connues (v0.1)
+## État et limites connues (v1.0)
 
-- **Validé en réel** (Gigabyte Z590, Windows 11 25H2) : inventaire de 199 périphériques, Windows Update, catalogue
-  Microsoft (téléchargement + SHA-1 + extraction + signature WHQL + correspondance INF), découverte réseau,
-  pilotes d'imprimante Kyocera / HP / Xerox / Ricoh trouvés et vérifiés.
-- **Testé sur données réelles mais pas encore sur matériel** : Dell, HP, Lenovo (formats de catalogue validés sur les
-  fichiers officiels actuels ; à confirmer sur un poste de chaque marque).
-- **Non exécuté pendant le développement** : l'installation effective (nécessite une console administrateur ; testée
-  en simulation `--dry-run`) et l'ajout d'une file d'impression (aucune imprimante sur le réseau de développement).
+- **Validé en réel** (Gigabyte Z590, Windows 11 25H2) : installeur (installation, mise à jour, raccourcis, PATH,
+  désinstallation), inventaire de ~200 périphériques, **installation réelle** de pilotes via Windows Update,
+  installation depuis un dépôt puis **annulation** de l'intervention, catalogue Microsoft (téléchargement, SHA-1,
+  extraction, signature WHQL, correspondance INF), pack hors ligne relu comme dépôt, rapport de parc, découverte
+  réseau, pilotes d'imprimante Kyocera / HP / Xerox / Ricoh trouvés et vérifiés.
+- **Testé sur les catalogues officiels réels, pas encore sur matériel** : Dell, HP, Lenovo — à confirmer sur un
+  poste de chaque marque.
+- **Pas encore testé** : l'ajout d'une file d'impression sur une vraie imprimante (aucune sur le réseau de développement).
 - Le Microsoft Update Catalog limite le débit des recherches : SpokaPilote espace ses requêtes, met les résultats en
-  cache 12 h et signale un résultat partiel plutôt que d'échouer.
-- Canon, Konica Minolta, Sharp, Brother, Kyocera (pilotes universels) ne publient pas tous leurs pilotes chez
+  cache 12 h, n'interroge pas le catalogue pour les pilotes Windows intégrés et, en ligne de commande, attend la fin
+  d'une limitation plutôt que de rendre un résultat partiel.
+- Canon, Konica Minolta, Sharp, Brother et Kyocera (pilotes universels) ne publient pas tous leurs pilotes chez
   Microsoft : pour ces marques, le pilote IPP Windows ou le dépôt interne prend le relais.
+- L'installeur n'est pas signé (comme SpokaSoundBoard) : SmartScreen peut avertir au premier lancement.
 
 ## Feuille de route
 
-- Console centrale (inventaire du parc, rapports agrégés, politique de pilotes approuvés)
+- Console centrale web (inventaire du parc en temps réel, politique de pilotes approuvés)
 - Pilotes graphiques et chipset Intel / AMD / NVIDIA via leurs catalogues officiels
 - Support ARM64 complet, Microsoft Surface
-- Mode WinPE / post-installation (injection dans une image hors ligne)
-- Liste noire de versions problématiques partagée
+- Injection de pilotes dans une image Windows hors ligne (WinPE / déploiement)
+- Liste noire partagée de versions de pilotes problématiques

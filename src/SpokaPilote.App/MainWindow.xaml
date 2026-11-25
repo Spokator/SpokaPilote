@@ -35,6 +35,17 @@
                         <TextBlock Style="{StaticResource PageSubtitle}" Text="{Binding MachineDetails}" />
 
                         <Border Style="{StaticResource Card}" Margin="0,0,0,16"
+                                Visibility="{Binding HasUpdate, Converter={StaticResource BoolToVisibility}}">
+                            <DockPanel>
+                                <Button DockPanel.Dock="Right" Content="Mettre à jour" Style="{DynamicResource AccentButtonStyle}" Command="{Binding InstallUpdateCommand}" />
+                                <TextBlock VerticalAlignment="Center" TextWrapping="Wrap" Margin="0,0,16,0">
+                                    <Run FontWeight="SemiBold" Text="{Binding UpdateLabel, Mode=OneWay}" />
+                                    <Run Text="Téléchargement depuis GitHub, vérifié (taille + SHA-256), puis installation automatique." />
+                                </TextBlock>
+                            </DockPanel>
+                        </Border>
+
+                        <Border Style="{StaticResource Card}" Margin="0,0,0,16"
                                 Visibility="{Binding IsNotAdmin, Converter={StaticResource BoolToVisibility}}">
                             <DockPanel>
                                 <Button DockPanel.Dock="Right" Content="Relancer en administrateur" Command="{Binding RelaunchAsAdminCommand}" />
@@ -348,9 +359,82 @@
                                 </StackPanel>
                             </Border>
                         </UniformGrid>
+                        <UniformGrid Columns="2" Margin="0,16,0,0">
+                            <Border Style="{StaticResource Card}" Margin="0,0,8,0">
+                                <StackPanel>
+                                    <TextBlock FontWeight="SemiBold" Text="Pack hors ligne (poste sans réseau)" />
+                                    <TextBlock Opacity="0.75" TextWrapping="Wrap" Margin="0,4,0,8"
+                                               Text="PC neuf sans pilote réseau ? Sur ce poste : « spokapilote scan --json E:\poste.json » depuis la clé USB. Ici, choisissez ce rapport : SpokaPilote télécharge et vérifie ses pilotes. Annulez le choix du rapport pour préparer le pack de ce poste-ci." />
+                                    <CheckBox Content="Inclure les mises à jour de tout le matériel" IsChecked="{Binding PackAllHardware}" Margin="0,0,0,8" />
+                                    <Button HorizontalAlignment="Left" Content="Préparer un pack..." Command="{Binding BuildPackCommand}" />
+                                </StackPanel>
+                            </Border>
+                            <Border Style="{StaticResource Card}" Margin="8,0,0,0">
+                                <StackPanel>
+                                    <TextBlock FontWeight="SemiBold" Text="Rapport de parc" />
+                                    <TextBlock Opacity="0.75" TextWrapping="Wrap" Margin="0,4,0,12"
+                                               Text="Consolide les rapports de tous les postes (« spokapilote install --yes --output-dir \\serveur\rapports ») : postes à traiter, matériel sans pilote sur tout le parc, modèles." />
+                                    <Button HorizontalAlignment="Left" Content="Générer le rapport de parc..." Command="{Binding FleetReportCommand}" />
+                                </StackPanel>
+                            </Border>
+                        </UniformGrid>
                         <TextBlock Margin="0,12,0,0" TextWrapping="Wrap" Text="{Binding RepositoryResult}" />
                     </StackPanel>
                 </ScrollViewer>
+            </TabItem>
+
+            <!-- ====================================================== HISTORIQUE -->
+            <TabItem>
+                <TabItem.Header>
+                    <TextBlock Style="{StaticResource NavHeader}">↩  Historique</TextBlock>
+                </TabItem.Header>
+                <Grid Margin="28,24">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <StackPanel>
+                        <TextBlock Style="{StaticResource PageTitle}" Text="Historique et retour arrière" />
+                        <TextBlock Style="{StaticResource PageSubtitle}"
+                                   Text="Chaque installation est enregistrée. Annuler une intervention retire les paquets qu'elle a ajoutés : les périphériques reviennent à leur pilote précédent. Les sauvegardes complètes faites avant chaque intervention peuvent aussi être réinstallées." />
+                    </StackPanel>
+                    <Grid Grid.Row="1">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="1*" />
+                            <ColumnDefinition Width="16" />
+                            <ColumnDefinition Width="1.2*" />
+                        </Grid.ColumnDefinitions>
+                        <ListBox ItemsSource="{Binding Interventions}" SelectedItem="{Binding SelectedIntervention}">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <StackPanel Margin="4,6">
+                                        <TextBlock FontWeight="SemiBold" Text="{Binding Summary}" TextWrapping="Wrap" />
+                                        <TextBlock Opacity="0.7" FontSize="12" Text="{Binding Id}" />
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                        <Border Grid.Column="2" Style="{StaticResource Card}">
+                            <DockPanel>
+                                <WrapPanel DockPanel.Dock="Bottom" Margin="0,12,0,0">
+                                    <Button Content="Annuler cette intervention" Style="{DynamicResource AccentButtonStyle}" Command="{Binding RollbackCommand}" Margin="0,0,8,0" />
+                                    <Button Content="Actualiser" Command="{Binding RefreshHistoryCommand}" />
+                                </WrapPanel>
+                                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                                    <TextBlock TextWrapping="Wrap" Text="{Binding SelectedInterventionDetails}" />
+                                </ScrollViewer>
+                            </DockPanel>
+                        </Border>
+                    </Grid>
+                    <Border Grid.Row="2" Style="{StaticResource Card}" Margin="0,16,0,0">
+                        <DockPanel>
+                            <Button DockPanel.Dock="Right" Margin="8,0,0,0" Content="Réinstaller cette sauvegarde" Command="{Binding RestoreBackupCommand}" />
+                            <TextBlock DockPanel.Dock="Left" VerticalAlignment="Center" Margin="0,0,8,0" Text="Sauvegardes :" />
+                            <ComboBox ItemsSource="{Binding Backups}" SelectedItem="{Binding SelectedBackup}" />
+                        </DockPanel>
+                    </Border>
+                </Grid>
             </TabItem>
 
             <!-- ====================================================== JOURNAL -->
@@ -410,6 +494,7 @@
                         </Border>
                         <Button Margin="0,16,0,0" HorizontalAlignment="Left" Style="{DynamicResource AccentButtonStyle}"
                                 Content="Enregistrer" Command="{Binding SaveSettingsCommand}" />
+                        <TextBlock Margin="0,24,0,0" Opacity="0.6" Text="{Binding AppVersionLabel, Mode=OneWay}" />
                     </StackPanel>
                 </ScrollViewer>
             </TabItem>

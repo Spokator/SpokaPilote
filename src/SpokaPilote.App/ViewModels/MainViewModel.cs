@@ -51,6 +51,201 @@ public sealed class MainViewModel : ObservableObject
         SaveSettingsCommand = new RelayCommand(SaveSettings);
         OpenLogsCommand = new RelayCommand(() => OpenPath(AppPaths.Logs));
         OpenUrlCommand = new RelayCommand(p => { if (p is string url) OpenPath(url); return Task.CompletedTask; });
+
+        InstallUpdateCommand = new RelayCommand(InstallUpdateAsync, () => !IsBusy && AvailableUpdate is not null);
+        RollbackCommand = new RelayCommand(RollbackAsync, () => !IsBusy && SelectedIntervention?.CanRollback == true);
+        RestoreBackupCommand = new RelayCommand(RestoreBackupAsync, () => !IsBusy && SelectedBackup is not null);
+        RefreshHistoryCommand = new RelayCommand(RefreshHistory);
+        BuildPackCommand = new RelayCommand(BuildPackAsync, () => !IsBusy);
+        FleetReportCommand = new RelayCommand(BuildFleetReport, () => !IsBusy);
+        RefreshHistory();
+    }
+
+    // ------------------------------------------------------------------ mise à jour de SpokaPilote
+
+    public string AppVersionLabel => $"SpokaPilote {Core.Online.UpdateChecker.CurrentVersion.ToString(3)}";
+
+    private Core.Online.UpdateInfo? _availableUpdate;
+    public Core.Online.UpdateInfo? AvailableUpdate
+    {
+        get => _availableUpdate;
+        private set { Set(ref _availableUpdate, value); OnPropertyChanged(nameof(HasUpdate)); OnPropertyChanged(nameof(UpdateLabel)); }
+    }
+    public bool HasUpdate => AvailableUpdate is not null;
+    public string UpdateLabel => AvailableUpdate is null ? "" : $"SpokaPilote {AvailableUpdate.Version.ToString(3)} est disponible.";
+    public RelayCommand InstallUpdateCommand { get; }
+
+    public async Task CheckForUpdateAsync()
+    {
+        try
+        {
+            AvailableUpdate = await Core.Online.UpdateChecker.CheckAsync(Core.Online.UpdateChecker.CurrentVersion);
+        }
+        catch (Exception ex)
+        {
+            Log.Debug($"Vérification de mise à jour impossible : {ex.Message}");
+        }
+    }
+
+    private async Task InstallUpdateAsync()
+    {
+        if (AvailableUpdate is null) return;
+        await RunBusyAsync($"Téléchargement de SpokaPilote {AvailableUpdate.Version.ToString(3)}...", async ct =>
+        {
+            var file = await Core.Online.UpdateChecker.DownloadAsync(AvailableUpdate,
+                new Progress<double>(p => { ProgressIndeterminate = false; Progress = p; }), ct);
+            Status = "Installation de la mise à jour...";
+            Core.Online.UpdateChecker.LaunchInstaller(file, relaunch: true);
+            Application.Current.Shutdown();
+        });
+    }
+
+    // ------------------------------------------------------------------ historique et retour arrière
+
+    public ObservableCollection<Intervention> Interventions { get; } = new();
+    public ObservableCollection<string> Backups { get; } = new();
+
+    private Intervention? _selectedIntervention;
+    public Intervention? SelectedIntervention
+    {
+        get => _selectedIntervention;
+        set { Set(ref _selectedIntervention, value); OnPropertyChanged(nameof(SelectedInterventionDetails)); }
+    }
+    public string SelectedInterventionDetails => SelectedIntervention is null ? "Sélectionnez une intervention."
+        : string.Join("\n", SelectedIntervention.Items.Select(i => $"{StatusIcon(i.Status)} {i.Title} {i.Version} — {i.Message}"))
+          + (SelectedIntervention.AddedDriverPackages.Count > 0 ? $"\n\nPaquets ajoutés : {string.Join(", ", SelectedIntervention.AddedDriverPackages)}" : "")
+          + (SelectedIntervention.BackupFolder is null ? "" : $"\nSauvegarde : {SelectedIntervention.BackupFolder}")
+          + (SelectedIntervention.RestorePointCreated ? "\nPoint de restauration créé." : "");
+
+    private string? _selectedBackup;
+    public string? SelectedBackup { get => _selectedBackup; set => Set(ref _selectedBackup, value); }
+
+    public RelayCommand RollbackCommand { get; }
+    public RelayCommand RestoreBackupCommand { get; }
+    public RelayCommand RefreshHistoryCommand { get; }
+
+    private static string StatusIcon(string status) => status switch
+    {
+        "Installed" => "✓",
+        "NotApplicable" => "=",
+        "Skipped" => "·",
+        _ => "✗",
+    };
+
+    private void RefreshHistory()
+    {
+        Interventions.Clear();
+        foreach (var i in InterventionHistory.List()) Interventions.Add(i);
+        Backups.Clear();
+        try { foreach (var b in InterventionHistory.Backups()) Backups.Add(b); } catch { /* aucun dossier */ }
+        SelectedIntervention = Interventions.FirstOrDefault();
+        SelectedBackup = Backups.FirstOrDefault();
+    }
+
+    private async Task RollbackAsync()
+    {
+        if (SelectedIntervention is null) return;
+        if (!IsAdmin) { AskRelaunch("L'annulation d'une intervention"); return; }
+        if (MessageBox.Show($"Annuler l'intervention du {SelectedIntervention.Timestamp:dd/MM/yyyy HH:mm} ?\n\n" +
+                            $"Les paquets {string.Join(", ", SelectedIntervention.AddedDriverPackages)} seront retirés et les périphériques " +
+                            "reviendront à leur pilote précédent.", "SpokaPilote", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
+            return;
+        var target = SelectedIntervention;
+        await RunBusyAsync("Annulation de l'intervention...", async ct =>
+        {
+            var (_, message) = await InterventionHistory.RollbackAsync(target, new Progress<string>(m => Status = m), ct);
+            Status = message;
+            RefreshHistory();
+        });
+    }
+
+    private async Task RestoreBackupAsync()
+    {
+        if (SelectedBackup is null) return;
+        if (!IsAdmin) { AskRelaunch("La restauration d'une sauvegarde"); return; }
+        var folder = SelectedBackup;
+        await RunBusyAsync("Restauration de la sauvegarde...", async ct =>
+        {
+            var (_, message) = await InterventionHistory.RestoreBackupAsync(folder, ct);
+            Status = message;
+        });
+    }
+
+    // ------------------------------------------------------------------ pack hors ligne et parc
+
+    private bool _packAllHardware;
+    public bool PackAllHardware { get => _packAllHardware; set => Set(ref _packAllHardware, value); }
+    public RelayCommand BuildPackCommand { get; }
+    public RelayCommand FleetReportCommand { get; }
+
+    private async Task BuildPackAsync()
+    {
+        var open = new OpenFileDialog
+        {
+            Title = "Rapport JSON du poste sans réseau (spokapilote scan --json), ou Annuler pour ce poste",
+            Filter = "Rapport SpokaPilote (*.json)|*.json",
+        };
+        var reportPath = open.ShowDialog() == true ? open.FileName : null;
+        var dest = new OpenFolderDialog { Title = "Dossier du pack (ex. clé USB)" };
+        if (dest.ShowDialog() != true) return;
+
+        await RunBusyAsync("Préparation du pack hors ligne...", async ct =>
+        {
+            SystemInfo system;
+            IReadOnlyList<DeviceInfo> devices;
+            if (reportPath is not null)
+            {
+                var report = ScanReport.Load(reportPath);
+                (system, devices) = (report.System, report.Devices);
+            }
+            else if (LastScan is not null)
+            {
+                (system, devices) = (LastScan.System, LastScan.Devices);
+            }
+            else
+            {
+                system = await Task.Run(Core.Inventory.SystemInfoProvider.Collect, ct);
+                devices = await Task.Run(Core.Inventory.DeviceInventory.Collect, ct);
+            }
+            var result = await OfflinePackBuilder.BuildAsync(system, devices, dest.FolderName, PackAllHardware, Settings,
+                new Progress<string>(m => Status = m), ct);
+            RepositoryResult = $"{result.Summary}\nSur le poste cible : spokapilote install --repo \"{dest.FolderName}\" --yes " +
+                               "(ou ajoutez ce dossier comme dépôt dans l'interface).";
+            Status = result.Summary;
+            OpenPath(dest.FolderName);
+        });
+    }
+
+    private Task BuildFleetReport()
+    {
+        var dialog = new OpenFolderDialog { Title = "Dossier contenant les rapports JSON des postes (ex. \\\\serveur\\rapports)" };
+        if (dialog.ShowDialog() != true) return Task.CompletedTask;
+        var machines = FleetReport.Load(dialog.FolderName);
+        if (machines.Count == 0)
+        {
+            RepositoryResult = "Aucun rapport SpokaPilote dans ce dossier. Sur chaque poste : spokapilote install --yes --output-dir \\\\serveur\\rapports";
+            return Task.CompletedTask;
+        }
+        var output = Path.Combine(dialog.FolderName, "parc.html");
+        try
+        {
+            File.WriteAllText(output, FleetReport.ToHtml(machines, dialog.FolderName));
+        }
+        catch (UnauthorizedAccessException)
+        {
+            output = Path.Combine(AppPaths.Reports, "parc.html");
+            File.WriteAllText(output, FleetReport.ToHtml(machines, dialog.FolderName));
+        }
+        RepositoryResult = $"{machines.Count} poste(s), {machines.Count(m => !m.Healthy)} à traiter : {output}";
+        OpenPath(output);
+        return Task.CompletedTask;
+    }
+
+    private void AskRelaunch(string action)
+    {
+        if (MessageBox.Show($"{action} nécessite les droits administrateur.\n\nRelancer SpokaPilote en administrateur ?",
+                "SpokaPilote", MessageBoxButton.YesNo, MessageBoxImage.Information) == MessageBoxResult.Yes)
+            RelaunchAsAdmin();
     }
 
     public Settings Settings { get; }
@@ -226,6 +421,7 @@ public sealed class MainViewModel : ObservableObject
 
             foreach (var o in outcomes)
                 selected.FirstOrDefault(s => s.Candidate == o.Candidate)?.Apply(o);
+            if (!dryRun) RefreshHistory();
 
             var ok = outcomes.Count(o => o.Succeeded);
             var failed = outcomes.Count(o => o.Status is InstallStatus.Failed or InstallStatus.Blocked);
