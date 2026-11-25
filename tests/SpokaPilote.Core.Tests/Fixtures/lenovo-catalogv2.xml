@@ -1,0 +1,29 @@
+<ModelList version="1.0">
+ <!-- Extrait réduit du catalogv2.xml Lenovo réel. -->
+ <Model name="ThinkPad T14S Gen 2 Type 20WM 20WN" arch="Intel">
+  <Types>
+   <Type>20WN</Type>
+   <Type>20WM</Type>
+  </Types>
+  <BIOS version="1.67" image="n35e" date="2026-10-23" crc="cbd950c73b6588d5bd4c3cbfc8d036494a2028428a042b290f48eb01f6005ef1" md5="88eb90af712f412dd3d4e866482f94a2">https://download.lenovo.com/pccbbs/mobiles/n35uj29w.exe</BIOS>
+  <SCCM os="win10" version="22H2" date="2024-11-05" crc="ed8c5c9d35519c2aff96f9e1f66574ef388ba528db78d210e5b85c9cb7d51da6" md5="a2b90e58f5579bea9090172bc3ba2a4e">https://download.lenovo.com/pccbbs/mobiles/tp_t14s_gen2_mt20wm-20wn-x13_gen2_mt20wk-20wl_w1064_22h2_202409.exe</SCCM>
+  <SCCM os="win11" version="22H2" date="2023-11-05" crc="6d512d17ca62fac4609e5eeafdd3c524776ab3de95728aca80087e9ef437c485" md5="f23eb37e4699b30c1d06a8ff570b8e9b">https://download.lenovo.com/pccbbs/mobiles/tp_t14s_gen2_mt20wm-20wn-x13_gen2_mt20wk-20wl_w11_22_202311.exe</SCCM>
+  <SCCM os="win11" version="24H2" date="2024-11-05" crc="bec42c69ea9804a71116f601c3812aa8e179f24eea4ae119404e6a6c401d91e9" md5="b57548ff55f87251314842bc34a664bb">https://download.lenovo.com/pccbbs/mobiles/tp_t14s_gen2_mt20wm-20wn-x13_gen2_mt20wk-20wl_w11_24_202409.exe</SCCM>
+  <SCCM os="win11 IoT" version="24H2" date="2025-01-05" crc="0000000000000000000000000000000000000000000000000000000000000000" md5="00000000000000000000000000000000">https://download.lenovo.com/pccbbs/mobiles/tp_iot.exe</SCCM>
+  <HSA os="win11" version="22H2" date="2023-01-05" crc="35d889cefa8f4a8cbeb83584e6744408a08f840caca0e17928a0eedadb65b430" md5="d17a92a1c77a739e902d1c6911c1b91d">https://download.lenovo.com/pccbbs/mobiles/tp_hsa.exe</HSA>
+ </Model>
+ <Model name="ThinkPad X13 Gen 2 Type 20WK 20WL" arch="Intel">
+  <Types>
+   <Type>20WK</Type>
+   <Type>20WL</Type>
+  </Types>
+  <SCCM os="win11" version="24H2" date="2024-11-05" crc="bec42c69ea9804a71116f601c3812aa8e179f24eea4ae119404e6a6c401d91e9" md5="b57548ff55f87251314842bc34a664bb">https://download.lenovo.com/pccbbs/mobiles/tp_t14s_gen2_mt20wm-20wn-x13_gen2_mt20wk-20wl_w11_24_202409.exe</SCCM>
+ </Model>
+ <Model name="ThinkPad T14 Gen 2 Type 20W0 20W1" arch="Intel">
+  <Types>
+   <Type>20W0</Type>
+   <Type>20W1</Type>
+  </Types>
+  <SCCM os="win11" version="24H2" date="2024-10-01" crc="4444444444444444444444444444444444444444444444444444444444444444" md5="44444444444444444444444444444444">http://download.lenovo.com/pccbbs/mobiles/tp_t14_gen2_w11_24_202410.exe</SCCM>
+ </Model>
+</ModelList>

@@ -47,6 +47,8 @@ internal static partial class Program
                 "import" => await ImportAsync(a, cts.Token),
                 "printers" => await PrintersAsync(a, cts.Token),
                 "pack" => await PackAsync(a, cts.Token),
+                "driverpack" or "driver-pack" => await DriverPackAsync(a, cts.Token),
+                "image" => await ImageAsync(a, cts.Token),
                 "history" or "historique" => History(),
                 "rollback" or "annuler" => await RollbackAsync(a, cts.Token),
                 "restore" or "restaurer" => await RestoreAsync(a, cts.Token),
@@ -695,6 +697,21 @@ internal static partial class Program
               spokapilote config add-repo <\\serveur\pilotes>
               spokapilote pack <rapport.json|ce-poste> <dossier> [--all]
                                    prépare sur un poste connecté les pilotes d'un poste sans réseau
+
+            PACKS DE PILOTES OFFICIELS (Dell, HP, Lenovo — déploiement SCCM/MDT)
+              spokapilote driverpack list [--model "Latitude 7420"] [--vendor dell|hp|lenovo] [--os win11|win10]
+                                          [--arch x64|arm64] [--all]
+                                   sans --model : le pack du poste courant ; --all : toutes les versions
+              spokapilote driverpack download <dépôt> [--model ...] [--os ...] [--yes] [--force] [--keep-download]
+                                   télécharge, vérifie (empreinte, signature) et extrait le pack dans
+                                   <dépôt>\<Fabricant>\<Modèle>\<WinXX-arch>, prêt pour « install --repo »
+
+            IMAGES WINDOWS (DISM, console administrateur)
+              spokapilote image info <install.wim> [--index n]       éditions, architecture, version
+              spokapilote image inject --wim <install.wim> --index <n|1,3|all> --repo <dossier> [--dry-run] [--yes]
+              spokapilote image inject --offline D:\ --repo <dossier> [--dry-run] [--yes]
+                                   n'injecte que les INF signés et compatibles avec l'architecture de l'image
+              spokapilote image cleanup                    nettoie les montages orphelins (après une coupure)
 
             PARC
               spokapilote fleet-report <\\srv\rapports> [--out parc.html]   consolide les rapports de tous les postes

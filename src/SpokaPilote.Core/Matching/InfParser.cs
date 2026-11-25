@@ -13,8 +13,18 @@ public sealed class InfInfo
     public string? Provider { get; init; }
     public DateTime? DriverDate { get; init; }
     public string? DriverVersion { get; init; }
+    /// <summary>Un catalogue déclaré, quelle que soit la plateforme (indique seulement que l'INF se dit signé).</summary>
     public string? CatalogFile { get; init; }
+    /// <summary>CatalogFile par décoration : "" (non décoré), "NT", "NTamd64", "NTarm64", "NTx86".</summary>
+    public Dictionary<string, string> CatalogFiles { get; } = new(StringComparer.OrdinalIgnoreCase);
     public List<InfModel> Models { get; } = new();
+
+    /// <summary>
+    /// Catalogue utilisé par Windows pour cette architecture : CatalogFile.NT&lt;arch&gt;, sinon CatalogFile.NT,
+    /// sinon CatalogFile (ex. un INF MediaTek déclare mtkbtfilter.cat en non décoré et mtkbtfilterx.cat pour NTamd64).
+    /// </summary>
+    public string? CatalogFileFor(string architecture) =>
+        CatalogFiles.GetValueOrDefault("NT" + architecture) ?? CatalogFiles.GetValueOrDefault("NT") ?? CatalogFiles.GetValueOrDefault("") ?? CatalogFile;
 }
 
 /// <summary>
@@ -65,8 +75,11 @@ public static class InfParser
             Provider = Get("Version", "Provider"),
             DriverDate = date,
             DriverVersion = version,
-            CatalogFile = Get("Version", "CatalogFile") ?? Get("Version", "CatalogFile.NTamd64") ?? Get("Version", "CatalogFile.NT"),
+            CatalogFile = Get("Version", "CatalogFile") ?? Get("Version", "CatalogFile.NTamd64") ?? Get("Version", "CatalogFile.NTarm64") ?? Get("Version", "CatalogFile.NT") ?? Get("Version", "CatalogFile.NTx86"),
         };
+        foreach (var decoration in new[] { "", "NT", "NTamd64", "NTarm64", "NTx86" })
+            if (Get("Version", decoration.Length == 0 ? "CatalogFile" : "CatalogFile." + decoration) is { Length: > 0 } cat)
+                info.CatalogFiles[decoration] = cat;
 
         if (!sections.TryGetValue("Manufacturer", out var mfgLines)) return info;
 

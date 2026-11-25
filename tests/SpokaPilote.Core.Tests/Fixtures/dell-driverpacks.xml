@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Extrait réduit du DriverPackCatalog Dell réel (structure et attributs d'origine). -->
+<DriverPackManifest xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" baseLocation="downloads.dell.com" dateTime="2026-11-24T05:05:54" version="2026.11.04" schemaVersion="2.3" xmlns="openmanage/cm/dm">
+  <DriverPackage format="exe" hashMD5="237CA04FBC20119FE1F78A80B5719CCD" size="1629205184" dateTime="2024-02-08T23:36:09" vendorVersion="1.0" dellVersion="A12" path="FOLDER10951429M/1/7420-TXK42_Win10_1.0_A12.exe" releaseID="TXK42" type="win">
+    <Name><Display lang="en"><![CDATA[7420-TXK42_Win10_1.0_A12.exe]]></Display></Name>
+    <SupportedOperatingSystems>
+      <OperatingSystem osCode="Windows10" osVendor="Microsoft" osArch="x64" osType="client" majorVersion="10" minorVersion="0">
+        <Display lang="en"><![CDATA[ Windows 10 x64 ]]></Display>
+      </OperatingSystem>
+    </SupportedOperatingSystems>
+    <SupportedSystems>
+      <Brand key="4" prefix="LAT"><Display lang="en"><![CDATA[ Latitude ]]></Display>
+        <Model systemID="0A36" name="Latitude 7420"><Display lang="en"><![CDATA[ Latitude 7420 ]]></Display></Model>
+      </Brand>
+      <Brand key="4" prefix="LAT"><Display lang="en"><![CDATA[ Latitude ]]></Display>
+        <Model systemID="0A37" name="Latitude 7420"><Display lang="en"><![CDATA[ Latitude 7420 ]]></Display></Model>
+      </Brand>
+    </SupportedSystems>
+    <ImportantInfo URL="http://www.dell.com/support/home/us/en/04/Drivers/DriversDetails?driverId=TXK42" />
+    <Cryptography>
+      <Hash algorithm="MD5">237CA04FBC20119FE1F78A80B5719CCD</Hash>
+      <Hash algorithm="SHA1">787609FA459320DDB40001E5F29A767269AFB90A</Hash>
+      <Hash algorithm="SHA256">448389635D7CC0FE8741D37B60517D193C5041582C54F9D36FE918D76887BFF7</Hash>
+    </Cryptography>
+  </DriverPackage>
+  <DriverPackage format="exe" hashMD5="AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" size="1156357440" dateTime="2023-05-02T10:00:00" vendorVersion="1.0" dellVersion="A05" path="FOLDER0001M/1/7420-OLD01_Win11_1.0_A05.exe" releaseID="OLD01" type="win">
+    <SupportedOperatingSystems>
+      <OperatingSystem osCode="Windows11" osVendor="Microsoft" osArch="x64" />
+    </SupportedOperatingSystems>
+    <SupportedSystems>
+      <Brand key="4" prefix="LAT"><Model systemID="0A36" name="Latitude 7420" /></Brand>
+    </SupportedSystems>
+    <Cryptography><Hash algorithm="SHA256">1111111111111111111111111111111111111111111111111111111111111111</Hash></Cryptography>
+  </DriverPackage>
+  <DriverPackage format="exe" hashMD5="88B026A0402E57C3F5438B8D73EDD3B0" size="1256357440" dateTime="2024-02-08T23:36:09" vendorVersion="1.0" dellVersion="A07" path="FOLDER10951470M/1/7420-16KXP_Win11_1.0_A07.exe" releaseID="16KXP" type="win">
+    <SupportedOperatingSystems>
+      <OperatingSystem osCode="Windows11" osVendor="Microsoft" osArch="x64" />
+    </SupportedOperatingSystems>
+    <SupportedSystems>
+      <Brand key="4" prefix="LAT"><Model systemID="0A36" name="Latitude 7420" /></Brand>
+      <Brand key="4" prefix="LAT"><Model systemID="0A37" name="Latitude 7420" /></Brand>
+    </SupportedSystems>
+    <Cryptography>
+      <Hash algorithm="MD5">88B026A0402E57C3F5438B8D73EDD3B0</Hash>
+      <Hash algorithm="SHA256">21F923F4512EBAB5B3502E0E50EC0E854705C46AD783BD60BE2469B5DEA5B336</Hash>
+    </Cryptography>
+  </DriverPackage>
+  <DriverPackage format="CAB" hashMD5="BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB" size="809294928" dateTime="2025-01-10T00:00:00" vendorVersion="1.0" dellVersion="A01" path="FOLDER14914706M/1/Latitude 7455-Win11-A01-W394W.CAB" releaseID="W394W" type="win">
+    <SupportedOperatingSystems>
+      <OperatingSystem osCode="Windows11" osVendor="Microsoft" osArch="ARM64" />
+    </SupportedOperatingSystems>
+    <SupportedSystems>
+      <Brand key="4" prefix="LAT"><Model systemID="0C7A" name="Latitude 7455" /></Brand>
+    </SupportedSystems>
+    <Cryptography><Hash algorithm="SHA256">2222222222222222222222222222222222222222222222222222222222222222</Hash></Cryptography>
+  </DriverPackage>
+  <DriverPackage format="cab" hashMD5="CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC" size="300000000" dateTime="2024-01-01T00:00:00" vendorVersion="1.0" dellVersion="A01" path="FOLDER0002M/1/WinPE11.0-Drivers-A01-ABCDE.CAB" releaseID="ABCDE" type="winpe">
+    <SupportedOperatingSystems>
+      <OperatingSystem osCode="winpe11x" osVendor="Microsoft" osArch="x64" />
+    </SupportedOperatingSystems>
+    <SupportedSystems>
+      <Brand key="4" prefix="LAT"><Model systemID="0A36" name="Latitude 7420" /></Brand>
+    </SupportedSystems>
+  </DriverPackage>
+</DriverPackManifest>
