@@ -9,3 +9,6 @@ TestResults/
 dist/
 dist-store/
 packaging/deps/
+
+# Espace de travail des agents Claude Code (worktrees)
+.claude/
