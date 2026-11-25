@@ -56,6 +56,7 @@ internal static partial class Program
                 "policy" or "politique" => await PolicyAsync(a, cts.Token),
                 "schedule" or "planification" => await ScheduleAsync(a, cts.Token),
                 "maintenance" => await MaintenanceAsync(a, cts.Token),
+                "server" or "serveur" => await ServerAsync(a, cts.Token),
                 "version" or "--version" => Version(),
                 _ => Help(),
             };
@@ -142,6 +143,7 @@ internal static partial class Program
         }
 
         WriteReports(a, scan, outcomes);
+        await UploadToServerAsync(a, settings, scan, outcomes, ct);
         return exit;
     }
 
@@ -674,6 +676,7 @@ internal static partial class Program
                 --repo <chemin>      ajoute un dépôt local/réseau pour cette exécution (répétable)
                 --output-dir <dir>   dépose <POSTE>.json et <POSTE>.html (ex. \\srv\rapports) pour le rapport de parc
                 --policy <fichier|url>  applique cette politique de pilotes pour cette exécution (essai avant déploiement)
+                --no-upload          n'envoie pas le rapport à la console centrale (si ServerUrl est configuré)
 
             POLITIQUE DE PILOTES (approbation / liste noire, voir docs/POLITIQUE.md)
               spokapilote policy show                      politique en vigueur, origine et règles
@@ -695,6 +698,8 @@ internal static partial class Program
 
             PARC
               spokapilote fleet-report <\\srv\rapports> [--out parc.html]   consolide les rapports de tous les postes
+              spokapilote server status                    teste la connexion à la console centrale (ServerUrl, ServerToken)
+              spokapilote server upload <rapport.json|dossier>   envoie des rapports existants à la console centrale
               spokapilote self-update [--yes]              met SpokaPilote à jour (Release GitHub vérifiée)
 
             IMPRIMANTES

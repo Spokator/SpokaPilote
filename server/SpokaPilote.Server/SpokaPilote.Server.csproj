@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <!--
+    Console centrale SpokaPilote Server : API + console web, conçue pour tourner dans un conteneur Linux.
+    Le Directory.Build.props racine cible Windows (WPF, WMI) : on le surcharge ici pour rester multiplateforme
+    tout en héritant de la version du produit.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <SupportedOSPlatformVersion></SupportedOSPlatformVersion>
+    <RuntimeIdentifiers></RuntimeIdentifiers>
+    <RootNamespace>SpokaPilote.Server</RootNamespace>
+    <AssemblyName>SpokaPilote.Server</AssemblyName>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- Seule dépendance : le fournisseur SQLite officiel de Microsoft (stockage embarqué, sans serveur de base de données). -->
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.15" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="SpokaPilote.Server.Tests" />
+  </ItemGroup>
+</Project>

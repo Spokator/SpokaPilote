@@ -1,0 +1,34 @@
+# SpokaPilote Server — déploiement de la console centrale.
+#   docker compose -f server/docker-compose.yml up -d --build
+# Jetons : laissez SPOKAPILOTE_ADMIN_TOKEN / SPOKAPILOTE_AGENT_TOKEN vides pour qu'ils soient générés au premier
+# démarrage (visibles dans « docker compose logs » et dans le volume), ou fixez-les dans un fichier .env à côté de ce fichier.
+# En production, publiez la console en HTTPS derrière un reverse proxy (voir docs/CONSOLE-CENTRALE.md).
+
+services:
+  spokapilote:
+    build:
+      context: ..
+      dockerfile: server/Dockerfile
+    image: spokapilote-server:latest
+    container_name: spokapilote-server
+    restart: unless-stopped
+    ports:
+      # Derrière un reverse proxy sur le même hôte, préférez "127.0.0.1:8080:8080".
+      - "8080:8080"
+    environment:
+      SPOKAPILOTE_ADMIN_TOKEN: ${SPOKAPILOTE_ADMIN_TOKEN:-}
+      SPOKAPILOTE_AGENT_TOKEN: ${SPOKAPILOTE_AGENT_TOKEN:-}
+      SPOKAPILOTE_HISTORY: ${SPOKAPILOTE_HISTORY:-20}
+      SPOKAPILOTE_STALE_DAYS: ${SPOKAPILOTE_STALE_DAYS:-7}
+      SPOKAPILOTE_MAX_REPORT_MB: ${SPOKAPILOTE_MAX_REPORT_MB:-5}
+      TZ: Europe/Paris
+    volumes:
+      - spokapilote-data:/data
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  spokapilote-data:
