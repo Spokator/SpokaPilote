@@ -2,6 +2,7 @@
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <AssemblyName>spokapilote</AssemblyName>
+    <AssemblyTitle>SpokaPilote (ligne de commande)</AssemblyTitle>
     <RootNamespace>SpokaPilote.Cli</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
   </PropertyGroup>

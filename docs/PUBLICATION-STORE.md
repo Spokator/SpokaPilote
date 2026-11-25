@@ -44,7 +44,7 @@ fournissez une justification. Texte proposé :
 
 - **Catégorie** : Outils de développement / Utilitaires et outils
 - **Description courte** : *Pilotes de confiance pour tout le poste et les imprimantes d'entreprise, depuis les sources officielles uniquement.*
-- **Captures** : lancez `SpokaPilote.exe --screenshot <dossier> --scan` pour générer une capture de chaque écran.
+- **Captures** : lancez `SpokaPilote.App.exe --screenshot <dossier> --scan` pour générer une capture de chaque écran.
 - **Logo** : `packaging\Assets\StoreListing300.png` (300×300) ; régénérez les visuels avec `tools\make-assets.ps1`.
 - **Politique de confidentialité** (URL obligatoire) : SpokaPilote ne collecte aucune donnée personnelle ; il contacte
   uniquement les serveurs de Microsoft et des constructeurs pour télécharger des catalogues et des pilotes.

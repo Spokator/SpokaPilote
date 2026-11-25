@@ -20,7 +20,7 @@ public partial class MainWindow : Window
 
     /// <summary>
     /// Mode capture (vérification visuelle / visuels pour le Store) :
-    /// SpokaPilote.exe --screenshot dossier [--scan] — exporte une image PNG de chaque onglet puis quitte.
+    /// SpokaPilote.App.exe --screenshot dossier [--scan] — exporte une image PNG de chaque onglet puis quitte.
     /// </summary>
     private async void OnContentRendered(object? sender, EventArgs e)
     {

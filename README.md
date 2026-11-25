@@ -106,7 +106,7 @@ src/
     Repository/              index du dépôt, export « poste de référence », import
     Engine/                  orchestration, fusion des sources, rapports HTML/JSON
   SpokaPilote.Cli/           spokapilote.exe
-  SpokaPilote.App/           SpokaPilote.exe (WPF .NET 10, thème Fluent)
+  SpokaPilote.App/           SpokaPilote.App.exe (WPF .NET 10, thème Fluent)
 tests/SpokaPilote.Core.Tests 78 tests (INF, catalogue, SNMP/IPP, Dell/HP/Lenovo, confiance, fusion)
 installer/                   installeur Inno Setup (SpokaPilote.iss + images de l'assistant)
 packaging/                   manifeste MSIX et visuels du Store

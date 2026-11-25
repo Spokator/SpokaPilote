@@ -5,7 +5,7 @@
   #define AppVersion "0.1.0"
 #endif
 #define AppName "SpokaPilote"
-#define AppExe "SpokaPilote.exe"
+#define AppExe "SpokaPilote.App.exe"
 #define CliExe "spokapilote.exe"
 #define AppPublisher "Spoka"
 

@@ -37,7 +37,7 @@
 
   <Applications>
     <!-- Application graphique -->
-    <Application Id="SpokaPilote" Executable="SpokaPilote.exe" EntryPoint="Windows.FullTrustApplication">
+    <Application Id="SpokaPilote" Executable="SpokaPilote.App.exe" EntryPoint="Windows.FullTrustApplication">
       <uap:VisualElements
         DisplayName="SpokaPilote"
         Description="Pilotes de confiance : analyse, téléchargement depuis les sources officielles et installation."

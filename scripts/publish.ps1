@@ -25,4 +25,12 @@ foreach ($project in "src\SpokaPilote.App\SpokaPilote.App.csproj", "src\SpokaPil
         -p:DebugType=none -o $out --nologo -v q
     if ($LASTEXITCODE -ne 0) { throw "La publication de $project a échoué." }
 }
-Write-Host "OK -> $out" -ForegroundColor Green
+# Contrôles : deux projets publiés dans le même dossier ne doivent jamais s'écraser (Windows ignore la casse).
+foreach ($required in "SpokaPilote.App.exe", "SpokaPilote.App.dll", "spokapilote.exe", "spokapilote.dll", "SpokaPilote.Core.dll") {
+    if (-not (Test-Path (Join-Path $out $required))) { throw "Fichier attendu absent après publication : $required" }
+}
+$cliVersion = & (Join-Path $out "spokapilote.exe") version
+if ($LASTEXITCODE -ne 0) { throw "spokapilote.exe ne démarre pas." }
+$gui = [System.Diagnostics.FileVersionInfo]::GetVersionInfo((Join-Path $out "SpokaPilote.App.exe"))
+if ($gui.InternalName -notlike "SpokaPilote.App*") { throw "SpokaPilote.App.exe n'est pas l'interface graphique ($($gui.InternalName))." }
+Write-Host "OK -> $out (CLI $cliVersion)" -ForegroundColor Green

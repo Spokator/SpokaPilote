@@ -2,7 +2,9 @@
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <UseWPF>true</UseWPF>
-    <AssemblyName>SpokaPilote</AssemblyName>
+    <!-- Pas « SpokaPilote » : Windows ignore la casse et la CLI s'appelle spokapilote.exe dans le même dossier. -->
+    <AssemblyName>SpokaPilote.App</AssemblyName>
+    <AssemblyTitle>SpokaPilote</AssemblyTitle>
     <RootNamespace>SpokaPilote.App</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Assets\SpokaPilote.ico</ApplicationIcon>
