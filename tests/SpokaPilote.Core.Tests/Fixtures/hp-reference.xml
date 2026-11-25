@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<ImagePal>
+  <Version>3</Version>
+  <Devices>
+    <Device>
+      <DeviceId>PCI\VEN_8086&amp;DEV_15F3</DeviceId>
+      <DriverVersion>12.19.1.1</DriverVersion>
+      <Solutions><UpdateInfo IdRef="sp170001" /></Solutions>
+    </Device>
+    <Device>
+      <DeviceId>ACPI\HPQ6001</DeviceId>
+      <Solutions><UpdateInfo IdRef="sp170002" /></Solutions>
+    </Device>
+  </Devices>
+  <Solutions>
+    <UpdateInfo><Id>sp170001</Id><Name>Intel Ethernet Driver</Name><Category>Driver - Network</Category><Version>12.19.2.60</Version><Vendor>Intel</Vendor><SilentInstall>"Setup.exe" -s</SilentInstall><Url>ftp.hp.com/pub/softpaq/sp170001-170500/sp170001.exe</Url><SHA256>C550B470A4E99BBD70CA3B557EC82236A974629111AA50953A16BCC825E59DDD</SHA256><Size>1000</Size><DateReleased>2026-02-01</DateReleased></UpdateInfo>
+    <UpdateInfo><Id>sp170002</Id><Name>HP Wireless Button Driver</Name><Category>Driver - Keyboard, Mouse and Input Devices</Category><Version>2.1.17.7</Version><SilentInstall>install.cmd</SilentInstall><Url>ftp.hp.com/pub/softpaq/sp170001-170500/sp170002.exe</Url><Size>1000</Size></UpdateInfo>
+    <UpdateInfo><Id>sp170003</Id><Name>HP Support Assistant</Name><Category>Software - Support</Category><Version>9.0</Version><SilentInstall>setup.exe /s</SilentInstall><Url>ftp.hp.com/pub/softpaq/x/sp170003.exe</Url></UpdateInfo>
+    <UpdateInfo><Id>sp170004</Id><Name>HP Audio Control</Name><Category>Driver - Audio</Category><Version>1.0</Version><SilentInstall>setup.exe /s</SilentInstall><Url>ftp.hp.com/pub/softpaq/x/sp170004.exe</Url></UpdateInfo>
+  </Solutions>
+</ImagePal>

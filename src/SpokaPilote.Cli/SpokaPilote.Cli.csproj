@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>spokapilote</AssemblyName>
+    <RootNamespace>SpokaPilote.Cli</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\SpokaPilote.Core\SpokaPilote.Core.csproj" />
+  </ItemGroup>
+</Project>

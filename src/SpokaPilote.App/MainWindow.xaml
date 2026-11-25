@@ -1,0 +1,432 @@
+﻿<Window x:Class="SpokaPilote.App.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:vm="clr-namespace:SpokaPilote.App.ViewModels"
+        mc:Ignorable="d"
+        d:DataContext="{d:DesignInstance Type=vm:MainViewModel}"
+        Title="SpokaPilote — pilotes de confiance"
+        Width="1240" Height="800" MinWidth="980" MinHeight="620"
+        WindowStartupLocation="CenterScreen">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <TabControl x:Name="Tabs" TabStripPlacement="Left" Padding="0" BorderThickness="0">
+            <TabControl.Resources>
+                <Style TargetType="TabItem" BasedOn="{StaticResource {x:Type TabItem}}">
+                    <Setter Property="MinWidth" Value="190" />
+                    <Setter Property="Padding" Value="12,8" />
+                    <Setter Property="HorizontalContentAlignment" Value="Left" />
+                </Style>
+            </TabControl.Resources>
+
+            <!-- ====================================================== CE POSTE -->
+            <TabItem>
+                <TabItem.Header>
+                    <TextBlock Style="{StaticResource NavHeader}">🖥  Ce poste</TextBlock>
+                </TabItem.Header>
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Margin="28,24">
+                        <TextBlock Style="{StaticResource PageTitle}" Text="{Binding MachineTitle}" TextWrapping="Wrap" />
+                        <TextBlock Style="{StaticResource PageSubtitle}" Text="{Binding MachineDetails}" />
+
+                        <Border Style="{StaticResource Card}" Margin="0,0,0,16"
+                                Visibility="{Binding IsNotAdmin, Converter={StaticResource BoolToVisibility}}">
+                            <DockPanel>
+                                <Button DockPanel.Dock="Right" Content="Relancer en administrateur" Command="{Binding RelaunchAsAdminCommand}" />
+                                <TextBlock VerticalAlignment="Center" TextWrapping="Wrap" Margin="0,0,16,0">
+                                    <Run FontWeight="SemiBold">Mode analyse.</Run>
+                                    <Run>L'inventaire et la recherche fonctionnent ; l'installation de pilotes et d'imprimantes demande les droits administrateur.</Run>
+                                </TextBlock>
+                            </DockPanel>
+                        </Border>
+
+                        <Border Style="{StaticResource Card}">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel VerticalAlignment="Center">
+                                    <TextBlock FontSize="18" FontWeight="SemiBold" Text="{Binding HealthHeadline}" TextWrapping="Wrap" />
+                                    <TextBlock Margin="0,6,0,0" Opacity="0.75" TextWrapping="Wrap"
+                                               Text="Sources interrogées : dépôt interne, catalogue officiel du constructeur (Dell, HP, Lenovo), Windows Update et Microsoft Update Catalog. Rien d'autre." />
+                                    <CheckBox Margin="0,12,0,0" IsChecked="{Binding DeepScan}"
+                                              Content="Analyse approfondie (cherche aussi des mises à jour pour les composants qui fonctionnent)" />
+                                </StackPanel>
+                                <Button Grid.Column="1" Margin="24,0,0,0" Padding="28,12" FontSize="15" VerticalAlignment="Center"
+                                        Style="{DynamicResource AccentButtonStyle}"
+                                        Content="Analyser ce poste" Command="{Binding ScanCommand}" />
+                            </Grid>
+                        </Border>
+
+                        <UniformGrid Columns="4" Margin="0,16,0,0">
+                            <Border Style="{StaticResource Card}" Margin="0,0,8,0">
+                                <StackPanel>
+                                    <TextBlock Style="{StaticResource TileValue}" Text="{Binding SummaryDevices}" />
+                                    <TextBlock Style="{StaticResource TileLabel}" Text="périphériques détectés" />
+                                </StackPanel>
+                            </Border>
+                            <Border Style="{StaticResource Card}" Margin="4,0">
+                                <StackPanel>
+                                    <TextBlock Style="{StaticResource TileValue}" Text="{Binding SummaryProblems}" />
+                                    <TextBlock Style="{StaticResource TileLabel}" Text="en erreur" />
+                                </StackPanel>
+                            </Border>
+                            <Border Style="{StaticResource Card}" Margin="4,0">
+                                <StackPanel>
+                                    <TextBlock Style="{StaticResource TileValue}" Text="{Binding SummaryCandidates}" />
+                                    <TextBlock Style="{StaticResource TileLabel}" Text="pilotes proposés" />
+                                </StackPanel>
+                            </Border>
+                            <Border Style="{StaticResource Card}" Margin="8,0,0,0">
+                                <StackPanel>
+                                    <TextBlock Style="{StaticResource TileValue}" Text="{Binding SummaryUnresolved}" />
+                                    <TextBlock Style="{StaticResource TileLabel}" Text="sans solution automatique" />
+                                </StackPanel>
+                            </Border>
+                        </UniformGrid>
+
+                        <Border Style="{StaticResource Card}" Margin="0,16,0,0"
+                                Visibility="{Binding HasSourceWarnings, Converter={StaticResource BoolToVisibility}}">
+                            <StackPanel>
+                                <TextBlock FontWeight="SemiBold" Text="⚠ Sources partiellement disponibles" />
+                                <TextBlock Margin="0,4,0,0" TextWrapping="Wrap" Text="{Binding SourceWarnings}" />
+                            </StackPanel>
+                        </Border>
+
+                        <TextBlock Style="{StaticResource SectionTitle}" Text="Périphériques sans pilote trouvé" />
+                        <ItemsControl ItemsSource="{Binding UnresolvedDevices}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate DataType="{x:Type vm:DeviceItem}">
+                                    <Border Style="{StaticResource Card}" Margin="0,0,0,8" Padding="12">
+                                        <StackPanel>
+                                            <TextBlock FontWeight="SemiBold" Text="{Binding Name}" TextWrapping="Wrap" />
+                                            <TextBlock Opacity="0.75" Text="{Binding Status}" />
+                                            <TextBlock FontFamily="Consolas" FontSize="12" Opacity="0.75" Text="{Binding HardwareId}" TextWrapping="Wrap" />
+                                            <TextBlock Margin="0,4,0,0" TextWrapping="Wrap" Text="{Binding Hint}" />
+                                        </StackPanel>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                        <TextBlock Opacity="0.6" Text="Aucun pour l'instant." Margin="0,0,0,8">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock">
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding UnresolvedDevices.Count}" Value="0">
+                                            <Setter Property="Visibility" Value="Visible" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                        <Button HorizontalAlignment="Left" Margin="0,8,0,0" Content="Exporter le rapport (HTML / JSON)" Command="{Binding ExportHtmlCommand}" />
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <!-- ====================================================== PILOTES -->
+            <TabItem>
+                <TabItem.Header>
+                    <TextBlock Style="{StaticResource NavHeader}">⬇  Pilotes</TextBlock>
+                </TabItem.Header>
+                <Grid Margin="28,24">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+                    <StackPanel>
+                        <TextBlock Style="{StaticResource PageTitle}" Text="Pilotes proposés" />
+                        <TextBlock Style="{StaticResource PageSubtitle}"
+                                   Text="Chaque paquet est téléchargé depuis la source officielle, contrôlé (empreinte + signature numérique d'un éditeur approuvé + compatibilité réelle avec le matériel) avant installation. Les pilotes optionnels et les BIOS/firmwares ne sont pas cochés par défaut." />
+                    </StackPanel>
+                    <WrapPanel Grid.Row="1" Margin="0,0,0,12">
+                        <Button Content="Tout cocher" Command="{Binding SelectAllCommand}" Margin="0,0,8,8" />
+                        <Button Content="Tout décocher" Command="{Binding SelectNoneCommand}" Margin="0,0,24,8" />
+                        <CheckBox Content="Point de restauration" IsChecked="{Binding CreateRestorePoint}" Margin="0,0,16,8" VerticalAlignment="Center" />
+                        <CheckBox Content="Sauvegarder les pilotes actuels" IsChecked="{Binding BackupDrivers}" Margin="0,0,24,8" VerticalAlignment="Center" />
+                        <Button Content="Simuler (télécharger et vérifier)" Command="{Binding SimulateCommand}" Margin="0,0,8,8" />
+                        <Button Content="Installer la sélection" Command="{Binding InstallCommand}" Style="{DynamicResource AccentButtonStyle}" Margin="0,0,8,8" />
+                    </WrapPanel>
+                    <DataGrid Grid.Row="2" ItemsSource="{Binding Candidates}" AutoGenerateColumns="False" CanUserAddRows="False"
+                              HeadersVisibility="Column" GridLinesVisibility="Horizontal" SelectionMode="Single">
+                        <DataGrid.Columns>
+                            <DataGridTemplateColumn Header="" Width="44">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <CheckBox IsChecked="{Binding IsSelected, UpdateSourceTrigger=PropertyChanged}" HorizontalAlignment="Center" MinWidth="0" />
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTextColumn Header="Type" Binding="{Binding Kind}" Width="110" IsReadOnly="True" />
+                            <DataGridTextColumn Header="Pilote" Binding="{Binding Title}" Width="3*" MinWidth="220" IsReadOnly="True" />
+                            <DataGridTextColumn Header="Version" Binding="{Binding Version}" Width="100" IsReadOnly="True" />
+                            <DataGridTextColumn Header="Date" Binding="{Binding Date}" Width="86" IsReadOnly="True" />
+                            <DataGridTextColumn Header="Source" Binding="{Binding Source}" Width="150" IsReadOnly="True" />
+                            <DataGridTextColumn Header="Taille" Binding="{Binding Size}" Width="70" IsReadOnly="True" />
+                            <DataGridTextColumn Header="Périphérique(s)" Binding="{Binding Devices}" Width="1.5*" IsReadOnly="True" />
+                            <DataGridTemplateColumn Header="État" Width="1.5*" IsReadOnly="True">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding Status}" ToolTip="{Binding StatusDetail}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </Grid>
+            </TabItem>
+
+            <!-- ====================================================== PÉRIPHÉRIQUES -->
+            <TabItem>
+                <TabItem.Header>
+                    <TextBlock Style="{StaticResource NavHeader}">🧩  Périphériques</TextBlock>
+                </TabItem.Header>
+                <Grid Margin="28,24">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+                    <StackPanel>
+                        <TextBlock Style="{StaticResource PageTitle}" Text="Inventaire matériel" />
+                        <TextBlock Style="{StaticResource PageSubtitle}" Text="Tous les composants détectés, leur pilote actuel et leur état. Survolez un périphérique en erreur pour le diagnostic." />
+                        <CheckBox Content="Afficher aussi les périphériques logiciels et virtuels" IsChecked="{Binding ShowAllDevices}" Margin="0,0,0,12" />
+                    </StackPanel>
+                    <DataGrid Grid.Row="1" ItemsSource="{Binding Devices}" AutoGenerateColumns="False" IsReadOnly="True"
+                              HeadersVisibility="Column" GridLinesVisibility="Horizontal">
+                        <DataGrid.RowStyle>
+                            <Style TargetType="DataGridRow" BasedOn="{StaticResource {x:Type DataGridRow}}">
+                                <Setter Property="ToolTip" Value="{Binding Hint}" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding HasProblem}" Value="True">
+                                        <Setter Property="FontWeight" Value="SemiBold" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </DataGrid.RowStyle>
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="" Binding="{Binding Icon}" Width="36" />
+                            <DataGridTextColumn Header="Périphérique" Binding="{Binding Name}" Width="2*" />
+                            <DataGridTextColumn Header="Classe" Binding="{Binding Class}" Width="110" />
+                            <DataGridTextColumn Header="Version du pilote" Binding="{Binding DriverVersion}" Width="140" />
+                            <DataGridTextColumn Header="Date" Binding="{Binding DriverDate}" Width="90" />
+                            <DataGridTextColumn Header="Fournisseur" Binding="{Binding Provider}" Width="1*" />
+                            <DataGridTextColumn Header="État" Binding="{Binding Status}" Width="1*" />
+                            <DataGridTextColumn Header="ID matériel" Binding="{Binding HardwareId}" Width="1.6*" FontFamily="Consolas" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </Grid>
+            </TabItem>
+
+            <!-- ====================================================== IMPRIMANTES -->
+            <TabItem>
+                <TabItem.Header>
+                    <TextBlock Style="{StaticResource NavHeader}">🖨  Imprimantes</TextBlock>
+                </TabItem.Header>
+                <Grid Margin="28,24">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+                    <StackPanel>
+                        <TextBlock Style="{StaticResource PageTitle}" Text="Imprimantes et copieurs réseau" />
+                        <TextBlock Style="{StaticResource PageSubtitle}"
+                                   Text="SpokaPilote détecte les imprimantes (SNMP, IPP), identifie le modèle exact et choisit le pilote : déjà présent, dépôt interne, Microsoft (WHQL), pilote universel du constructeur, ou pilote IPP intégré à Windows en dernier recours." />
+                    </StackPanel>
+                    <DockPanel Grid.Row="1" Margin="0,0,0,12" LastChildFill="False">
+                        <TextBlock DockPanel.Dock="Left" VerticalAlignment="Center" Text="Plage (facultatif) :" Margin="0,0,8,0" />
+                        <TextBox DockPanel.Dock="Left" Width="260" Text="{Binding PrinterRange, UpdateSourceTrigger=PropertyChanged}"
+                                 ToolTip="Vide = réseau local. Exemples : 10.0.1.0/24 · 192.168.1.20-192.168.1.80 · 10.0.2.15" />
+                        <Button DockPanel.Dock="Left" Margin="8,0,0,0" Content="Rechercher les imprimantes"
+                                Style="{DynamicResource AccentButtonStyle}" Command="{Binding DiscoverPrintersCommand}" />
+                    </DockPanel>
+                    <Grid Grid.Row="2">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="1*" />
+                            <ColumnDefinition Width="16" />
+                            <ColumnDefinition Width="1.1*" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Opacity="0.6" Margin="12" TextWrapping="Wrap" Panel.ZIndex="1" IsHitTestVisible="False"
+                                   Text="Aucune imprimante listée. Lancez « Rechercher les imprimantes »." >
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding Printers.Count}" Value="0">
+                                            <Setter Property="Visibility" Value="Visible" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                        <ListBox ItemsSource="{Binding Printers}" SelectedItem="{Binding SelectedPrinter}">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate DataType="{x:Type vm:PrinterItem}">
+                                    <StackPanel Margin="4,6">
+                                        <TextBlock FontWeight="SemiBold" Text="{Binding Name}" TextWrapping="Wrap" />
+                                        <TextBlock Opacity="0.8" Text="{Binding Address}" FontFamily="Consolas" />
+                                        <TextBlock Opacity="0.7" FontSize="12" Text="{Binding Details}" TextWrapping="Wrap" />
+                                        <TextBlock FontSize="12" Text="{Binding InstalledAs}" TextWrapping="Wrap" />
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                        <Border Grid.Column="2" Style="{StaticResource Card}" VerticalAlignment="Top">
+                            <StackPanel>
+                                <TextBlock FontWeight="SemiBold" FontSize="15" Text="Installation" />
+                                <TextBlock Opacity="0.7" Margin="0,2,0,12" TextWrapping="Wrap"
+                                           Text="Sélectionnez une imprimante à gauche, ou cherchez un pilote par modèle." />
+                                <TextBlock Text="Pilote" Margin="0,0,0,4" />
+                                <ComboBox ItemsSource="{Binding PrinterDriverOptions}" SelectedItem="{Binding SelectedPrinterDriver}" HorizontalAlignment="Stretch" />
+                                <TextBlock Text="Nom de l'imprimante" Margin="0,12,0,4" />
+                                <TextBox Text="{Binding PrinterName, UpdateSourceTrigger=PropertyChanged}" />
+                                <TextBlock Text="Emplacement" Margin="0,12,0,4" />
+                                <TextBox Text="{Binding PrinterLocation, UpdateSourceTrigger=PropertyChanged}" />
+                                <CheckBox Margin="0,12,0,0" Content="Définir comme imprimante par défaut" IsChecked="{Binding PrinterSetDefault}" />
+                                <Button Margin="0,16,0,0" HorizontalAlignment="Left" Style="{DynamicResource AccentButtonStyle}"
+                                        Content="Installer l'imprimante" Command="{Binding InstallPrinterCommand}" />
+                                <TextBlock Margin="0,12,0,0" TextWrapping="Wrap" Text="{Binding PrinterResult}" />
+
+                                <Separator Margin="0,16" />
+                                <TextBlock FontWeight="SemiBold" Text="Chercher un pilote par modèle" />
+                                <TextBlock Opacity="0.7" Margin="0,2,0,8" TextWrapping="Wrap"
+                                           Text="Pour une imprimante USB, hors réseau, ou pour préparer une intervention." />
+                                <DockPanel>
+                                    <Button DockPanel.Dock="Right" Margin="8,0,0,0" Content="Chercher" Command="{Binding FindPrinterDriverCommand}" />
+                                    <TextBox Text="{Binding ManualPrinterModel, UpdateSourceTrigger=PropertyChanged}"
+                                             ToolTip="Modèle exact, ex. KYOCERA TASKalfa 3253ci" />
+                                </DockPanel>
+                            </StackPanel>
+                        </Border>
+                    </Grid>
+                </Grid>
+            </TabItem>
+
+            <!-- ====================================================== DÉPÔT -->
+            <TabItem>
+                <TabItem.Header>
+                    <TextBlock Style="{StaticResource NavHeader}">🗄  Dépôt de pilotes</TextBlock>
+                </TabItem.Header>
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Margin="28,24">
+                        <TextBlock Style="{StaticResource PageTitle}" Text="Dépôt de pilotes de l'entreprise" />
+                        <TextBlock Style="{StaticResource PageSubtitle}"
+                                   Text="Pour déployer un parc : préparez un poste de référence par modèle, exportez ses pilotes vers un partage réseau, puis ajoutez ce partage ici. Les autres postes du même modèle s'installent depuis le dépôt, en priorité, même sans Internet." />
+                        <Border Style="{StaticResource Card}">
+                            <StackPanel>
+                                <TextBlock FontWeight="SemiBold" Text="Dépôts utilisés (local, clé USB ou \\serveur\partage)" />
+                                <ListBox Margin="0,8,0,8" MinHeight="90" ItemsSource="{Binding RepositoryPaths}" SelectedItem="{Binding SelectedRepository}" />
+                                <WrapPanel>
+                                    <Button Content="Ajouter un dépôt..." Command="{Binding AddRepositoryCommand}" Margin="0,0,8,8" />
+                                    <Button Content="Retirer" Command="{Binding RemoveRepositoryCommand}" Margin="0,0,8,8" />
+                                </WrapPanel>
+                            </StackPanel>
+                        </Border>
+                        <UniformGrid Columns="2" Margin="0,16,0,0">
+                            <Border Style="{StaticResource Card}" Margin="0,0,8,0">
+                                <StackPanel>
+                                    <TextBlock FontWeight="SemiBold" Text="Poste de référence" />
+                                    <TextBlock Opacity="0.75" TextWrapping="Wrap" Margin="0,4,0,12"
+                                               Text="Exporte tous les pilotes tiers de ce poste dans &lt;dépôt&gt;\Fabricant\Modèle\Windows." />
+                                    <Button HorizontalAlignment="Left" Content="Exporter les pilotes de ce poste..." Command="{Binding ExportDriversCommand}" />
+                                </StackPanel>
+                            </Border>
+                            <Border Style="{StaticResource Card}" Margin="8,0,0,0">
+                                <StackPanel>
+                                    <TextBlock FontWeight="SemiBold" Text="Importer un pilote" />
+                                    <TextBlock Opacity="0.75" TextWrapping="Wrap" Margin="0,4,0,12"
+                                               Text="Ajoute au dépôt sélectionné un pilote récupéré sur le site officiel d'un constructeur (.zip, .cab ou dossier extrait)." />
+                                    <Button HorizontalAlignment="Left" Content="Importer..." Command="{Binding ImportDriversCommand}" />
+                                </StackPanel>
+                            </Border>
+                        </UniformGrid>
+                        <TextBlock Margin="0,12,0,0" TextWrapping="Wrap" Text="{Binding RepositoryResult}" />
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <!-- ====================================================== JOURNAL -->
+            <TabItem>
+                <TabItem.Header>
+                    <TextBlock Style="{StaticResource NavHeader}">📜  Journal</TextBlock>
+                </TabItem.Header>
+                <Grid Margin="28,24">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+                    <DockPanel Margin="0,0,0,12">
+                        <Button DockPanel.Dock="Right" Content="Ouvrir le dossier des journaux" Command="{Binding OpenLogsCommand}" />
+                        <TextBlock Style="{StaticResource PageTitle}" Text="Journal" />
+                    </DockPanel>
+                    <ListBox Grid.Row="1" ItemsSource="{Binding LogLines}" FontFamily="Consolas" FontSize="12"
+                             VirtualizingPanel.IsVirtualizing="True" ScrollViewer.HorizontalScrollBarVisibility="Auto" />
+                </Grid>
+            </TabItem>
+
+            <!-- ====================================================== PARAMÈTRES -->
+            <TabItem>
+                <TabItem.Header>
+                    <TextBlock Style="{StaticResource NavHeader}">⚙  Paramètres</TextBlock>
+                </TabItem.Header>
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Margin="28,24" MaxWidth="820" HorizontalAlignment="Left">
+                        <TextBlock Style="{StaticResource PageTitle}" Text="Paramètres" />
+                        <TextBlock Style="{StaticResource PageSubtitle}"
+                                   Text="Enregistrés dans %ProgramData%\SpokaPilote\settings.json : le même fichier peut être déployé sur tout le parc (GPO, Intune, script)." />
+                        <Border Style="{StaticResource Card}">
+                            <StackPanel>
+                                <TextBlock FontWeight="SemiBold" Text="Sources de pilotes" Margin="0,0,0,8" />
+                                <CheckBox Content="Windows Update" IsChecked="{Binding Settings.UseWindowsUpdate}" Margin="0,4" />
+                                <CheckBox Content="Interroger Windows Update directement même si le poste est géré par WSUS" IsChecked="{Binding Settings.WindowsUpdateBypassWsus}" Margin="24,4,0,4" />
+                                <CheckBox Content="Microsoft Update Catalog (recherche par identifiant matériel)" IsChecked="{Binding Settings.UseMicrosoftCatalog}" Margin="0,4" />
+                                <CheckBox Content="Catalogues officiels des constructeurs (Dell, HP, Lenovo)" IsChecked="{Binding Settings.UseOemCatalogs}" Margin="0,4" />
+                                <CheckBox Content="Proposer aussi les mises à jour de BIOS et de firmware" IsChecked="{Binding Settings.IncludeBiosAndFirmware}" Margin="0,4" />
+                            </StackPanel>
+                        </Border>
+                        <Border Style="{StaticResource Card}" Margin="0,16,0,0">
+                            <StackPanel>
+                                <TextBlock FontWeight="SemiBold" Text="Sécurité" Margin="0,0,0,8" />
+                                <CheckBox Content="Créer un point de restauration avant installation" IsChecked="{Binding CreateRestorePoint}" Margin="0,4" />
+                                <CheckBox Content="Sauvegarder les pilotes actuels avant installation" IsChecked="{Binding BackupDrivers}" Margin="0,4" />
+                                <TextBlock Opacity="0.75" TextWrapping="Wrap" Margin="0,8,0,0"
+                                           Text="Toujours actif : HTTPS uniquement, domaines officiels uniquement, empreinte vérifiée, signature Authenticode d'un éditeur approuvé, et l'INF doit déclarer l'identifiant exact du matériel." />
+                            </StackPanel>
+                        </Border>
+                        <Border Style="{StaticResource Card}" Margin="0,16,0,0">
+                            <StackPanel>
+                                <TextBlock FontWeight="SemiBold" Text="Imprimantes" Margin="0,0,0,8" />
+                                <TextBlock Text="Catalogue d'imprimantes de l'organisation (URL HTTPS d'un fichier JSON, facultatif)" Margin="0,0,0,4" />
+                                <TextBox Text="{Binding Settings.PrinterCatalogUrl, UpdateSourceTrigger=PropertyChanged}" />
+                            </StackPanel>
+                        </Border>
+                        <Button Margin="0,16,0,0" HorizontalAlignment="Left" Style="{DynamicResource AccentButtonStyle}"
+                                Content="Enregistrer" Command="{Binding SaveSettingsCommand}" />
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+        </TabControl>
+
+        <!-- ====================================================== BARRE D'ÉTAT -->
+        <Border Grid.Row="1" BorderThickness="0,1,0,0" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" Padding="16,8">
+            <DockPanel>
+                <Button DockPanel.Dock="Right" Content="Annuler" Command="{Binding CancelCommand}"
+                        Visibility="{Binding IsBusy, Converter={StaticResource BoolToVisibility}}" />
+                <ProgressBar DockPanel.Dock="Right" Width="220" Height="6" Margin="12,0" VerticalAlignment="Center"
+                             Value="{Binding Progress}" IsIndeterminate="{Binding ProgressIndeterminate}"
+                             Visibility="{Binding IsBusy, Converter={StaticResource BoolToVisibility}}" />
+                <TextBlock DockPanel.Dock="Right" Margin="12,0" VerticalAlignment="Center" FontWeight="SemiBold"
+                           Text="Redémarrage nécessaire" Visibility="{Binding RebootPending, Converter={StaticResource BoolToVisibility}}" />
+                <TextBlock VerticalAlignment="Center" Text="{Binding Status}" TextTrimming="CharacterEllipsis" />
+            </DockPanel>
+        </Border>
+    </Grid>
+</Window>

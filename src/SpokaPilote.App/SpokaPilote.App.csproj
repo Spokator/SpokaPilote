@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <UseWPF>true</UseWPF>
+    <AssemblyName>SpokaPilote</AssemblyName>
+    <RootNamespace>SpokaPilote.App</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets\SpokaPilote.ico</ApplicationIcon>
+    <!-- Thème Fluent natif de WPF .NET 9 (API marquée expérimentale) -->
+    <NoWarn>$(NoWarn);WPF0001</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\SpokaPilote.Core\SpokaPilote.Core.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <Resource Include="Assets\SpokaPilote.ico" />
+  </ItemGroup>
+</Project>

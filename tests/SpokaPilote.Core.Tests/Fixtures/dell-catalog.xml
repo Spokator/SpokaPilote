@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Manifest baseLocation="downloads.dell.com" version="26.06.12">
+  <SoftwareComponent packageID="AAA01" releaseID="AAA01" hashMD5="6ca1a71bbaa8a53f3509858d3b39033f" path="FOLDER1/1/Intel-Ethernet_AAA01_WIN64_12.19.2.60_A01.EXE" dateTime="2026-03-01T09:00:00Z" vendorVersion="12.19.2.60" dellVersion="A01" packageType="LW64" size="1000" rebootRequired="false">
+    <Name><Display lang="en"><![CDATA[Intel Ethernet Driver,12.19.2.60,A01]]></Display></Name>
+    <ComponentType value="DRVR"><Display lang="en"><![CDATA[Driver]]></Display></ComponentType>
+    <Category value="NI"><Display lang="en"><![CDATA[Network]]></Display></Category>
+    <SupportedDevices><Device componentID="1"><PCIInfo deviceID="15F3" vendorID="8086" subDeviceID="" subVendorID="" /></Device></SupportedDevices>
+    <SupportedSystems><Brand key="1" prefix="LAT"><Model systemID="0A6B"><Display lang="en"><![CDATA[7420]]></Display></Model></Brand></SupportedSystems>
+    <SupportedOperatingSystems>
+      <OperatingSystem osCode="W11P4" osArch="x64"><Display lang="en"><![CDATA[Windows 11 x64]]></Display></OperatingSystem>
+    </SupportedOperatingSystems>
+  </SoftwareComponent>
+  <SoftwareComponent packageID="OLD01" releaseID="OLD01" hashMD5="00" path="FOLDER0/1/Intel-Ethernet_OLD.EXE" dateTime="2024-03-01T09:00:00Z" vendorVersion="12.19.1.1" dellVersion="A00" size="1000">
+    <Name><Display lang="en"><![CDATA[Intel Ethernet Driver,12.19.1.1,A00]]></Display></Name>
+    <ComponentType value="DRVR" />
+    <Category value="NI"><Display lang="en"><![CDATA[Network]]></Display></Category>
+    <SupportedDevices><Device componentID="1"><PCIInfo deviceID="15F3" vendorID="8086" /></Device></SupportedDevices>
+    <SupportedSystems><Brand key="1"><Model systemID="0A6B" /></Brand></SupportedSystems>
+    <SupportedOperatingSystems><OperatingSystem osArch="x64"><Display lang="en"><![CDATA[Windows 11 x64]]></Display></OperatingSystem></SupportedOperatingSystems>
+  </SoftwareComponent>
+  <SoftwareComponent packageID="OTHER" releaseID="OTHER" hashMD5="00" path="FOLDER2/1/Other.EXE" dateTime="2026-03-01T09:00:00Z" vendorVersion="1.0" size="1000">
+    <Name><Display lang="en"><![CDATA[Driver for another model]]></Display></Name>
+    <ComponentType value="DRVR" />
+    <SupportedSystems><Brand key="1"><Model systemID="0B00" /></Brand></SupportedSystems>
+    <SupportedOperatingSystems><OperatingSystem osArch="x64"><Display lang="en"><![CDATA[Windows 11 x64]]></Display></OperatingSystem></SupportedOperatingSystems>
+  </SoftwareComponent>
+  <SoftwareComponent packageID="BIOS1" releaseID="BIOS1" hashMD5="00" path="FOLDER3/1/Latitude_7420_1.40.0.exe" dateTime="2026-04-01T09:00:00Z" vendorVersion="1.40.0" size="1000">
+    <Name><Display lang="en"><![CDATA[Dell Latitude 7420 System BIOS,1.40.0]]></Display></Name>
+    <ComponentType value="BIOS" />
+    <SupportedSystems><Brand key="1"><Model systemID="0A6B" /></Brand></SupportedSystems>
+    <SupportedOperatingSystems><OperatingSystem osArch="x64"><Display lang="en"><![CDATA[Windows 11 x64]]></Display></OperatingSystem></SupportedOperatingSystems>
+  </SoftwareComponent>
+</Manifest>

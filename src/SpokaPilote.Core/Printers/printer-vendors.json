@@ -1,0 +1,118 @@
+{
+  "version": 1,
+  "comment": "Catalogue des constructeurs d'imprimantes. Peut être complété par un JSON hébergé par votre organisation (settings.printerCatalogUrl).",
+  "vendors": [
+    {
+      "id": "hp",
+      "name": "HP",
+      "match": ["hp", "hewlett-packard", "hewlett packard", "hpe"],
+      "universalDrivers": ["HP Universal Printing PCL 6", "HP Universal Printing PS", "HP Smart Universal Printing"],
+      "catalogQueries": ["HP Universal Printing PCL 6"],
+      "supportUrl": "https://support.hp.com/drivers"
+    },
+    {
+      "id": "samsung",
+      "name": "Samsung (HP)",
+      "match": ["samsung"],
+      "universalDrivers": ["Samsung Universal Print Driver 3", "Samsung Universal Print Driver"],
+      "catalogQueries": [],
+      "supportUrl": "https://support.hp.com/drivers"
+    },
+    {
+      "id": "xerox",
+      "name": "Xerox",
+      "match": ["xerox", "fuji xerox", "fujifilm"],
+      "universalDrivers": ["Xerox Global Print Driver PCL6", "Xerox Global Print Driver PS", "Xerox Global Print Driver PCL"],
+      "catalogQueries": ["Global Print Driver"],
+      "supportUrl": "https://www.support.xerox.com/"
+    },
+    {
+      "id": "lexmark",
+      "name": "Lexmark",
+      "match": ["lexmark"],
+      "universalDrivers": ["Lexmark Universal v2 XL", "Lexmark Universal v2", "Lexmark Universal v4 XL"],
+      "catalogQueries": ["Lexmark Universal"],
+      "supportUrl": "https://support.lexmark.com/"
+    },
+    {
+      "id": "ricoh",
+      "name": "Ricoh",
+      "match": ["ricoh", "savin", "lanier", "nrg", "gestetner", "infotec"],
+      "universalDrivers": ["RICOH PCL6 UniversalDriver V4.42", "PCL6 Driver for Universal Print", "RICOH PCL6 UniversalDriver"],
+      "catalogQueries": ["PCL6 Driver for Universal Print"],
+      "supportUrl": "https://support.ricoh.com/"
+    },
+    {
+      "id": "kyocera",
+      "name": "Kyocera",
+      "match": ["kyocera", "kyocera mita", "utax", "triumph-adler", "ta triumph-adler", "copystar", "olivetti"],
+      "universalDrivers": ["Kyocera Classic Universaldriver PCL6", "Kyocera Classic Universaldriver KPDL", "KX DRIVER for Universal Printing"],
+      "catalogQueries": [],
+      "supportUrl": "https://www.kyoceradocumentsolutions.eu/en/support/downloads.html"
+    },
+    {
+      "id": "canon",
+      "name": "Canon",
+      "match": ["canon"],
+      "universalDrivers": ["Canon Generic Plus UFR II", "Canon Generic Plus PCL6", "Canon Generic Plus PS3", "Canon Generic PCL6 Driver"],
+      "catalogQueries": [],
+      "supportUrl": "https://www.canon-europe.com/support/business-product-support/"
+    },
+    {
+      "id": "konicaminolta",
+      "name": "Konica Minolta",
+      "match": ["konica minolta", "konica", "minolta", "develop", "ineo"],
+      "universalDrivers": ["KONICA MINOLTA Universal PCL", "KONICA MINOLTA Universal V4 PCL", "KONICA MINOLTA Universal PS"],
+      "catalogQueries": [],
+      "supportUrl": "https://www.konicaminolta.eu/eu-en/support/download-centre"
+    },
+    {
+      "id": "sharp",
+      "name": "Sharp",
+      "match": ["sharp"],
+      "universalDrivers": ["SHARP UD3 PCL6", "SHARP UD2 PCL6", "SHARP UD3 PS"],
+      "catalogQueries": [],
+      "supportUrl": "https://www.sharp.eu/support"
+    },
+    {
+      "id": "toshiba",
+      "name": "Toshiba",
+      "match": ["toshiba"],
+      "universalDrivers": ["TOSHIBA Universal Printer 2", "TOSHIBA Universal PS3"],
+      "catalogQueries": [],
+      "supportUrl": "https://www.toshiba-business.com/support/"
+    },
+    {
+      "id": "brother",
+      "name": "Brother",
+      "match": ["brother"],
+      "universalDrivers": ["Brother Mono Universal Printer (PCL)", "Brother Color Universal Printer (PCL)", "Brother Mono Universal Printer (BR-Script3)"],
+      "catalogQueries": [],
+      "supportUrl": "https://support.brother.com/"
+    },
+    {
+      "id": "epson",
+      "name": "Epson",
+      "match": ["epson", "seiko epson"],
+      "universalDrivers": ["EPSON Universal Print Driver", "EPSON Universal Print Driver 2"],
+      "catalogQueries": [],
+      "supportUrl": "https://www.epson.eu/support"
+    },
+    {
+      "id": "oki",
+      "name": "OKI",
+      "match": ["oki", "okidata"],
+      "universalDrivers": ["OKI Universal PCL 6", "OKI Universal PS"],
+      "catalogQueries": [],
+      "supportUrl": "https://www.oki.com/eu/printing/support/"
+    },
+    {
+      "id": "zebra",
+      "name": "Zebra",
+      "match": ["zebra", "zdesigner"],
+      "universalDrivers": ["ZDesigner"],
+      "catalogQueries": ["ZDesigner"],
+      "supportUrl": "https://www.zebra.com/us/en/support-downloads.html"
+    }
+  ]
+}

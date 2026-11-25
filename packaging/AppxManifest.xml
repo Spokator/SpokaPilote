@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Manifeste MSIX de SpokaPilote.
+  Avant la soumission au Microsoft Store, remplacez Identity/Name, Identity/Publisher et PublisherDisplayName
+  par les valeurs fournies par Partner Center (Produit > Identité du produit). build-msix.ps1 peut le faire :
+    .\packaging\build-msix.ps1 -IdentityName "12345Editeur.SpokaPilote" -Publisher "CN=XXXXXXXX-XXXX-..." -PublisherDisplayName "Votre nom"
+-->
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:uap3="http://schemas.microsoft.com/appx/manifest/uap/windows10/3"
+  xmlns:uap5="http://schemas.microsoft.com/appx/manifest/uap/windows10/5"
+  xmlns:desktop4="http://schemas.microsoft.com/appx/manifest/desktop/windows10/4"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  IgnorableNamespaces="uap uap3 uap5 desktop4 rescap">
+
+  <Identity Name="__IDENTITY_NAME__"
+            Publisher="__PUBLISHER__"
+            Version="__VERSION__"
+            ProcessorArchitecture="__ARCH__" />
+
+  <Properties>
+    <DisplayName>SpokaPilote</DisplayName>
+    <PublisherDisplayName>__PUBLISHER_DISPLAY_NAME__</PublisherDisplayName>
+    <Logo>Assets\StoreLogo.png</Logo>
+    <Description>Pilotes de confiance pour tout le poste et les imprimantes d'entreprise, depuis les sources officielles uniquement.</Description>
+  </Properties>
+
+  <Dependencies>
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.17763.0" MaxVersionTested="10.0.26200.0" />
+  </Dependencies>
+
+  <Resources>
+    <Resource Language="fr-FR" />
+    <Resource Language="en-US" />
+  </Resources>
+
+  <Applications>
+    <!-- Application graphique -->
+    <Application Id="SpokaPilote" Executable="SpokaPilote.exe" EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements
+        DisplayName="SpokaPilote"
+        Description="Pilotes de confiance : analyse, téléchargement depuis les sources officielles et installation."
+        BackgroundColor="transparent"
+        Square150x150Logo="Assets\Square150x150Logo.png"
+        Square44x44Logo="Assets\Square44x44Logo.png">
+        <uap:DefaultTile Wide310x150Logo="Assets\Wide310x150Logo.png" />
+        <uap:SplashScreen Image="Assets\SplashScreen.png" />
+      </uap:VisualElements>
+    </Application>
+
+    <!-- Ligne de commande : « spokapilote » disponible dans tout terminal (alias d'exécution) -->
+    <Application Id="SpokaPiloteCli" Executable="spokapilote.exe" EntryPoint="Windows.FullTrustApplication" desktop4:Subsystem="console" desktop4:SupportsMultipleInstances="true">
+      <uap:VisualElements
+        DisplayName="SpokaPilote (ligne de commande)"
+        Description="Analyse et installation de pilotes en ligne de commande, pour les scripts de déploiement."
+        BackgroundColor="transparent"
+        Square150x150Logo="Assets\Square150x150Logo.png"
+        Square44x44Logo="Assets\Square44x44Logo.png"
+        AppListEntry="none" />
+      <Extensions>
+        <uap5:Extension Category="windows.appExecutionAlias" Executable="spokapilote.exe" EntryPoint="Windows.FullTrustApplication">
+          <uap5:AppExecutionAlias desktop4:Subsystem="console">
+            <uap5:ExecutionAlias Alias="spokapilote.exe" />
+          </uap5:AppExecutionAlias>
+        </uap5:Extension>
+      </Extensions>
+    </Application>
+  </Applications>
+
+  <Capabilities>
+    <Capability Name="internetClient" />
+    <Capability Name="privateNetworkClientServer" />
+    <!-- Application de bureau complète (WMI, pnputil, Windows Update Agent). -->
+    <rescap:Capability Name="runFullTrust" />
+    <!-- Installation de pilotes et d'imprimantes : élévation UAC à la demande (« Relancer en administrateur »). -->
+    <rescap:Capability Name="allowElevation" />
+  </Capabilities>
+</Package>
