@@ -104,5 +104,35 @@ Save-Png 50 50   (Join-Path $pkgAssets 'StoreLogo.png')
 Save-Png 620 300 (Join-Path $pkgAssets 'SplashScreen.png')
 Save-Png 300 300 (Join-Path $pkgAssets 'StoreListing300.png')
 Save-Png 256 256 (Join-Path $pkgAssets 'Square44x44Logo.targetsize-256_altform-unplated.png')
+# --- Images de l'assistant d'installation (Inno Setup : 24 bits, 100 % et 200 %) ---
+$installerDir = Join-Path $root 'installer'
+New-Item -ItemType Directory -Force $installerDir | Out-Null
+function Save-WizardBmp([int]$w, [int]$h, [string]$path, [bool]$tall) {
+    $bmp = New-Object System.Drawing.Bitmap($w, $h, [System.Drawing.Imaging.PixelFormat]::Format24bppRgb)
+    $g = [System.Drawing.Graphics]::FromImage($bmp)
+    $g.SmoothingMode = 'AntiAlias'
+    $rect = New-Object System.Drawing.Rectangle(0, 0, $w, $h)
+    if ($tall) {
+        $brush = New-Object System.Drawing.Drawing2D.LinearGradientBrush($rect,
+            [System.Drawing.Color]::FromArgb(255, 11, 99, 206), [System.Drawing.Color]::FromArgb(255, 20, 184, 166), 70)
+        $g.FillRectangle($brush, $rect)
+        $size = $w * 0.62
+        Draw-Logo $g (($w - $size) / 2) ($h * 0.22) $size $false
+        $font = New-Object System.Drawing.Font('Segoe UI Semibold', [float]($w * 0.105), [System.Drawing.FontStyle]::Bold, [System.Drawing.GraphicsUnit]::Pixel)
+        $fmt = New-Object System.Drawing.StringFormat; $fmt.Alignment = 'Center'
+        $g.DrawString('SpokaPilote', $font, [System.Drawing.Brushes]::White, (New-Object System.Drawing.RectangleF(0, ($h * 0.22 + $size + $h * 0.03), $w, ($w * 0.2))), $fmt)
+    } else {
+        $g.Clear([System.Drawing.Color]::White)
+        Draw-Logo $g ($w * 0.05) ($h * 0.05) ($w * 0.9) $true
+    }
+    $g.Dispose()
+    $bmp.Save($path, [System.Drawing.Imaging.ImageFormat]::Bmp)
+    $bmp.Dispose()
+}
+Save-WizardBmp 164 314 (Join-Path $installerDir 'wizard-100.bmp') $true
+Save-WizardBmp 328 628 (Join-Path $installerDir 'wizard-200.bmp') $true
+Save-WizardBmp 55 55   (Join-Path $installerDir 'wizard-small-100.bmp') $false
+Save-WizardBmp 110 110 (Join-Path $installerDir 'wizard-small-200.bmp') $false
+
 Write-Host "Icône : $icoPath"
 Write-Host "Visuels : $pkgAssets"

@@ -12,7 +12,7 @@ constructeur du PC**, le vérifie, puis l'installe. Il fait de même pour les im
 | Ligne de commande | `spokapilote` — pour scripts, RMM, Intune, GPO, clé USB |
 | Plateformes | Windows 10 1809+ et Windows 11, x64 (ARM64 prévu) |
 | Technologie | .NET 10 LTS, WPF, aucune dépendance tierce |
-| Distribution | Microsoft Store (MSIX signé par Microsoft) + version portable |
+| Distribution | Installeur classique `SpokaPilote-Setup-<version>.exe` + Microsoft Store (MSIX signé par Microsoft) |
 
 ---
 
@@ -52,6 +52,12 @@ exact puis universel du constructeur : HP UPD, Xerox GPD, Lexmark, Ricoh...) →
 problème matériel, câble ou port, aucun pilote ne peut le corriger »*).
 
 ## Démarrage rapide
+
+### Installation
+Lancez `SpokaPilote-Setup-<version>.exe` : installation dans `Program Files`, raccourci dans le menu Démarrer
+(et sur le Bureau en option), désinstallation depuis *Paramètres > Applications*. L'option cochée par défaut ajoute
+la commande `spokapilote` à tous les terminaux. Installation silencieuse pour le parc :
+`SpokaPilote-Setup-<version>.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART`.
 
 ### Interface graphique
 Lancez **SpokaPilote**, cliquez **Analyser ce poste**, vérifiez la liste dans **Pilotes**, puis
@@ -102,7 +108,9 @@ src/
   SpokaPilote.Cli/           spokapilote.exe
   SpokaPilote.App/           SpokaPilote.exe (WPF .NET 10, thème Fluent)
 tests/SpokaPilote.Core.Tests 78 tests (INF, catalogue, SNMP/IPP, Dell/HP/Lenovo, confiance, fusion)
-packaging/                   manifeste MSIX, visuels, script de build
+installer/                   installeur Inno Setup (SpokaPilote.iss + images de l'assistant)
+packaging/                   manifeste MSIX et visuels du Store
+scripts/                     publish.ps1, build-installer.ps1, build-store.ps1
 ```
 
 ## Construire
@@ -111,8 +119,11 @@ packaging/                   manifeste MSIX, visuels, script de build
 dotnet test                                        # tests
 dotnet run --project src\SpokaPilote.App           # interface
 dotnet run --project src\SpokaPilote.Cli -- scan   # CLI
-.\packaging\build-msix.ps1 -SignForTest            # MSIX de test + version portable (.zip)
+.\scripts\build-installer.ps1                      # -> dist\SpokaPilote-Setup-<version>.exe
+.\scripts\build-store.ps1                          # -> dist-store\SpokaPilote-<version>.msix (Store)
 ```
+La version se règle à un seul endroit : `Directory.Build.props`. Les visuels (icône, Store, assistant
+d'installation) se régénèrent avec `tools\make-assets.ps1`.
 
 Publication sur le Microsoft Store : voir [docs/PUBLICATION-STORE.md](docs/PUBLICATION-STORE.md).
 

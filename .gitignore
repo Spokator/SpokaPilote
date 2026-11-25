@@ -6,3 +6,6 @@ artifacts/
 out/
 *.msix
 TestResults/
+dist/
+dist-store/
+packaging/deps/

@@ -16,14 +16,14 @@ installation possible en entreprise via Intune / Microsoft Store pour entreprise
 ## 2. Construire le paquet
 
 ```powershell
-.\packaging\build-msix.ps1 -Version 0.1.0.0 `
+.\scripts\build-store.ps1 `
     -IdentityName "12345Editeur.SpokaPilote" `
     -Publisher "CN=XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX" `
     -PublisherDisplayName "Votre nom"
 ```
 
-Résultat : `out\SpokaPilote_0.1.0.0_x64.msix` (non signé : c'est voulu, le Store le signe).
-Le numéro de version doit augmenter à chaque soumission (le 4ᵉ nombre doit rester 0 pour le Store).
+Résultat : `dist-store\SpokaPilote-<version>.msix` (non signé : c'est voulu, le Store le signe).
+La version vient de `Directory.Build.props` et doit augmenter à chaque soumission.
 
 ## 3. Capacités restreintes à justifier
 
@@ -52,14 +52,15 @@ fournissez une justification. Texte proposé :
 ## 5. Tester le paquet localement avant soumission
 
 ```powershell
-.\packaging\build-msix.ps1 -SignForTest
+.\scripts\build-store.ps1 -TestSign
 ```
-Puis, dans une console administrateur : importez `out\SpokaPilote-test.cer` dans
+Puis, dans une console administrateur : importez `dist-store\SpokaPilote-test.cer` dans
 `Ordinateur local → Personnes autorisées` (`certlm.msc`), et double-cliquez sur le `.msix`.
 La commande `spokapilote` devient disponible dans tous les terminaux (alias d'exécution).
 
-## Version portable (sans Store)
+## Installeur classique (hors Store)
 
-`out\SpokaPilote-<version>-portable-x64.zip` : à décompresser sur une clé USB. Non signée : Windows SmartScreen
-peut afficher un avertissement au premier lancement. Pour la distribuer largement hors Store, signez les `.exe`
-avec un certificat de signature de code (Azure Trusted Signing est l'option la moins chère).
+`.\scripts\build-installer.ps1` produit `dist\SpokaPilote-Setup-<version>.exe`, comme SpokaSoundBoard.
+Il n'est pas signé : Windows SmartScreen peut afficher un avertissement au premier lancement. Pour le distribuer
+largement hors Store, signez l'installeur avec un certificat de signature de code (Azure Trusted Signing est l'option
+la moins chère).
