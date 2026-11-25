@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="referrer" content="no-referrer">
+  <title>SpokaPilote Server</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="app.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <noscript><p class="noscript">La console SpokaPilote nécessite JavaScript.</p></noscript>
+
+  <!-- Connexion -->
+  <section id="login" class="login" hidden>
+    <form id="login-form" class="login-card" autocomplete="off">
+      <div class="brand brand-lg"><span class="brand-mark" aria-hidden="true"></span><span>SpokaPilote <b>Server</b></span></div>
+      <p class="muted">Console centrale du parc : rapports des postes, matériel sans pilote, politique de pilotes.</p>
+      <label for="login-token">Jeton administrateur</label>
+      <input id="login-token" name="token" type="password" spellcheck="false" autocapitalize="off" required
+             placeholder="Collez le jeton administrateur">
+      <p id="login-error" class="form-error" role="alert" hidden></p>
+      <button type="submit" class="btn btn-primary btn-block">Se connecter</button>
+      <p class="hint">Le jeton est défini par la variable <code>SPOKAPILOTE_ADMIN_TOKEN</code> ou généré au premier démarrage
+        (journaux du conteneur et fichier <code>/data/admin-token.txt</code>). Il reste dans cet onglet uniquement.</p>
+    </form>
+  </section>
+
+  <!-- Application -->
+  <div id="app" class="shell" hidden>
+    <header class="topbar">
+      <button id="menu-toggle" class="icon-btn menu-toggle" type="button" aria-label="Menu" aria-expanded="false" aria-controls="nav">
+        <span></span><span></span><span></span>
+      </button>
+      <a class="brand" href="#/"><span class="brand-mark" aria-hidden="true"></span><span>SpokaPilote <b>Server</b></span></a>
+      <div class="topbar-right">
+        <span id="refresh-info" class="muted small"></span>
+        <button id="refresh" class="btn btn-ghost" type="button" title="Actualiser">Actualiser</button>
+        <button id="logout" class="btn btn-ghost" type="button">Déconnexion</button>
+      </div>
+    </header>
+    <nav id="nav" class="nav" aria-label="Navigation principale">
+      <a href="#/" data-route="overview">Vue d'ensemble</a>
+      <a href="#/postes" data-route="machines">Postes</a>
+      <a href="#/materiel" data-route="missing">Matériel sans pilote</a>
+      <a href="#/politique" data-route="policy">Politique</a>
+      <a href="#/imprimantes" data-route="printers">Profil d'imprimantes</a>
+      <a href="#/enrolement" data-route="enroll">Enrôlement</a>
+      <div class="nav-foot muted small" id="server-version"></div>
+    </nav>
+    <main id="view" class="view" tabindex="-1"></main>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+</body>
+</html>

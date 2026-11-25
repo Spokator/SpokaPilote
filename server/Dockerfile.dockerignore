@@ -1,0 +1,7 @@
+# Contexte de construction = racine du dépôt : on n'envoie au démon Docker que le strict nécessaire.
+*
+!Directory.Build.props
+!server/SpokaPilote.Server/
+server/SpokaPilote.Server/bin/
+server/SpokaPilote.Server/obj/
+server/SpokaPilote.Server/data/

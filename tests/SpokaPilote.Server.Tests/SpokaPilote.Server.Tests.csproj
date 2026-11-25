@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Le serveur est multiplateforme : on surcharge la cible Windows du Directory.Build.props racine. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <SupportedOSPlatformVersion></SupportedOSPlatformVersion>
+    <RuntimeIdentifiers></RuntimeIdentifiers>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" Version="6.0.2" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+    <!-- Tests d'intégration de l'API en mémoire (paquet officiel Microsoft, uniquement pour les tests). -->
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.15" />
+  </ItemGroup>
+  <ItemGroup>
+    <Using Include="Xunit" />
+    <ProjectReference Include="..\..\server\SpokaPilote.Server\SpokaPilote.Server.csproj" />
+  </ItemGroup>
+</Project>

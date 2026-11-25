@@ -53,6 +53,7 @@ internal static partial class Program
                 "fleet-report" or "parc" => FleetReportCommand(a),
                 "self-update" or "mise-a-jour" => await SelfUpdateAsync(a, cts.Token),
                 "config" => Config(a),
+                "server" or "serveur" => await ServerAsync(a, cts.Token),
                 "version" or "--version" => Version(),
                 _ => Help(),
             };
@@ -139,6 +140,7 @@ internal static partial class Program
         }
 
         WriteReports(a, scan, outcomes);
+        await UploadToServerAsync(a, settings, scan, outcomes, ct);
         return exit;
     }
 
@@ -641,6 +643,7 @@ internal static partial class Program
                 --sources wu,catalog,oem,repo   limite les sources interrogées
                 --repo <chemin>      ajoute un dépôt local/réseau pour cette exécution (répétable)
                 --output-dir <dir>   dépose <POSTE>.json et <POSTE>.html (ex. \\srv\rapports) pour le rapport de parc
+                --no-upload          n'envoie pas le rapport à la console centrale (si ServerUrl est configuré)
 
             HISTORIQUE ET RETOUR ARRIÈRE
               spokapilote history                          interventions passées sur ce poste
@@ -656,6 +659,8 @@ internal static partial class Program
 
             PARC
               spokapilote fleet-report <\\srv\rapports> [--out parc.html]   consolide les rapports de tous les postes
+              spokapilote server status                    teste la connexion à la console centrale (ServerUrl, ServerToken)
+              spokapilote server upload <rapport.json|dossier>   envoie des rapports existants à la console centrale
               spokapilote self-update [--yes]              met SpokaPilote à jour (Release GitHub vérifiée)
 
             IMPRIMANTES
