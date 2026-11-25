@@ -6,6 +6,7 @@ internal sealed class Args
     private static readonly HashSet<string> ValueOptions = new(StringComparer.OrdinalIgnoreCase)
     {
         "json", "html", "report", "sources", "repo", "range", "name", "driver", "location", "output-dir", "out", "only", "exclude",
+        "weekly", "time", "mode", "printers", "random-delay", "startup-delay", "max-duration",
     };
 
     private readonly List<string> _positionals = new();
@@ -24,7 +25,8 @@ internal sealed class Args
                 var key = arg[2..];
                 var eq = key.IndexOf('=');
                 if (eq > 0) _values.Add((key[..eq], key[(eq + 1)..]));
-                else if (ValueOptions.Contains(key) && i + 1 < args.Length) _values.Add((key, args[++i]));
+                // « --weekly --time 12:30 » : une option suivie d'une autre option reste un drapeau.
+                else if (ValueOptions.Contains(key) && i + 1 < args.Length && !args[i + 1].StartsWith("--")) _values.Add((key, args[++i]));
                 else _flags.Add(key);
             }
             else if (arg is "-h" or "/?") Command = "help";

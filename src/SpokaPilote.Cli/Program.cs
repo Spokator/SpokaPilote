@@ -53,6 +53,8 @@ internal static partial class Program
                 "fleet-report" or "parc" => FleetReportCommand(a),
                 "self-update" or "mise-a-jour" => await SelfUpdateAsync(a, cts.Token),
                 "config" => Config(a),
+                "schedule" or "planification" => await ScheduleAsync(a, cts.Token),
+                "maintenance" => await MaintenanceAsync(a, cts.Token),
                 "version" or "--version" => Version(),
                 _ => Help(),
             };
@@ -405,6 +407,9 @@ internal static partial class Program
             return result.Success ? ExitOk : ExitError;
         }
 
+        if (sub is "export-profile" or "deploy" or "remove")
+            return await PrinterProfileAsync(sub, a, settings, ct);
+
         return Help();
     }
 
@@ -664,6 +669,19 @@ internal static partial class Program
                 --verify             télécharge et valide le paquet (signature, modèle exact) sans l'installer
               spokapilote printers install <ip> [--name "Accueil RDC"] [--driver "nom exact"] [--ipp]
                                            [--location "..."] [--default] [--share] [--yes]
+              spokapilote printers export-profile <profil.json>   exporte les imprimantes réseau de ce poste
+              spokapilote printers deploy [profil.json | https://... ] [--dry-run] [--yes]
+                                   applique un profil (sans fichier : console centrale ServerUrl) ;
+                                   idempotent : créée / à jour / mise à jour / échec
+              spokapilote printers remove <nom> [--yes]    retire la file d'impression et son port s'il ne sert plus
+
+            MAINTENANCE PLANIFIÉE (tâche \SpokaPilote\Maintenance, compte SYSTEM)
+              spokapilote schedule enable [--weekly lundi | --daily | --at-startup] [--time 12:30]
+                                          [--mode missing|updates|scan] [--output-dir \\srv\rapports]
+                                          [--printers profil.json|https://...|serveur] [--random-delay 30]
+                                          [--startup-delay 10] [--max-duration 120] [--on-battery]
+              spokapilote schedule status | run-now | disable
+              spokapilote maintenance --mode missing|updates|scan [...]   exécution immédiate (celle de la tâche)
 
             CONFIGURATION
               spokapilote config [show | set <clé> <valeur> | add-repo <chemin> | remove-repo <chemin>]
