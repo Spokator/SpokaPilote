@@ -12,8 +12,6 @@ permissions:
 jobs:
   build:
     runs-on: windows-latest
-    env:
-      SPOKAPILOTE_HOME: ${{ runner.temp }}\spokapilote
     steps:
       - uses: actions/checkout@v4
 
@@ -28,6 +26,8 @@ jobs:
         run: dotnet build SpokaPilote.sln -c Release --no-restore
 
       - name: Test
+        env:
+          SPOKAPILOTE_HOME: ${{ runner.temp }}\spokapilote
         run: dotnet test tests/SpokaPilote.Core.Tests -c Release --no-build --logger "trx;LogFileName=results.trx"
 
       - name: Upload test results
