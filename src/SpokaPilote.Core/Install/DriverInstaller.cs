@@ -46,15 +46,17 @@ public sealed class DriverInstaller
         IProgress<InstallProgress>? progress = null,
         CancellationToken ct = default)
     {
-        if (!options.DryRun && !Elevation.IsAdministrator())
+        if (!options.DryRun && candidates.Any(c => c.BlockedReason is null) && !Elevation.IsAdministrator())
             throw new UnauthorizedAccessException("L'installation de pilotes nécessite les droits administrateur.");
 
         var outcomes = new List<InstallOutcome>();
         if (candidates.Count == 0) return outcomes;
 
+        // Un candidat bloqué par la politique de pilotes n'est jamais installé, même si l'appelant l'a sélectionné.
+        var installable = candidates.Count(c => c.BlockedReason is null);
         var intervention = new Intervention();
         HashSet<string>? storeBefore = null;
-        if (!options.DryRun)
+        if (!options.DryRun && installable > 0)
         {
             if (options.CreateRestorePoint)
             {
@@ -75,6 +77,13 @@ public sealed class DriverInstaller
             var c = candidates[i];
             var report = new Progress<string>(step => progress?.Report(new InstallProgress(i + 1, candidates.Count, c.Title, step)));
             InstallOutcome outcome;
+            if (c.BlockedReason is not null)
+            {
+                outcome = new InstallOutcome(c, InstallStatus.Blocked, c.BlockedReason);
+                Log.Warn($"[{outcome.Status}] {c.Title} {c.Version} — refusé par la politique de pilotes : {c.BlockedReason}");
+                outcomes.Add(outcome);
+                continue;
+            }
             try
             {
                 outcome = c.PackageKind switch
@@ -173,7 +182,7 @@ public sealed class DriverInstaller
     private async Task<InstallOutcome> InstallInfCandidateAsync(DriverCandidate c, IReadOnlyList<DeviceInfo> devices, InstallOptions options, IProgress<string> progress, CancellationToken ct)
     {
         var targets = devices.Where(d => c.TargetDeviceIds.Contains(d.InstanceId, StringComparer.OrdinalIgnoreCase)).ToList();
-        var attempts = new[] { c }.Concat(c.Alternatives).ToList();
+        var attempts = new[] { c }.Concat(c.Alternatives.Where(alt => alt.BlockedReason is null)).ToList();
         var reasons = new List<string>();
 
         foreach (var attempt in attempts)

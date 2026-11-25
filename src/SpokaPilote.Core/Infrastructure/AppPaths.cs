@@ -26,6 +26,8 @@ public static class AppPaths
     public static string Backups => Ensure(Path.Combine(Root, "Backups"));
     public static string Reports => Ensure(Path.Combine(Root, "Reports"));
     public static string SettingsFile => Path.Combine(Ensure(Root), "settings.json");
+    /// <summary>Dernière politique de pilotes valide (fonctionnement hors ligne).</summary>
+    public static string PolicyCache => Path.Combine(Ensure(Root), "policy-cache.json");
 
     public static string Ensure(string dir)
     {
