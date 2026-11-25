@@ -74,6 +74,43 @@ public sealed class MainViewModel : ObservableObject
         : "Politique : chargée à la prochaine analyse.";
     public int BlockedCount => LastScan?.Candidates.Count(c => c.BlockedReason is not null) ?? 0;
 
+    // ------------------------------------------------------------------ console centrale
+
+    private string _serverStatus = "";
+    public string ServerStatusText { get => _serverStatus; private set => Set(ref _serverStatus, value); }
+    public RelayCommand TestServerCommand => _testServer ??= new RelayCommand(TestServerAsync, () => !IsBusy);
+    private RelayCommand? _testServer;
+
+    private async Task TestServerAsync()
+    {
+        if (!Core.Online.ServerClient.IsConfigured(Settings)) { ServerStatusText = "Aucune adresse de console renseignée."; return; }
+        try
+        {
+            var status = await new Core.Online.ServerClient(Settings).TestAsync();
+            ServerStatusText = (status.Reachable && status.Authorized ? "✓ " : "✗ ") + status.Message;
+        }
+        catch (Exception ex)
+        {
+            ServerStatusText = "✗ " + ex.Message;
+        }
+    }
+
+    /// <summary>Envoie le rapport à la console centrale si elle est configurée (jamais bloquant).</summary>
+    private async Task UploadToServerAsync(ScanResult scan, IReadOnlyList<InstallOutcome>? outcomes, CancellationToken ct)
+    {
+        if (!Core.Online.ServerClient.IsConfigured(Settings)) return;
+        try
+        {
+            var client = new Core.Online.ServerClient(Settings);
+            await client.UploadReportAsync(ScanReport.From(scan, outcomes), ct);
+            Log.Info($"Rapport envoyé à la console centrale ({client.BaseUri.Authority}).");
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Log.Warn($"Rapport non envoyé à la console centrale : {ex.Message}");
+        }
+    }
+
     // ------------------------------------------------------------------ profils d'imprimantes
 
     private bool _printerDeployDryRun = true;
@@ -531,6 +568,7 @@ public sealed class MainViewModel : ObservableObject
             foreach (var c in scan.Candidates) Candidates.Add(new CandidateItem(c));
             RefreshDevices();
             Status = $"Analyse terminée en {scan.Duration.TotalSeconds:0} s — {HealthHeadline}";
+            await UploadToServerAsync(scan, null, ct);
         });
     }
 
@@ -578,7 +616,11 @@ public sealed class MainViewModel : ObservableObject
 
             foreach (var o in outcomes)
                 selected.FirstOrDefault(s => s.Candidate == o.Candidate)?.Apply(o);
-            if (!dryRun) RefreshHistory();
+            if (!dryRun)
+            {
+                RefreshHistory();
+                await UploadToServerAsync(LastScan, outcomes, ct);
+            }
 
             var ok = outcomes.Count(o => o.Succeeded);
             var failed = outcomes.Count(o => o.Status is InstallStatus.Failed or InstallStatus.Blocked);

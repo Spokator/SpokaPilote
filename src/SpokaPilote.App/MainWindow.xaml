@@ -553,6 +553,12 @@
                                 <TextBox Text="{Binding Settings.ServerUrl, UpdateSourceTrigger=PropertyChanged}" />
                                 <TextBlock Text="Jeton d'enrôlement des postes" Margin="0,12,0,4" />
                                 <TextBox Text="{Binding Settings.ServerToken, UpdateSourceTrigger=PropertyChanged}" />
+                                <DockPanel Margin="0,12,0,0">
+                                    <Button DockPanel.Dock="Left" Content="Tester la connexion" Command="{Binding TestServerCommand}" Margin="0,0,12,0" />
+                                    <TextBlock VerticalAlignment="Center" TextWrapping="Wrap" Text="{Binding ServerStatusText, Mode=OneWay}" />
+                                </DockPanel>
+                                <TextBlock Margin="0,8,0,0" Opacity="0.7" TextWrapping="Wrap"
+                                           Text="Une fois configurée, chaque analyse et chaque installation envoient leur rapport à la console. La console s'installe avec Docker : voir docs/CONSOLE-CENTRALE.md." />
                             </StackPanel>
                         </Border>
                         <Border Style="{StaticResource Card}" Margin="0,16,0,0">
