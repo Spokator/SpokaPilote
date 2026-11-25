@@ -6,7 +6,7 @@ internal sealed class Args
     private static readonly HashSet<string> ValueOptions = new(StringComparer.OrdinalIgnoreCase)
     {
         "json", "html", "report", "sources", "repo", "range", "name", "driver", "location", "output-dir", "out", "only", "exclude", "policy",
-        "weekly", "time", "mode", "printers", "random-delay", "startup-delay", "max-duration",
+        "weekly", "time", "mode", "printers", "random-delay", "startup-delay", "max-duration", "nvidia-branch",
     };
 
     private readonly List<string> _positionals = new();

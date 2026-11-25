@@ -155,6 +155,7 @@ internal static partial class Program
             c.TargetDeviceNames.Any(n => n.Contains(text, StringComparison.OrdinalIgnoreCase));
         return candidates
             .Where(c => c.BlockedReason is null) // jamais de pilote bloqué par la politique
+            .Where(c => !c.IsInformational) // liens vers une page officielle : jamais installés automatiquement
             .Where(c => only.Count == 0 || only.Any(t => Matches(c, t)))
             .Where(c => !exclude.Any(t => Matches(c, t)))
             .Where(c => c.Kind switch
@@ -201,6 +202,8 @@ internal static partial class Program
                     if (c.BlockedReason is null)
                     {
                         WriteLine($"    • {c.Title} {c.Version} [{c.SourceLabel}{(c.SizeLabel.Length > 0 ? ", " + c.SizeLabel : "")}]{devices}", ConsoleColor.Gray);
+                        if (c.IsInformational && c.InfoUrl is not null)
+                            WriteLine($"        → à télécharger manuellement : {c.InfoUrl}", ConsoleColor.DarkGray);
                     }
                     else
                     {
@@ -275,7 +278,11 @@ internal static partial class Program
                 case "dell": set.Add(DriverSourceKind.Dell); break;
                 case "hp": set.Add(DriverSourceKind.HP); break;
                 case "lenovo": set.Add(DriverSourceKind.Lenovo); break;
-                default: throw new ArgumentException($"Source inconnue : {s} (valeurs : wu, catalog, oem, dell, hp, lenovo, repo)");
+                case "gpu": set.UnionWith(new[] { DriverSourceKind.Nvidia, DriverSourceKind.Intel, DriverSourceKind.Amd }); break;
+                case "nvidia": set.Add(DriverSourceKind.Nvidia); break;
+                case "intel": set.Add(DriverSourceKind.Intel); break;
+                case "amd": set.Add(DriverSourceKind.Amd); break;
+                default: throw new ArgumentException($"Source inconnue : {s} (valeurs : wu, catalog, oem, dell, hp, lenovo, gpu, nvidia, intel, amd, repo)");
             }
         }
         return set;
@@ -598,6 +605,8 @@ internal static partial class Program
         if (a.Flag("no-catalog")) settings.UseMicrosoftCatalog = false;
         if (a.Flag("no-wu")) settings.UseWindowsUpdate = false;
         if (a.Flag("no-oem")) settings.UseOemCatalogs = false;
+        if (a.Flag("no-gpu")) settings.UseGpuVendorSources = false;
+        if (a.Value("nvidia-branch") is { } branch) settings.NvidiaBranch = branch;
         return settings;
     }
 
@@ -648,7 +657,7 @@ internal static partial class Program
     private static int Help()
     {
         Console.WriteLine("""
-            SpokaPilote — installation de pilotes depuis les sources officielles (Microsoft, Dell, HP, Lenovo, dépôt interne)
+            SpokaPilote — installation de pilotes depuis les sources officielles (Microsoft, Dell, HP, Lenovo, NVIDIA, dépôt interne)
 
             ANALYSE ET INSTALLATION
               spokapilote scan [--deep] [--html rapport.html] [--json rapport.json]
@@ -658,7 +667,10 @@ internal static partial class Program
                 --missing            n'installe que les pilotes manquants (périphériques en erreur)
                 --only <texte>       n'installe que les pilotes dont le titre ou le périphérique contient ce texte
                 --exclude <texte>    exclut ces pilotes (ex. --exclude NVIDIA) ; options répétables
-                --sources wu,catalog,oem,repo   limite les sources interrogées
+                --sources wu,catalog,oem,gpu,repo   limite les sources interrogées
+                                     (aussi : dell, hp, lenovo, nvidia, intel, amd ; gpu = nvidia,intel,amd)
+                --no-gpu             n'interroge pas les sites des fabricants de cartes graphiques
+                --nvidia-branch studio|gameready   branche des pilotes NVIDIA GeForce (défaut : studio)
                 --repo <chemin>      ajoute un dépôt local/réseau pour cette exécution (répétable)
                 --output-dir <dir>   dépose <POSTE>.json et <POSTE>.html (ex. \\srv\rapports) pour le rapport de parc
                 --policy <fichier|url>  applique cette politique de pilotes pour cette exécution (essai avant déploiement)

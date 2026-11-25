@@ -38,6 +38,12 @@ public sealed class Settings
     /// </summary>
     public string? PolicySource { get; set; }
     public bool UseGpuVendorSources { get; set; } = true;
+    /// <summary>
+    /// Branche des pilotes NVIDIA GeForce : « studio » (défaut, publiée moins souvent et validée pour la stabilité,
+    /// adaptée à un parc) ou « gameready » (la plus récente, orientée jeux). Les cartes professionnelles RTX/Quadro
+    /// reçoivent toujours le pilote RTX Enterprise servi par NVIDIA.
+    /// </summary>
+    public string NvidiaBranch { get; set; } = "studio";
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {

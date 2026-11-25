@@ -4,6 +4,7 @@ using SpokaPilote.Core.Inventory;
 using SpokaPilote.Core.Models;
 using SpokaPilote.Core.Policy;
 using SpokaPilote.Core.Sources;
+using SpokaPilote.Core.Sources.Gpu;
 using SpokaPilote.Core.Sources.Oem;
 
 namespace SpokaPilote.Core.Engine;
@@ -31,7 +32,8 @@ public sealed class ScanResult
 
 /// <summary>
 /// Orchestrateur : inventaire → interrogation de toutes les sources de confiance en parallèle → fusion.
-/// Priorité en cas de doublon : dépôt interne &gt; constructeur du PC &gt; Windows Update &gt; catalogue Microsoft.
+/// Priorité en cas de doublon : dépôt interne &gt; constructeur du PC ou fabricant de la carte graphique
+/// &gt; Windows Update &gt; catalogue Microsoft.
 /// La politique de pilotes est appliquée avant la fusion : les sources non autorisées ne sont pas interrogées,
 /// les candidats bloqués restent visibles (BlockedReason renseigné) sauf règle « hide », et un candidat autorisé
 /// d'une autre source passe devant un candidat bloqué pour le même périphérique.
@@ -52,6 +54,9 @@ public sealed class DriverScanEngine
             new DellSource(),
             new HpSource(),
             new LenovoSource(),
+            new NvidiaSource(),
+            new IntelGraphicsSource(),
+            new AmdSource(),
             new WindowsUpdateSource(),
             new MicrosoftCatalogSource(),
         };
