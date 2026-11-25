@@ -27,7 +27,10 @@ public sealed class TrustPolicy
         // Fondeurs
         "downloadmirror.intel.com",
         "drivers.amd.com",
+        // NVIDIA : miroir principal servi par son service de pilotes (DownloadURLAdmin) et miroir international
+        // hébergeant les mêmes paquets signés « NVIDIA Corporation ».
         "us.download.nvidia.com",
+        "international.download.nvidia.com",
     };
 
     public static readonly string[] BuiltInPublishers =

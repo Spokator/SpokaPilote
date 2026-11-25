@@ -47,6 +47,12 @@ public sealed class DriverCandidate
     public string? SilentCommand { get; init; }
     /// <summary>Commande d'extraction préalable (Lenovo/HP). %PACKAGEPATH% = dossier d'extraction.</summary>
     public string? ExtractCommand { get; init; }
+    /// <summary>
+    /// Extraire dans un dossier placé directement sous %TEMP% (%TEMP%\SpokaPilote-&lt;id&gt;, non créé à l'avance) plutôt que
+    /// dans %ProgramData% : l'auto-extracteur NVIDIA refuse toute autre destination en mode silencieux.
+    /// Dossier supprimé après l'installation.
+    /// </summary>
+    public bool ExtractToTempFolder { get; init; }
     public int[] SuccessExitCodes { get; init; } = { 0, 3010, 1641 };
     public int[] RebootExitCodes { get; init; } = { 3010, 1641 };
     /// <summary>Codes signifiant « déjà installé / non applicable » (ex. Dell DUP 3 et 5).</summary>
@@ -75,6 +81,12 @@ public sealed class DriverCandidate
         DriverSourceKind.Amd => "AMD (site officiel)",
         _ => Source.ToString(),
     };
+
+    /// <summary>
+    /// Candidat informatif : lien vers la page officielle du fabricant (<see cref="InfoUrl"/>), sans paquet
+    /// téléchargeable automatiquement. Jamais coché ni installé (ex. pilotes graphiques Intel et AMD).
+    /// </summary>
+    public bool IsInformational { get; init; }
 
     /// <summary>Motif de blocage par la politique de pilotes (null = autorisé). Un candidat bloqué n'est jamais installé.</summary>
     public string? BlockedReason { get; set; }

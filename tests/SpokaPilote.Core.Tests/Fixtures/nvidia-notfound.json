@@ -1,0 +1,32 @@
+{
+    "MethodCalled": "(anonymisé)",
+    "ParsedParams": "(anonymisé)",
+    "GfeCampaignXmlContent": null,
+    "criteria": {
+        "overallState": "false",
+        "IsSupported": {
+            "state": "true",
+            "IsPrimary": 0,
+            "DeviceID": "null",
+            "Vendor": "null",
+            "SubSystemID": "null",
+            "SubVendorID": "null",
+            "SystemIsLaptopFlag": 0,
+            "DCfourPartsState": "null",
+            "overallStateDchNotEnabled": null,
+            "overallStateDchEnabled": null,
+            "isDCForced": "0",
+            "isgfXForced": "0"
+        },
+        "IsDispDriverNewer": {
+            "state": "true",
+            "installedDispDriverVersion": null,
+            "latestDispDriverVersion": "null",
+            "newFeaturePreviewOlderVersion": null
+        },
+        "IsDeviceOsBlackListed": []
+    },
+    "DriverAttributes": [],
+    "DriverAttributesBeta": [],
+    "edon": "<!-- 901-05-84-01-pi~24 -->"
+}

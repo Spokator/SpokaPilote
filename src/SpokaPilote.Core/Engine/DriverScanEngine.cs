@@ -3,6 +3,7 @@ using SpokaPilote.Core.Infrastructure;
 using SpokaPilote.Core.Inventory;
 using SpokaPilote.Core.Models;
 using SpokaPilote.Core.Sources;
+using SpokaPilote.Core.Sources.Gpu;
 using SpokaPilote.Core.Sources.Oem;
 
 namespace SpokaPilote.Core.Engine;
@@ -26,7 +27,8 @@ public sealed class ScanResult
 
 /// <summary>
 /// Orchestrateur : inventaire → interrogation de toutes les sources de confiance en parallèle → fusion.
-/// Priorité en cas de doublon : dépôt interne &gt; constructeur du PC &gt; Windows Update &gt; catalogue Microsoft.
+/// Priorité en cas de doublon : dépôt interne &gt; constructeur du PC ou fabricant de la carte graphique
+/// &gt; Windows Update &gt; catalogue Microsoft.
 /// </summary>
 public sealed class DriverScanEngine
 {
@@ -42,6 +44,9 @@ public sealed class DriverScanEngine
             new DellSource(),
             new HpSource(),
             new LenovoSource(),
+            new NvidiaSource(),
+            new IntelGraphicsSource(),
+            new AmdSource(),
             new WindowsUpdateSource(),
             new MicrosoftCatalogSource(),
         };

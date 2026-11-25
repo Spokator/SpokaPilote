@@ -77,13 +77,15 @@ public sealed class DriverInstaller
             InstallOutcome outcome;
             try
             {
-                outcome = c.PackageKind switch
-                {
-                    DriverPackageKind.WindowsUpdate => await InstallWindowsUpdateAsync(c, options, report, ct).ConfigureAwait(false),
-                    DriverPackageKind.InfPackage => await InstallInfCandidateAsync(c, devices, options, report, ct).ConfigureAwait(false),
-                    DriverPackageKind.VendorInstaller => await InstallVendorAsync(c, options, report, ct).ConfigureAwait(false),
-                    _ => new InstallOutcome(c, InstallStatus.Skipped, "Type de paquet inconnu"),
-                };
+                outcome = c.IsInformational
+                    ? new InstallOutcome(c, InstallStatus.Skipped, $"Candidat informatif, non installable automatiquement : voir la page officielle {c.InfoUrl}")
+                    : c.PackageKind switch
+                    {
+                        DriverPackageKind.WindowsUpdate => await InstallWindowsUpdateAsync(c, options, report, ct).ConfigureAwait(false),
+                        DriverPackageKind.InfPackage => await InstallInfCandidateAsync(c, devices, options, report, ct).ConfigureAwait(false),
+                        DriverPackageKind.VendorInstaller => await InstallVendorAsync(c, options, report, ct).ConfigureAwait(false),
+                        _ => new InstallOutcome(c, InstallStatus.Skipped, "Type de paquet inconnu"),
+                    };
             }
             catch (OperationCanceledException)
             {
@@ -272,20 +274,43 @@ public sealed class DriverInstaller
         if (options.DryRun)
             return new InstallOutcome(c, InstallStatus.Skipped, $"Simulation : téléchargé et vérifié ({sig.Signer}).");
 
-        var packagePath = Path.Combine(AppPaths.Extracted, AppPaths.SafeName(c.Id.Replace(':', '_')));
+        var packageName = AppPaths.SafeName(c.Id.Replace(':', '_'));
+        // Auto-extracteur NVIDIA en mode silencieux : destination obligatoirement directement sous %TEMP%
+        // et inexistante (sinon codes 8 / 12) ; elle n'est donc pas créée à l'avance.
+        var packagePath = c.ExtractToTempFolder
+            ? Path.Combine(Path.GetTempPath(), "SpokaPilote-" + packageName)
+            : Path.Combine(AppPaths.Extracted, packageName);
         if (Directory.Exists(packagePath)) Directory.Delete(packagePath, recursive: true);
-        Directory.CreateDirectory(packagePath);
+        if (!c.ExtractToTempFolder) Directory.CreateDirectory(packagePath);
+        try
+        {
+            return await RunVendorCommandsAsync(c, file, packagePath, progress, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            if (c.ExtractToTempFolder)
+            {
+                try { if (Directory.Exists(packagePath)) Directory.Delete(packagePath, recursive: true); }
+                catch (Exception ex) { Log.Debug($"Dossier temporaire non supprimé ({packagePath}) : {ex.Message}"); }
+            }
+        }
+    }
+
+    private static async Task<InstallOutcome> RunVendorCommandsAsync(DriverCandidate c, string file, string packagePath, IProgress<string> progress, CancellationToken ct)
+    {
         var downloadDir = Path.GetDirectoryName(file)!;
 
+        // %FILE% = installeur téléchargé, %PACKAGEPATH% = dossier d'extraction, %LOGPATH% = journaux de SpokaPilote.
         string Expand(string command) => command
             .Replace("%FILE%", file, StringComparison.OrdinalIgnoreCase)
-            .Replace("%PACKAGEPATH%", packagePath, StringComparison.OrdinalIgnoreCase);
+            .Replace("%PACKAGEPATH%", packagePath, StringComparison.OrdinalIgnoreCase)
+            .Replace("%LOGPATH%", AppPaths.Logs, StringComparison.OrdinalIgnoreCase);
 
         if (!string.IsNullOrWhiteSpace(c.ExtractCommand))
         {
             progress.Report("Extraction du paquet...");
             var extract = await RunShellAsync(Expand(c.ExtractCommand), downloadDir, ct).ConfigureAwait(false);
-            if (extract.ExitCode != 0 && !Directory.EnumerateFileSystemEntries(packagePath).Any())
+            if (!Directory.Exists(packagePath) || (extract.ExitCode != 0 && !Directory.EnumerateFileSystemEntries(packagePath).Any()))
                 return new InstallOutcome(c, InstallStatus.Failed, $"Extraction échouée (code {extract.ExitCode}).");
         }
 
