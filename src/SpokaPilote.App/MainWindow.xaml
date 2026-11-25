@@ -110,6 +110,13 @@
                             </StackPanel>
                         </Border>
 
+                        <Border Style="{StaticResource Card}" Margin="0,16,0,0">
+                            <StackPanel>
+                                <TextBlock FontWeight="SemiBold" Text="Politique de pilotes" />
+                                <TextBlock Margin="0,4,0,0" TextWrapping="Wrap" Opacity="0.8" Text="{Binding PolicySummary, Mode=OneWay}" />
+                            </StackPanel>
+                        </Border>
+
                         <TextBlock Style="{StaticResource SectionTitle}" Text="Périphériques sans pilote trouvé" />
                         <ItemsControl ItemsSource="{Binding UnresolvedDevices}">
                             <ItemsControl.ItemTemplate>
@@ -290,7 +297,8 @@
                                 </DataTemplate>
                             </ListBox.ItemTemplate>
                         </ListBox>
-                        <Border Grid.Column="2" Style="{StaticResource Card}" VerticalAlignment="Top">
+                        <ScrollViewer Grid.Column="2" VerticalScrollBarVisibility="Auto">
+                        <Border Style="{StaticResource Card}" VerticalAlignment="Top">
                             <StackPanel>
                                 <TextBlock FontWeight="SemiBold" FontSize="15" Text="Installation" />
                                 <TextBlock Opacity="0.7" Margin="0,2,0,12" TextWrapping="Wrap"
@@ -315,8 +323,19 @@
                                     <TextBox Text="{Binding ManualPrinterModel, UpdateSourceTrigger=PropertyChanged}"
                                              ToolTip="Modèle exact, ex. KYOCERA TASKalfa 3253ci" />
                                 </DockPanel>
+
+                                <Separator Margin="0,16" />
+                                <TextBlock FontWeight="SemiBold" Text="Profils d'imprimantes (configurer une fois, déployer partout)" />
+                                <TextBlock Opacity="0.7" Margin="0,2,0,8" TextWrapping="Wrap"
+                                           Text="Exportez les imprimantes d'un poste bien configuré, puis appliquez ce profil sur les autres postes (conditions possibles par site ou par nom de poste)." />
+                                <WrapPanel>
+                                    <Button Content="Exporter ce poste..." Command="{Binding ExportPrinterProfileCommand}" Margin="0,0,8,8" />
+                                    <Button Content="Appliquer un profil..." Command="{Binding DeployPrinterProfileCommand}" Margin="0,0,12,8" />
+                                    <CheckBox Content="Simulation" IsChecked="{Binding PrinterDeployDryRun}" VerticalAlignment="Center" Margin="0,0,0,8" />
+                                </WrapPanel>
                             </StackPanel>
                         </Border>
+                        </ScrollViewer>
                     </Grid>
                 </Grid>
             </TabItem>
@@ -483,6 +502,39 @@
                                 <CheckBox Content="Sauvegarder les pilotes actuels avant installation" IsChecked="{Binding BackupDrivers}" Margin="0,4" />
                                 <TextBlock Opacity="0.75" TextWrapping="Wrap" Margin="0,8,0,0"
                                            Text="Toujours actif : HTTPS uniquement, domaines officiels uniquement, empreinte vérifiée, signature Authenticode d'un éditeur approuvé, et l'INF doit déclarer l'identifiant exact du matériel." />
+                            </StackPanel>
+                        </Border>
+                        <Border Style="{StaticResource Card}" Margin="0,16,0,0">
+                            <StackPanel>
+                                <TextBlock FontWeight="SemiBold" Text="Maintenance automatique" Margin="0,0,0,4" />
+                                <TextBlock Opacity="0.75" TextWrapping="Wrap" Margin="0,0,0,8"
+                                           Text="Tâche Windows exécutée en arrière-plan (compte système) : le poste s'entretient seul et peut déposer son rapport pour le suivi du parc." />
+                                <WrapPanel>
+                                    <ComboBox ItemsSource="{Binding ScheduleTriggers}" SelectedIndex="{Binding ScheduleTrigger}" Width="190" Margin="0,0,8,8" />
+                                    <ComboBox ItemsSource="{Binding ScheduleDays}" SelectedIndex="{Binding ScheduleDay}" Width="130" Margin="0,0,8,8" />
+                                    <TextBlock Text="à" VerticalAlignment="Center" Margin="0,0,8,8" />
+                                    <TextBox Text="{Binding ScheduleTime, UpdateSourceTrigger=PropertyChanged}" Width="80" Margin="0,0,8,8" />
+                                    <ComboBox ItemsSource="{Binding ScheduleModes}" SelectedIndex="{Binding ScheduleMode}" Width="260" Margin="0,0,8,8" />
+                                </WrapPanel>
+                                <TextBlock Text="Dossier des rapports du parc (facultatif, ex. \\serveur\rapports)" Margin="0,4,0,4" />
+                                <TextBox Text="{Binding ScheduleOutputDir, UpdateSourceTrigger=PropertyChanged}" />
+                                <WrapPanel Margin="0,12,0,0">
+                                    <Button Content="Activer" Style="{DynamicResource AccentButtonStyle}" Command="{Binding EnableScheduleCommand}" Margin="0,0,8,0" />
+                                    <Button Content="Lancer maintenant" Command="{Binding RunScheduleNowCommand}" Margin="0,0,8,0" />
+                                    <Button Content="Désactiver" Command="{Binding DisableScheduleCommand}" />
+                                </WrapPanel>
+                                <TextBlock Margin="0,8,0,0" TextWrapping="Wrap" Opacity="0.8" Text="{Binding ScheduleStatusText, Mode=OneWay}" />
+                            </StackPanel>
+                        </Border>
+                        <Border Style="{StaticResource Card}" Margin="0,16,0,0">
+                            <StackPanel>
+                                <TextBlock FontWeight="SemiBold" Text="Politique de pilotes et console centrale" Margin="0,0,0,8" />
+                                <TextBlock Text="Source de la politique (fichier, \\serveur\partage\driver-policy.json ou URL HTTPS ; vide = console centrale)" Margin="0,0,0,4" TextWrapping="Wrap" />
+                                <TextBox Text="{Binding Settings.PolicySource, UpdateSourceTrigger=PropertyChanged}" />
+                                <TextBlock Text="Adresse de la console centrale (ex. https://spokapilote.mon-entreprise.fr)" Margin="0,12,0,4" />
+                                <TextBox Text="{Binding Settings.ServerUrl, UpdateSourceTrigger=PropertyChanged}" />
+                                <TextBlock Text="Jeton d'enrôlement des postes" Margin="0,12,0,4" />
+                                <TextBox Text="{Binding Settings.ServerToken, UpdateSourceTrigger=PropertyChanged}" />
                             </StackPanel>
                         </Border>
                         <Border Style="{StaticResource Card}" Margin="0,16,0,0">

@@ -58,7 +58,162 @@ public sealed class MainViewModel : ObservableObject
         RefreshHistoryCommand = new RelayCommand(RefreshHistory);
         BuildPackCommand = new RelayCommand(BuildPackAsync, () => !IsBusy);
         FleetReportCommand = new RelayCommand(BuildFleetReport, () => !IsBusy);
+        ExportPrinterProfileCommand = new RelayCommand(ExportPrinterProfile, () => !IsBusy);
+        DeployPrinterProfileCommand = new RelayCommand(DeployPrinterProfileAsync, () => !IsBusy);
+        EnableScheduleCommand = new RelayCommand(EnableScheduleAsync, () => !IsBusy);
+        DisableScheduleCommand = new RelayCommand(DisableScheduleAsync, () => !IsBusy && ScheduleExists);
+        RunScheduleNowCommand = new RelayCommand(RunScheduleNowAsync, () => !IsBusy && ScheduleExists);
         RefreshHistory();
+        _ = RefreshScheduleStatusAsync();
+    }
+
+    // ------------------------------------------------------------------ politique de pilotes
+
+    public string PolicySummary => LastScan?.Policy is { } p
+        ? p.Summary + (p.Messages.Count > 0 ? "\n" + string.Join("\n", p.Messages) : "")
+        : "Politique : chargée à la prochaine analyse.";
+    public int BlockedCount => LastScan?.Candidates.Count(c => c.BlockedReason is not null) ?? 0;
+
+    // ------------------------------------------------------------------ profils d'imprimantes
+
+    private bool _printerDeployDryRun = true;
+    public bool PrinterDeployDryRun { get => _printerDeployDryRun; set => Set(ref _printerDeployDryRun, value); }
+    public RelayCommand ExportPrinterProfileCommand { get; }
+    public RelayCommand DeployPrinterProfileCommand { get; }
+
+    private Task ExportPrinterProfile()
+    {
+        var dialog = new SaveFileDialog { FileName = $"imprimantes-{Environment.MachineName}.json", Filter = "Profil d'imprimantes (*.json)|*.json" };
+        if (dialog.ShowDialog() != true) return Task.CompletedTask;
+        var (profile, skipped) = PrinterProfileDeployer.Export(PrinterInventory.Read(), Environment.MachineName);
+        File.WriteAllText(dialog.FileName, profile.ToJson());
+        PrinterResult = $"{profile.Printers.Count} imprimante(s) réseau exportée(s) dans {dialog.FileName}" +
+                        (skipped.Count > 0 ? $"\nIgnorées : {string.Join(", ", skipped.Select(s => s.Name))}" : "") +
+                        "\nAjoutez au besoin des conditions par site (sous-réseaux, noms de postes) : voir docs/IMPRIMANTES-ET-PLANIFICATION.md.";
+        Status = $"Profil d'imprimantes exporté ({profile.Printers.Count}).";
+        return Task.CompletedTask;
+    }
+
+    private async Task DeployPrinterProfileAsync()
+    {
+        string? source;
+        var dialog = new OpenFileDialog { Title = "Profil d'imprimantes à appliquer (Annuler = profil de la console centrale)", Filter = "Profil d'imprimantes (*.json)|*.json" };
+        if (dialog.ShowDialog() == true) source = dialog.FileName;
+        else if (!string.IsNullOrWhiteSpace(Settings.ServerUrl)) source = null;
+        else return;
+
+        if (!PrinterDeployDryRun && !IsAdmin) { AskRelaunch("Le déploiement d'imprimantes"); return; }
+        await RunBusyAsync("Déploiement du profil d'imprimantes...", async ct =>
+        {
+            var (profile, origin) = await PrinterProfileSource.LoadAsync(source, Settings, ct);
+            if (profile is null)
+            {
+                PrinterResult = $"Aucun profil d'imprimantes publié ({origin}).";
+                return;
+            }
+            var validation = profile.Validate();
+            if (!validation.IsValid)
+            {
+                PrinterResult = "Profil invalide, aucun changement :\n" + string.Join("\n", validation.Errors.Select(e => "✗ " + e));
+                return;
+            }
+            var report = await new PrinterProfileDeployer(Settings).DeployAsync(profile, PrinterProfileContext.Current(), PrinterDeployDryRun,
+                new Progress<string>(m => Status = m), ct);
+            PrinterResult = $"{(PrinterDeployDryRun ? "SIMULATION — " : "")}{profile.Name ?? "Profil"} ({origin}) :\n" +
+                            string.Join("\n", report.Items.Select(i => $"{i.StatusLabel} · {i.Name}{(string.IsNullOrEmpty(i.Message) ? "" : " — " + i.Message)}")) +
+                            (report.Warnings.Count > 0 ? "\n⚠ " + string.Join("\n⚠ ", report.Warnings) : "");
+            Status = report.HasFailures ? "Profil appliqué avec des échecs." : "Profil d'imprimantes appliqué.";
+        });
+    }
+
+    // ------------------------------------------------------------------ maintenance planifiée
+
+    public string[] ScheduleTriggers { get; } = { "Chaque semaine", "Chaque jour", "Au démarrage du poste" };
+    public string[] ScheduleDays { get; } = { "lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche" };
+    public string[] ScheduleModes { get; } = { "Pilotes manquants seulement", "Pilotes manquants + mises à jour", "Analyse seule (rapport)" };
+
+    private int _scheduleTrigger;
+    public int ScheduleTrigger { get => _scheduleTrigger; set => Set(ref _scheduleTrigger, value); }
+    private int _scheduleDay;
+    public int ScheduleDay { get => _scheduleDay; set => Set(ref _scheduleDay, value); }
+    private string _scheduleTime = "12:30";
+    public string ScheduleTime { get => _scheduleTime; set => Set(ref _scheduleTime, value); }
+    private int _scheduleMode;
+    public int ScheduleMode { get => _scheduleMode; set => Set(ref _scheduleMode, value); }
+    private string _scheduleOutputDir = "";
+    public string ScheduleOutputDir { get => _scheduleOutputDir; set => Set(ref _scheduleOutputDir, value); }
+    private string _scheduleStatus = "État : vérification...";
+    public string ScheduleStatusText { get => _scheduleStatus; private set => Set(ref _scheduleStatus, value); }
+    private bool _scheduleExists;
+    public bool ScheduleExists { get => _scheduleExists; private set => Set(ref _scheduleExists, value); }
+
+    public RelayCommand EnableScheduleCommand { get; }
+    public RelayCommand DisableScheduleCommand { get; }
+    public RelayCommand RunScheduleNowCommand { get; }
+
+    private static string CliPath => Path.Combine(AppContext.BaseDirectory, "spokapilote.exe");
+
+    private async Task RefreshScheduleStatusAsync()
+    {
+        try
+        {
+            var s = await MaintenanceScheduler.StatusAsync();
+            ScheduleExists = s.Exists;
+            ScheduleStatusText = !s.Exists
+                ? "État : maintenance automatique désactivée."
+                : $"État : active — {s.TriggerSummary}" +
+                  $"\nProchaine exécution : {(s.NextRun is { } n ? n.ToString("dddd dd/MM/yyyy HH:mm") : "—")}" +
+                  $" · dernière : {(s.LastRun is { } l ? $"{l:dd/MM/yyyy HH:mm} (code {s.LastResult})" : "jamais")}";
+        }
+        catch (Exception ex)
+        {
+            ScheduleStatusText = $"État indisponible : {ex.Message}";
+        }
+    }
+
+    private async Task EnableScheduleAsync()
+    {
+        if (!IsAdmin) { AskRelaunch("La planification de la maintenance"); return; }
+        var problem = MaintenanceScheduler.ValidateExecutable(CliPath);
+        if (problem is not null) { ScheduleStatusText = problem; return; }
+        var time = MaintenanceScheduler.ParseTime(ScheduleTime);
+        if (time is null) { ScheduleStatusText = "Heure invalide (format attendu : 12:30)."; return; }
+        var options = new MaintenanceOptions
+        {
+            Trigger = ScheduleTrigger switch { 1 => MaintenanceTrigger.Daily, 2 => MaintenanceTrigger.AtStartup, _ => MaintenanceTrigger.Weekly },
+            Day = ScheduleDay == 6 ? DayOfWeek.Sunday : (DayOfWeek)(ScheduleDay + 1),
+            Time = time.Value,
+            Mode = ScheduleMode switch { 1 => MaintenanceMode.Updates, 2 => MaintenanceMode.Scan, _ => MaintenanceMode.Missing },
+            OutputDir = string.IsNullOrWhiteSpace(ScheduleOutputDir) ? null : ScheduleOutputDir.Trim(),
+        };
+        await RunBusyAsync("Création de la tâche planifiée...", async ct =>
+        {
+            var (_, message) = await MaintenanceScheduler.EnableAsync(options, CliPath, ct);
+            Status = message;
+            await RefreshScheduleStatusAsync();
+        });
+    }
+
+    private async Task DisableScheduleAsync()
+    {
+        if (!IsAdmin) { AskRelaunch("La désactivation de la maintenance"); return; }
+        await RunBusyAsync("Suppression de la tâche planifiée...", async ct =>
+        {
+            var (_, message) = await MaintenanceScheduler.DisableAsync(ct);
+            Status = message;
+            await RefreshScheduleStatusAsync();
+        });
+    }
+
+    private async Task RunScheduleNowAsync()
+    {
+        if (!IsAdmin) { AskRelaunch("Le lancement de la maintenance"); return; }
+        await RunBusyAsync("Lancement de la maintenance...", async ct =>
+        {
+            var (_, message) = await MaintenanceScheduler.RunNowAsync(ct);
+            Status = message;
+            await RefreshScheduleStatusAsync();
+        });
     }
 
     // ------------------------------------------------------------------ mise à jour de SpokaPilote
@@ -288,6 +443,8 @@ public sealed class MainViewModel : ObservableObject
             OnPropertyChanged(nameof(SourceWarnings));
             OnPropertyChanged(nameof(HasSourceWarnings));
             OnPropertyChanged(nameof(HealthHeadline));
+            OnPropertyChanged(nameof(PolicySummary));
+            OnPropertyChanged(nameof(BlockedCount));
         }
     }
 
