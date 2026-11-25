@@ -706,7 +706,7 @@ internal static partial class Program
                                    télécharge, vérifie (empreinte, signature) et extrait le pack dans
                                    <dépôt>\<Fabricant>\<Modèle>\<WinXX-arch>, prêt pour « install --repo »
 
-            IMAGES WINDOWS (DISM, console administrateur)
+            IMAGES WINDOWS (DISM, console administrateur) — EXPÉRIMENTAL : testez sur une copie de l'image
               spokapilote image info <install.wim> [--index n]       éditions, architecture, version
               spokapilote image inject --wim <install.wim> --index <n|1,3|all> --repo <dossier> [--dry-run] [--yes]
               spokapilote image inject --offline D:\ --repo <dossier> [--dry-run] [--yes]

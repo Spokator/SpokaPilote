@@ -74,6 +74,70 @@ public sealed class MainViewModel : ObservableObject
         : "Politique : chargée à la prochaine analyse.";
     public int BlockedCount => LastScan?.Candidates.Count(c => c.BlockedReason is not null) ?? 0;
 
+    // ------------------------------------------------------------------ packs officiels des constructeurs
+
+    private string _packModel = "";
+    public string PackModel { get => _packModel; set => Set(ref _packModel, value); }
+    public string[] PackOsChoices { get; } = { "Windows 11", "Windows 10" };
+    private int _packOs;
+    public int PackOs { get => _packOs; set => Set(ref _packOs, value); }
+    public ObservableCollection<DriverPackMatch> DriverPacks { get; } = new();
+    private DriverPackMatch? _selectedDriverPack;
+    public DriverPackMatch? SelectedDriverPack { get => _selectedDriverPack; set => Set(ref _selectedDriverPack, value); }
+    public RelayCommand SearchDriverPacksCommand => _searchPacks ??= new RelayCommand(SearchDriverPacksAsync, () => !IsBusy);
+    public RelayCommand DownloadDriverPackCommand => _downloadPack ??= new RelayCommand(DownloadDriverPackAsync, () => !IsBusy && SelectedDriverPack is not null);
+    private RelayCommand? _searchPacks, _downloadPack;
+
+    private async Task SearchDriverPacksAsync()
+    {
+        await RunBusyAsync("Recherche dans les catalogues de packs Dell, HP et Lenovo...", async ct =>
+        {
+            DriverPackQuery query;
+            if (string.IsNullOrWhiteSpace(PackModel))
+            {
+                var system = LastScan?.System ?? await Task.Run(Core.Inventory.SystemInfoProvider.Collect, ct);
+                query = DriverPackQuery.ForSystem(system);
+            }
+            else
+            {
+                query = new DriverPackQuery { Text = PackModel.Trim() };
+            }
+            query.Os = PackOs == 1 ? "win10" : "win11";
+            query.Architecture ??= Core.Online.UpdateChecker.HostArchitecture;
+            var matches = await OemDriverPacks.SearchAsync(query, Settings, new Progress<string>(m => Status = m), ct);
+            DriverPacks.Clear();
+            foreach (var m in matches) DriverPacks.Add(m);
+            SelectedDriverPack = DriverPacks.FirstOrDefault();
+            RepositoryResult = matches.Count == 0
+                ? $"Aucun pack officiel pour {query.Describe()} ({PackOsChoices[PackOs]}). Seuls Dell, HP et Lenovo publient des packs de déploiement."
+                : $"{matches.Count} pack(s) trouvé(s) pour {query.Describe()}.";
+            Status = RepositoryResult;
+        });
+    }
+
+    private async Task DownloadDriverPackAsync()
+    {
+        if (SelectedDriverPack is null) return;
+        if (!IsAdmin) { AskRelaunch("Le téléchargement et l'extraction d'un pack constructeur"); return; }
+        var repo = SelectedRepository ?? RepositoryPaths.FirstOrDefault();
+        if (repo is null)
+        {
+            var dialog = new OpenFolderDialog { Title = "Dépôt de pilotes où ranger le pack (ex. \\\\serveur\\pilotes)" };
+            if (dialog.ShowDialog() != true) return;
+            repo = dialog.FolderName;
+            if (!RepositoryPaths.Contains(repo, StringComparer.OrdinalIgnoreCase)) { RepositoryPaths.Add(repo); SaveSettings(); }
+        }
+        var match = SelectedDriverPack;
+        await RunBusyAsync($"Téléchargement du pack {match.ModelLabel} ({match.Pack.SizeLabel})...", async ct =>
+        {
+            var result = await OemDriverPackDownloader.DownloadAsync(match, repo, Settings, null, new Progress<string>(m => Status = m), ct);
+            RepositoryResult = result.Message + (result.Success
+                ? $"\n{result.SignedInfCount}/{result.InfCount} pilotes signés, rangés dans {result.Folder}. Les postes de ce modèle s'installent désormais depuis le dépôt."
+                : "");
+            Status = result.Success ? "Pack constructeur prêt dans le dépôt." : "Échec du pack constructeur.";
+        });
+    }
+
     // ------------------------------------------------------------------ console centrale
 
     private string _serverStatus = "";

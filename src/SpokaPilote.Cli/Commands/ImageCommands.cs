@@ -70,6 +70,7 @@ internal static partial class Program
 
     private static async Task<int> ImageInjectAsync(Args a, CancellationToken ct)
     {
+        WriteLine("Fonction expérimentale : travaillez sur une COPIE de l'image (install.wim / dossier Windows hors ligne).", ConsoleColor.Yellow);
         var wim = a.Value("wim");
         var offline = a.Value("offline");
         var repos = a.Values("repo").ToList();
