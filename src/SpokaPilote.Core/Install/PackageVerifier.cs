@@ -37,27 +37,33 @@ public static class PackageVerifier
                 continue;
             }
 
-            if (string.IsNullOrEmpty(inf.CatalogFile))
+            var (signed, signatureReason) = VerifyInfSignature(infPath, inf, architecture);
+            if (!signed)
             {
-                reason = $"{Path.GetFileName(infPath)} n'est pas signé (pas de fichier .cat)";
+                reason = signatureReason;
                 continue;
             }
-            var catPath = Path.Combine(Path.GetDirectoryName(infPath)!, inf.CatalogFile);
-            if (!File.Exists(catPath))
-            {
-                reason = $"catalogue {inf.CatalogFile} manquant";
-                continue;
-            }
-            var sig = SignatureVerifier.Verify(catPath);
-            if (!sig.IsValid)
-            {
-                reason = $"{inf.CatalogFile} : {sig.Detail}";
-                continue;
-            }
-            Log.Info($"{Path.GetFileName(infPath)} : {sig} ; correspondance {string.Join(", ", matches.Select(m => m.MatchedId).Distinct())}");
+            Log.Info($"{Path.GetFileName(infPath)} : {signatureReason} ; correspondance {string.Join(", ", matches.Select(m => m.MatchedId).Distinct())}");
             selected.Add(infPath);
             allMatches.AddRange(matches);
         }
         return new Result(selected, reason, allMatches);
+    }
+
+    /// <summary>
+    /// L'INF déclare-t-il un catalogue (.cat) présent à côté de lui et dont la signature est valide ?
+    /// Renvoie le motif du refus, ou la description de la signature si elle est valide.
+    /// </summary>
+    public static (bool Signed, string Reason) VerifyInfSignature(string infPath, InfInfo inf, string? architecture = null)
+    {
+        // Le catalogue propre à l'architecture (CatalogFile.NTamd64...) prime sur le catalogue non décoré.
+        var catalog = architecture is null ? inf.CatalogFile : inf.CatalogFileFor(architecture);
+        if (string.IsNullOrEmpty(catalog))
+            return (false, $"{Path.GetFileName(infPath)} n'est pas signé (pas de fichier .cat)");
+        var catPath = Path.Combine(Path.GetDirectoryName(infPath)!, catalog);
+        if (!File.Exists(catPath))
+            return (false, $"catalogue {catalog} manquant");
+        var sig = SignatureVerifier.Verify(catPath);
+        return sig.IsValid ? (true, sig.ToString()) : (false, $"{catalog} : {sig.Detail}");
     }
 }

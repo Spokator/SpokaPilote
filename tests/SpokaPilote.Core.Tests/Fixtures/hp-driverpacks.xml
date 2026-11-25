@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Extrait réduit du HPClientDriverPackCatalog réel (le vrai fichier commence par un xs:schema en ligne). -->
+<NewDataSet>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" id="HPClientDriverPackCatalog"><xs:element name="HPClientDriverPackCatalog" /></xs:schema>
+<HPClientDriverPackCatalog SchemaVersion="1.0.0.0" ToolVersion="1.2.20.0" DateReleased="2026-11-20" >
+<OSList>
+  <OS><Name>Windows 10 64-bit, 21H1</Name><ShortName>Windows 10 64-bit, 21H1</ShortName><Bitness>64-bit</Bitness><OSId>4295</OSId></OS>
+</OSList><SoftPaqList>
+  <SoftPaq>
+    <Id>sp110579</Id>
+    <Name>HP Elite/ZBook 8x0 G6 Windows 10 x64 Driver Pack</Name>
+    <Version>5.00 A 1</Version>
+    <Category>Manageability - Driver Pack</Category>
+    <DateReleased>10/23/2020 12:00:00 AM</DateReleased>
+    <Url>https://ftp.hp.com/pub/softpaq/sp110501-111000/sp110579.exe</Url>
+    <Size>1463645216</Size>
+    <MD5>2fde37e930a800ef78b5c1903092a487</MD5>
+    <SHA256>E4814767EE35395B36C72B8A4F35F9DDD7ED1A683507926B528860B0AD803FCB</SHA256>
+    <ReleaseNotesUrl>https://ftp.hp.com/pub/softpaq/sp110501-111000/sp110579.html</ReleaseNotesUrl>
+  </SoftPaq>
+  <SoftPaq>
+    <Id>sp114161</Id>
+    <Name>HP Elite/ZBook 8x0 G6 Windows 10 x64 Driver Pack</Name>
+    <Version>6.00 A 1</Version>
+    <Category>Manageability - Driver Pack</Category>
+    <DateReleased>6/9/2021 12:00:00 AM</DateReleased>
+    <Url>ftp.hp.com/pub/softpaq/sp114001-114500/sp114161.exe</Url>
+    <Size>1702525096</Size>
+    <MD5>60a521a44053671ecfab3370261f3238</MD5>
+    <SHA256>688913E21B3711A4BF1CA5354F9E45C855B7566854A89823FD61D9605FDCF502</SHA256>
+    <ReleaseNotesUrl>https://ftp.hp.com/pub/softpaq/sp114001-114500/sp114161.html</ReleaseNotesUrl>
+  </SoftPaq>
+  <SoftPaq>
+    <Id>sp170248</Id>
+    <Name>HP Engage One Pro AIO Win11 Driver Pack</Name>
+    <Version>8.00 A 1</Version>
+    <Category>Manageability - Driver Pack</Category>
+    <DateReleased>2/3/2026 12:00:00 AM</DateReleased>
+    <Url>https://ftp.hp.com/pub/softpaq/sp170001-170500/sp170248.exe</Url>
+    <Size>0</Size>
+    <MD5>00000000000000000000000000000000</MD5>
+    <SHA256>3333333333333333333333333333333333333333333333333333333333333333</SHA256>
+  </SoftPaq>
+</SoftPaqList><ProductOSDriverPackList>
+  <ProductOSDriverPack>
+    <Architecture>64-bit</Architecture>
+    <SystemId>8549</SystemId>
+    <SystemName>HP EliteBook 840 G6 Notebook PC</SystemName>
+    <OSName>Windows 10 64-bit, 1909</OSName>
+    <SoftPaqId>sp110579</SoftPaqId>
+  </ProductOSDriverPack>
+  <ProductOSDriverPack>
+    <Architecture>64-bit</Architecture>
+    <SystemId>8549</SystemId>
+    <SystemName>HP EliteBook 840 G6 Notebook PC</SystemName>
+    <OSName>Windows 10 64-bit, 2004</OSName>
+    <SoftPaqId>sp114161</SoftPaqId>
+  </ProductOSDriverPack>
+  <ProductOSDriverPack>
+    <Architecture>64-bit</Architecture>
+    <SystemId>8549</SystemId>
+    <SystemName>HP EliteBook 840 G6 Notebook PC</SystemName>
+    <OSName>Windows 10 64-bit, 21H1</OSName>
+    <SoftPaqId>sp114161</SoftPaqId>
+  </ProductOSDriverPack>
+  <ProductOSDriverPack>
+    <Architecture>64-bit</Architecture>
+    <SystemId>8549</SystemId>
+    <SystemName>HP EliteBook 850 G6 Notebook PC</SystemName>
+    <OSName>Windows 10 64-bit, 21H1</OSName>
+    <SoftPaqId>sp114161</SoftPaqId>
+  </ProductOSDriverPack>
+  <ProductOSDriverPack>
+    <Architecture>64-bit</Architecture>
+    <SystemId>8549</SystemId>
+    <SystemName>HP EliteBook 840 G6 Notebook PC</SystemName>
+    <OSName>Windows 10 IoT Enterprise 2021 LTSC, 64-bit</OSName>
+    <SoftPaqId>sp114161</SoftPaqId>
+  </ProductOSDriverPack>
+  <ProductOSDriverPack>
+    <Architecture>64-bit</Architecture>
+    <SystemId>874f,8750</SystemId>
+    <SystemName>HP Engage One Pro AIO System</SystemName>
+    <OSName>Windows 11 64-bit, 24H2</OSName>
+    <SoftPaqId>sp170248</SoftPaqId>
+  </ProductOSDriverPack>
+  <ProductOSDriverPack>
+    <Architecture>64-bit</Architecture>
+    <SystemId>874F</SystemId>
+    <SystemName>HP Engage One Pro AIO System</SystemName>
+    <OSName>Windows 11 64-bit, 25H2</OSName>
+    <SoftPaqId>sp170248</SoftPaqId>
+  </ProductOSDriverPack>
+</ProductOSDriverPackList>
+</HPClientDriverPackCatalog>
+</NewDataSet>
