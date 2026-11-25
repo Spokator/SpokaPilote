@@ -1,0 +1,97 @@
+<Window x:Class="SpokaPilote.App.OnboardingWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Bienvenue dans SpokaPilote"
+        Width="720" Height="560" MinWidth="560" MinHeight="480"
+        WindowStartupLocation="CenterOwner" ResizeMode="CanResize"
+        AutomationProperties.Name="Assistant de premier lancement de SpokaPilote">
+    <Grid Margin="32,28">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <TextBlock x:Name="StepLabel" Opacity="0.7" FontSize="12" Text="Étape 1 sur 3" />
+
+        <!-- Étape 1 : présentation -->
+        <ScrollViewer Grid.Row="1" x:Name="Step1" VerticalScrollBarVisibility="Auto" Margin="0,8,0,0">
+            <StackPanel>
+                <TextBlock FontSize="26" FontWeight="SemiBold" Text="Bienvenue dans SpokaPilote" TextWrapping="Wrap" />
+                <TextBlock Margin="0,8,0,16" FontSize="14" TextWrapping="Wrap" Opacity="0.85"
+                           Text="SpokaPilote trouve, vérifie et installe les bons pilotes pour tout le poste et pour les imprimantes d'entreprise, sans passer par les sites de pilotes douteux." />
+                <Border Style="{StaticResource Card}" Margin="0,0,0,10">
+                    <StackPanel>
+                        <TextBlock FontWeight="SemiBold" Text="✔  Sources officielles uniquement" />
+                        <TextBlock Opacity="0.8" TextWrapping="Wrap" Text="Microsoft (Windows Update, catalogue), Dell, HP, Lenovo, Microsoft Surface, NVIDIA, et votre dépôt interne." />
+                    </StackPanel>
+                </Border>
+                <Border Style="{StaticResource Card}" Margin="0,0,0,10">
+                    <StackPanel>
+                        <TextBlock FontWeight="SemiBold" Text="✔  Tout est vérifié avant installation" />
+                        <TextBlock Opacity="0.8" TextWrapping="Wrap" Text="Empreinte du fichier, signature numérique de l'éditeur, compatibilité exacte avec votre matériel et votre Windows." />
+                    </StackPanel>
+                </Border>
+                <Border Style="{StaticResource Card}">
+                    <StackPanel>
+                        <TextBlock FontWeight="SemiBold" Text="✔  Retour arrière à tout moment" />
+                        <TextBlock Opacity="0.8" TextWrapping="Wrap" Text="Point de restauration, sauvegarde des pilotes et annulation d'une intervention en un clic (onglet Historique)." />
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+        </ScrollViewer>
+
+        <!-- Étape 2 : usage -->
+        <ScrollViewer Grid.Row="1" x:Name="Step2" Visibility="Collapsed" VerticalScrollBarVisibility="Auto" Margin="0,8,0,0">
+            <StackPanel>
+                <TextBlock FontSize="22" FontWeight="SemiBold" Text="Comment allez-vous utiliser SpokaPilote ?" TextWrapping="Wrap" />
+                <RadioButton x:Name="UseSingle" GroupName="Use" IsChecked="True" Margin="0,16,0,0"
+                             AutomationProperties.Name="Pour ce poste uniquement">
+                    <StackPanel>
+                        <TextBlock FontWeight="SemiBold" Text="Pour ce poste (ou au cas par cas)" />
+                        <TextBlock Opacity="0.8" TextWrapping="Wrap" Text="Analysez le poste, installez ce qui manque. Rien d'autre à configurer." />
+                    </StackPanel>
+                </RadioButton>
+                <RadioButton x:Name="UseFleet" GroupName="Use" Margin="0,16,0,0" Checked="OnUseChanged" Unchecked="OnUseChanged"
+                             AutomationProperties.Name="Pour un parc d'entreprise">
+                    <StackPanel>
+                        <TextBlock FontWeight="SemiBold" Text="Pour un parc d'entreprise" />
+                        <TextBlock Opacity="0.8" TextWrapping="Wrap" Text="Dépôt de pilotes partagé, console centrale, entretien automatique des postes." />
+                    </StackPanel>
+                </RadioButton>
+                <StackPanel x:Name="FleetOptions" Visibility="Collapsed" Margin="28,12,0,0">
+                    <TextBlock Text="Dépôt de pilotes de l'entreprise (facultatif, ex. \\serveur\pilotes)" Margin="0,0,0,4" />
+                    <DockPanel>
+                        <Button DockPanel.Dock="Right" Content="Parcourir..." Click="OnBrowseRepo" Margin="8,0,0,0" />
+                        <TextBox x:Name="RepoBox" AutomationProperties.Name="Dépôt de pilotes" />
+                    </DockPanel>
+                    <TextBlock Text="Adresse de la console centrale (facultatif)" Margin="0,12,0,4" />
+                    <TextBox x:Name="ServerBox" AutomationProperties.Name="Adresse de la console centrale" />
+                    <TextBlock Text="Jeton d'enrôlement (fourni par la console, page Enrôlement)" Margin="0,12,0,4" />
+                    <TextBox x:Name="TokenBox" AutomationProperties.Name="Jeton d'enrôlement" />
+                    <TextBlock Margin="0,12,0,0" Opacity="0.75" TextWrapping="Wrap"
+                               Text="L'entretien automatique et les imprimantes se règlent ensuite dans Paramètres et Imprimantes. Tout reste modifiable plus tard." />
+                </StackPanel>
+            </StackPanel>
+        </ScrollViewer>
+
+        <!-- Étape 3 : prêt -->
+        <ScrollViewer Grid.Row="1" x:Name="Step3" Visibility="Collapsed" VerticalScrollBarVisibility="Auto" Margin="0,8,0,0">
+            <StackPanel>
+                <TextBlock FontSize="22" FontWeight="SemiBold" Text="C'est prêt" />
+                <TextBlock Margin="0,8,0,16" FontSize="14" TextWrapping="Wrap" Opacity="0.85"
+                           Text="Lancez une première analyse : SpokaPilote inventorie le matériel et vous montre ce qui manque, sans rien installer. L'installation se fait ensuite d'un clic, après votre accord." />
+                <CheckBox x:Name="ScanNow" IsChecked="True" Content="Analyser ce poste maintenant" />
+                <TextBlock Margin="0,20,0,0" Opacity="0.75" TextWrapping="Wrap"
+                           Text="Raccourcis : F5 analyser · Ctrl+1 à Ctrl+8 changer d'onglet · F1 aide en ligne." />
+            </StackPanel>
+        </ScrollViewer>
+
+        <DockPanel Grid.Row="2" Margin="0,16,0,0" LastChildFill="False">
+            <Button DockPanel.Dock="Left" x:Name="SkipButton" Content="Passer" Click="OnSkip" IsCancel="True" />
+            <Button DockPanel.Dock="Right" x:Name="NextButton" Content="Suivant" Click="OnNext" IsDefault="True"
+                    Style="{DynamicResource AccentButtonStyle}" MinWidth="110" Margin="8,0,0,0" />
+            <Button DockPanel.Dock="Right" x:Name="BackButton" Content="Précédent" Click="OnBack" IsEnabled="False" />
+        </DockPanel>
+    </Grid>
+</Window>

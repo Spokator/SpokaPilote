@@ -497,6 +497,17 @@ public sealed class MainViewModel : ObservableObject
         return Task.CompletedTask;
     }
 
+    /// <summary>Configuration « parc » saisie dans l'assistant de premier lancement.</summary>
+    public void ApplyFleetSetup(string repository, string serverUrl, string serverToken)
+    {
+        if (repository.Length > 0 && !RepositoryPaths.Contains(repository, StringComparer.OrdinalIgnoreCase))
+            RepositoryPaths.Add(repository);
+        if (serverUrl.Length > 0) Settings.ServerUrl = serverUrl;
+        if (serverToken.Length > 0) Settings.ServerToken = serverToken;
+        OnPropertyChanged(nameof(Settings));
+        SaveSettings();
+    }
+
     private void AskRelaunch(string action)
     {
         if (MessageBox.Show($"{action} nécessite les droits administrateur.\n\nRelancer SpokaPilote en administrateur ?",
