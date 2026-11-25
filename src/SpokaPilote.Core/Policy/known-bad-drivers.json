@@ -1,0 +1,38 @@
+// Liste noire de référence SpokaPilote — même format que driver-policy.json (voir docs/POLITIQUE.md).
+//
+// Règles de contribution (IMPORTANT) :
+//   - n'ajouter QUE des versions de pilotes signalées par une source publique officielle (avis Microsoft
+//     « Windows release health » / support.microsoft.com, bulletin du constructeur du matériel ou du PC) ;
+//   - renseigner « sourceUrl » (lien vers cet avis) et « reason » (résumé factuel, en français) ;
+//   - viser précisément : versions exactes (« versions ») ou plage (« versionMin » / « versionMax ») + fabricant
+//     et/ou identifiant matériel ; jamais de règle large ;
+//   - mettre à jour « updatedAt » : les postes récupèrent ce fichier depuis GitHub (au plus une fois par jour)
+//     dès qu'il est plus récent que la liste intégrée à leur version de SpokaPilote ;
+//   - ne pas utiliser « settings » : seuls les réglages de la politique de l'organisation s'appliquent.
+// Une organisation peut écarter une règle avec settings.ignoreReferenceRules, ou toute la liste avec
+// settings.useReferenceBlocklist = false.
+{
+  "schema": 1,
+  "name": "Liste de référence SpokaPilote",
+  "version": "2026.11.25",
+  "updatedAt": "2026-11-25",
+  "description": "Versions de pilotes problématiques signalées par Microsoft ou par le constructeur.",
+  "rules": [
+    {
+      "id": "ref-intel-sst-intcaudiobus-5152",
+      "action": "block",
+      "manufacturer": "Intel*",
+      "versions": [ "10.29.0.5152", "10.30.0.5152" ],
+      "reason": "Intel Smart Sound Technology (IntcAudioBus.sys) 10.29.0.5152 / 10.30.0.5152 : écrans bleus signalés par Microsoft sous Windows 11 (processeurs Intel Core 11e génération). Corrigé à partir de 10.29.00.5714 / 10.30.00.5714.",
+      "sourceUrl": "https://learn.microsoft.com/en-us/windows/release-health/known-issues/known-issue-2746"
+    },
+    {
+      "id": "ref-intel-sst-intcoed-10.24",
+      "action": "block",
+      "manufacturer": "Intel*",
+      "versions": [ "10.24.0.2863", "10.24.0.3316", "10.24.0.3488", "10.24.0.3633", "10.24.0.3694", "10.24.0.3851", "10.24.0.3950" ],
+      "reason": "Intel Smart Sound Technology OED (IntcOED.sys) 10.24.0.x : écrans bleus signalés par Microsoft sous Windows 11 (processeurs Intel Core 11e génération). Corrigé à partir de la version x.x.0.7927.",
+      "sourceUrl": "https://support.microsoft.com/en-us/topic/kb5078895-compatibility-issues-with-intel-smart-sound-technology-drivers-on-windows-11-f2da4985-f4b0-47b0-b907-85356d8eda1a"
+    }
+  ]
+}

@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using SpokaPilote.Core.Install;
 using SpokaPilote.Core.Models;
+using SpokaPilote.Core.Policy;
 
 namespace SpokaPilote.Core.Engine;
 
@@ -48,7 +49,24 @@ public static class ReportWriter
         Card("Système", $"{s.OsCaption} {s.OsDisplayVersion} ({s.OsVersion})");
         Card("BIOS", s.BiosVersion);
         Card("Périphériques en erreur", scan.ProblemDevices.Count().ToString());
+        if (scan.Policy is { } policy)
+            Card("Politique de pilotes", policy.Organization is null
+                ? "Aucune (liste de référence seule)"
+                : $"{policy.Organization.Name ?? "sans nom"}{(policy.Organization.Version is null ? "" : " v" + policy.Organization.Version)}{(policy.FromCache ? " (cache)" : "")}");
         sb.Append("</div>");
+
+        if (scan.Policy is { } applied)
+        {
+            var hidden = scan.PolicyDecisions.Where(d => d.Decision.Verdict == PolicyVerdict.Hidden).ToList();
+            sb.Append($"<p class=\"muted\">Politique : {E(applied.Summary)}{(applied.OrganizationOrigin is null ? "" : $" — origine : <code>{E(applied.OrganizationOrigin)}</code>")}</p>");
+            foreach (var m in applied.Messages) sb.Append($"<p class=\"warn\">{E(m)}</p>");
+            if (hidden.Count > 0)
+            {
+                sb.Append($"<details><summary class=\"muted\">{hidden.Count} pilote(s) masqué(s) par la politique</summary><ul>");
+                foreach (var d in hidden) sb.Append($"<li>{E(d.Candidate.Title)} {E(d.Candidate.Version)} — {E(d.Decision.Reason)}</li>");
+                sb.Append("</ul></details>");
+            }
+        }
 
         if (scan.SourceErrors.Count > 0)
         {
@@ -74,7 +92,7 @@ public static class ReportWriter
         {
             sb.Append("<div class=\"scroll\"><table><tr><th>Type</th><th>Pilote</th><th>Version</th><th>Source</th><th>Périphérique(s)</th></tr>");
             foreach (var c in scan.Candidates)
-                sb.Append($"<tr><td>{E(c.KindLabel)}</td><td>{E(c.Title)}</td><td>{E(c.Version)}</td><td>{E(c.SourceLabel)}</td><td>{E(string.Join(", ", c.TargetDeviceNames.Distinct()))}</td></tr>");
+                sb.Append($"<tr><td>{E(c.KindLabel)}</td><td>{E(c.Title)}{(c.BlockedReason is null ? "" : $"<br><span class=\"bad\">⛔ Bloqué par la politique : {E(c.BlockedReason)}</span>")}</td><td>{E(c.Version)}</td><td>{E(c.SourceLabel)}</td><td>{E(string.Join(", ", c.TargetDeviceNames.Distinct()))}</td></tr>");
             sb.Append("</table></div>");
         }
 

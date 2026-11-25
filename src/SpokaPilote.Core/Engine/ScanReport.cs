@@ -3,6 +3,7 @@ using System.Text.Json.Serialization;
 using SpokaPilote.Core.Install;
 using SpokaPilote.Core.Models;
 using SpokaPilote.Core.Online;
+using SpokaPilote.Core.Policy;
 
 namespace SpokaPilote.Core.Engine;
 
@@ -20,6 +21,27 @@ public sealed class ReportCandidate
     public string? MatchedHardwareId { get; set; }
     public string? DownloadUrl { get; set; }
     public string? InfoUrl { get; set; }
+    /// <summary>Motif de blocage par la politique de pilotes (null = autorisé).</summary>
+    public string? BlockedReason { get; set; }
+}
+
+/// <summary>Politique de pilotes appliquée lors de l'analyse.</summary>
+public sealed class ReportPolicy
+{
+    /// <summary>Nom de la politique de l'organisation (null = aucune).</summary>
+    public string? Name { get; set; }
+    public string? Version { get; set; }
+    public string? UpdatedAt { get; set; }
+    /// <summary>Chemin ou URL d'origine.</summary>
+    public string? Origin { get; set; }
+    public bool FromCache { get; set; }
+    public int OrganizationRules { get; set; }
+    public string? ReferenceVersion { get; set; }
+    public int ReferenceRules { get; set; }
+    public int BlockedCandidates { get; set; }
+    /// <summary>Candidats retirés de la liste par une règle « hide ».</summary>
+    public List<string> HiddenCandidates { get; set; } = new();
+    public List<string> Messages { get; set; } = new();
 }
 
 public sealed class ReportOutcome
@@ -48,6 +70,7 @@ public sealed class ScanReport
     public List<string> Sources { get; set; } = new();
     public Dictionary<string, string> SourceErrors { get; set; } = new();
     public List<ReportCandidate> Candidates { get; set; } = new();
+    public ReportPolicy? Policy { get; set; }
     public List<ReportOutcome>? Installation { get; set; }
     public List<DeviceInfo> Devices { get; set; } = new();
 
@@ -93,7 +116,23 @@ public sealed class ScanReport
             MatchedHardwareId = c.MatchedHardwareId,
             DownloadUrl = c.DownloadUrl,
             InfoUrl = c.InfoUrl,
+            BlockedReason = c.BlockedReason,
         }).ToList(),
+        Policy = scan.Policy is not { } p ? null : new ReportPolicy
+        {
+            Name = p.Organization?.Name,
+            Version = p.Organization?.Version,
+            UpdatedAt = p.Organization?.UpdatedAt,
+            Origin = p.OrganizationOrigin,
+            FromCache = p.FromCache,
+            OrganizationRules = p.Organization?.Rules.Count ?? 0,
+            ReferenceVersion = p.Reference?.Version,
+            ReferenceRules = p.ReferenceRuleCount,
+            BlockedCandidates = scan.Candidates.Count(c => c.BlockedReason is not null),
+            HiddenCandidates = scan.PolicyDecisions.Where(d => d.Decision.Verdict == PolicyVerdict.Hidden)
+                .Select(d => $"{d.Candidate.Title} {d.Candidate.Version} — {d.Decision.Reason}".Trim()).ToList(),
+            Messages = p.Messages.ToList(),
+        },
         Installation = outcomes?.Select(o => new ReportOutcome
         {
             Title = o.Candidate.Title,

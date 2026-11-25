@@ -53,6 +53,7 @@ internal static partial class Program
                 "fleet-report" or "parc" => FleetReportCommand(a),
                 "self-update" or "mise-a-jour" => await SelfUpdateAsync(a, cts.Token),
                 "config" => Config(a),
+                "policy" or "politique" => await PolicyAsync(a, cts.Token),
                 "version" or "--version" => Version(),
                 _ => Help(),
             };
@@ -89,7 +90,7 @@ internal static partial class Program
             OnlySources = ParseSources(a.Value("sources")),
         };
 
-        var engine = new DriverScanEngine(settings);
+        var engine = new DriverScanEngine(settings, policyLoader: CreatePolicyLoader(a, settings));
         var lastStage = "";
         var scan = await engine.ScanAsync(options, new Progress<ScanProgress>(p =>
         {
@@ -151,6 +152,7 @@ internal static partial class Program
             c.Title.Contains(text, StringComparison.OrdinalIgnoreCase) ||
             c.TargetDeviceNames.Any(n => n.Contains(text, StringComparison.OrdinalIgnoreCase));
         return candidates
+            .Where(c => c.BlockedReason is null) // jamais de pilote bloqué par la politique
             .Where(c => only.Count == 0 || only.Any(t => Matches(c, t)))
             .Where(c => !exclude.Any(t => Matches(c, t)))
             .Where(c => c.Kind switch
@@ -171,6 +173,7 @@ internal static partial class Program
         if (s.SerialNumber is not null) WriteLine($"N° série  : {s.SerialNumber}", ConsoleColor.White);
         WriteLine($"Sources   : {string.Join(", ", scan.SourcesUsed)} ({scan.Duration.TotalSeconds:0} s)", ConsoleColor.White);
         foreach (var (src, err) in scan.SourceErrors) WriteLine($"  ⚠ {src} indisponible : {err}", ConsoleColor.Yellow);
+        PrintPolicySummary(scan.Policy);
 
         var problems = scan.ProblemDevices.ToList();
         WriteLine($"\nPériphériques : {scan.Devices.Count(d => d.IsPresent)} détectés, {problems.Count} en erreur", problems.Count > 0 ? ConsoleColor.Yellow : ConsoleColor.Green);
@@ -193,10 +196,22 @@ internal static partial class Program
                 foreach (var c in group)
                 {
                     var devices = c.TargetDeviceNames.Count > 0 ? $" → {string.Join(", ", c.TargetDeviceNames.Distinct().Take(3))}" : "";
-                    WriteLine($"    • {c.Title} {c.Version} [{c.SourceLabel}{(c.SizeLabel.Length > 0 ? ", " + c.SizeLabel : "")}]{devices}", ConsoleColor.Gray);
+                    if (c.BlockedReason is null)
+                    {
+                        WriteLine($"    • {c.Title} {c.Version} [{c.SourceLabel}{(c.SizeLabel.Length > 0 ? ", " + c.SizeLabel : "")}]{devices}", ConsoleColor.Gray);
+                    }
+                    else
+                    {
+                        WriteLine($"    ⛔ {c.Title} {c.Version} [{c.SourceLabel}]{devices}", ConsoleColor.DarkGray);
+                        WriteLine($"       bloqué par la politique : {c.BlockedReason}", ConsoleColor.DarkYellow);
+                    }
                 }
             }
+            var blocked = scan.Candidates.Count(c => c.BlockedReason is not null);
+            if (blocked > 0) WriteLine($"  {blocked} pilote(s) bloqué(s) par la politique : jamais installé(s).", ConsoleColor.DarkYellow);
         }
+        var hidden = scan.PolicyDecisions.Count(d => d.Decision.Verdict == Core.Policy.PolicyVerdict.Hidden);
+        if (hidden > 0) WriteLine($"  {hidden} autre(s) pilote(s) masqué(s) par la politique (détail : spokapilote policy test).", ConsoleColor.DarkGray);
         foreach (var d in scan.UnresolvedDevices)
         {
             WriteLine($"  ? Aucun pilote trouvé pour « {d.Name} » ({d.HardwareIds.FirstOrDefault()})", ConsoleColor.DarkYellow);
@@ -641,6 +656,13 @@ internal static partial class Program
                 --sources wu,catalog,oem,repo   limite les sources interrogées
                 --repo <chemin>      ajoute un dépôt local/réseau pour cette exécution (répétable)
                 --output-dir <dir>   dépose <POSTE>.json et <POSTE>.html (ex. \\srv\rapports) pour le rapport de parc
+                --policy <fichier|url>  applique cette politique de pilotes pour cette exécution (essai avant déploiement)
+
+            POLITIQUE DE PILOTES (approbation / liste noire, voir docs/POLITIQUE.md)
+              spokapilote policy show                      politique en vigueur, origine et règles
+              spokapilote policy check <fichier|url>       valide un driver-policy.json (numéros des règles fautives)
+              spokapilote policy test [--policy <fichier>] analyse ce poste : ce qui serait bloqué / autorisé et pourquoi
+              spokapilote policy init <fichier> [--force]  crée un modèle commenté
 
             HISTORIQUE ET RETOUR ARRIÈRE
               spokapilote history                          interventions passées sur ce poste
