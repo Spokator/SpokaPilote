@@ -1,5 +1,7 @@
 # SpokaPilote Server — déploiement de la console centrale.
-#   docker compose -f server/docker-compose.yml up -d --build
+#   Image publiée (recommandé) : docker compose -f server/docker-compose.yml up -d
+#     (utilise ghcr.io/spokator/spokapilote-server:latest, publiée à chaque version de SpokaPilote)
+#   Depuis les sources        : docker compose -f server/docker-compose.yml up -d --build
 # Jetons : laissez SPOKAPILOTE_ADMIN_TOKEN / SPOKAPILOTE_AGENT_TOKEN vides pour qu'ils soient générés au premier
 # démarrage (visibles dans « docker compose logs » et dans le volume), ou fixez-les dans un fichier .env à côté de ce fichier.
 # En production, publiez la console en HTTPS derrière un reverse proxy (voir docs/CONSOLE-CENTRALE.md).
@@ -9,7 +11,8 @@ services:
     build:
       context: ..
       dockerfile: server/Dockerfile
-    image: spokapilote-server:latest
+    image: ghcr.io/spokator/spokapilote-server:${SPOKAPILOTE_VERSION:-latest}
+    pull_policy: missing
     container_name: spokapilote-server
     restart: unless-stopped
     ports:
