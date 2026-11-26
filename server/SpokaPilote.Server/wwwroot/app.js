@@ -16,8 +16,9 @@
     page: null,          // page affichée : { refresh?, canLeave? }
     timer: null,
     overview: { group: '' },
-    machines: { search: '', status: 'all', group: '', sort: 'status', dir: 'asc', selected: new Set() },
-    missing: { search: '' },
+    // Liste des postes : filtres, tri et page envoyés au serveur ; sélection conservée d'une page à l'autre (picked : lignes cochées).
+    machines: { search: '', status: 'all', group: '', sort: 'status', dir: 'asc', page: 1, pageSize: 100, selected: new Set(), picked: new Map() },
+    missing: { search: '', page: 1 },
     jobs: { state: 'all', search: '' },
     audit: { category: '', search: '' },
     jobTypes: null,
@@ -33,6 +34,10 @@
   const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const enc = encodeURIComponent;
   const plural = (n, one, many) => `${n} ${n > 1 ? many : one}`;
+  /** Tailles de page des listes paginées par le serveur. */
+  const PAGE_SIZES = [50, 100, 250, 500];
+  /** Appel différé : la recherche part quand la saisie s'arrête, pas à chaque touche. */
+  const debounce = (fn, ms = 300) => { let timer; return (...args) => { clearTimeout(timer); timer = setTimeout(() => fn(...args), ms); }; };
   /** « Microsoft Windows 11 Professionnel 25H2 » → « Windows 11 Professionnel 25H2 » (colonnes étroites). */
   const shortOs = (os) => String(os || '').replace(/^Microsoft\s+/i, '').replace(/\bProfessionnel\b/, 'Pro');
 
@@ -572,7 +577,8 @@
     const postes = (params = '') => `#/postes?${[params, s.group ? `groupe=${enc(s.group)}` : 'groupe='].filter(Boolean).join('&')}`;
 
     async function render() {
-      const f = await api(`/fleet${s.group ? `?group=${enc(s.group)}` : ''}`);
+      // Listes limitées aux 12 premiers par le serveur (?top=) : la page reste légère quelle que soit la taille du parc.
+      const f = await api(`/fleet?top=12${s.group ? `&group=${enc(s.group)}` : ''}`);
       const group = groups.find((g) => String(g.id) === s.group);
       const bootstrap = can('admin') && state.auth.accountCount === 0
         ? `<div class="notice notice-warn">Aucun compte nominatif n'existe encore. <a href="#/comptes">Créez le premier compte Administrateur</a> :
@@ -597,7 +603,7 @@
         bind();
         return;
       }
-      const missingKinds = f.missingDrivers.length;
+      const missingKinds = f.missingDriverCount ?? f.missingDrivers.length;
       const todo = f.toProcessMachines.slice(0, 12);
       view.innerHTML = `
         ${bootstrap}
@@ -653,14 +659,16 @@
             <div class="section-head"><h2>Modèles</h2></div>
             <div class="table-wrap"><table>
               <thead><tr><th>Modèle</th><th class="num">Postes</th><th class="num">À traiter</th></tr></thead>
-              <tbody>${f.models.map((m) => `<tr><td class="wrap">${esc(m.model)}</td><td class="num">${esc(m.count)}</td>${num(m.toProcess, 'warn')}</tr>`).join('')}</tbody>
+              <tbody>${f.models.slice(0, 20).map((m) => `<tr><td class="wrap">${esc(m.model)}</td><td class="num">${esc(m.count)}</td>${num(m.toProcess, 'warn')}</tr>`).join('')}
+                ${f.models.length > 20 ? `<tr><td colspan="3" class="muted small">… et ${esc(f.models.length - 20)} autres modèles</td></tr>` : ''}</tbody>
             </table></div>
           </section>
         </div>
 
         ${f.staleMachines.length === 0 ? '' : `
         <section class="section">
-          <div class="section-head"><h2>Non vus depuis ${esc(f.staleDays)} jours</h2></div>
+          <div class="section-head"><h2>Non vus depuis ${esc(f.staleDays)} jours</h2>
+            ${f.stale > f.staleMachines.length ? `<a href="${postes('statut=stale')}">Voir les ${esc(f.stale)} postes</a>` : ''}</div>
           <div class="table-wrap"><table>
             <thead><tr><th>Poste</th><th>Modèle</th><th>Dernier contact</th></tr></thead>
             <tbody>${f.staleMachines.map((m) => `
@@ -710,18 +718,51 @@
     if (query.get('tri') && SORTS[query.get('tri')]) { s.sort = query.get('tri'); s.dir = 'asc'; }
     // Lien depuis la vue d'ensemble ou un groupe : le filtre de groupe suit le lien (vide = tous les groupes).
     if (query.has('groupe')) s.group = query.get('groupe');
-    let rows = await api('/machines');
+    if (query.has('statut') || query.has('tri') || query.has('groupe')) s.page = 1;
     const types = await jobTypes();
     let groups = await groupsList(true);
     let groupById = new Map(groups.map((g) => [g.id, g]));
     if (s.group && s.group !== 'none' && !groupById.has(Number(s.group))) s.group = '';
-    const hasHealth = () => rows.some((m) => m.healthScore != null || m.healthGrade);
     const currentGroup = () => (s.group && s.group !== 'none' ? groupById.get(Number(s.group)) : null);
     const groupOptions = () => groups.map((g) => `<option value="${esc(g.id)}">${esc(g.name)}</option>`).join('');
 
+    /** Filtres envoyés au serveur (liste, export) ; la pagination et le tri sont ajoutés pour la liste. */
+    function filterParams() {
+      const p = new URLSearchParams();
+      if (s.search.trim()) p.set('q', s.search.trim());
+      if (s.status !== 'all' && s.status !== 'selected') p.set('status', s.status);
+      if (s.group) p.set('group', s.group);
+      return p;
+    }
+    /**
+     * Page courante : la base filtre, trie et pagine (des dizaines de milliers de postes ne sont jamais chargés dans le
+     * navigateur). Le filtre « Sélectionnés » porte sur les postes cochés, gardés dans la page.
+     */
+    async function load() {
+      if (s.status === 'selected') {
+        const meta = await api('/machines?page=1&pageSize=1');
+        const needle = s.search.trim().toLowerCase();
+        const key = SORTS[s.sort] || SORTS.status;
+        const inGroup = (m) => (s.group === 'none' ? m.groups.length === 0 : !s.group || m.groups.includes(Number(s.group)));
+        const all = [...s.picked.values()].filter(inGroup)
+          .filter((m) => !needle || [m.name, m.model, m.serialNumber, m.os].some((v) => (v || '').toLowerCase().includes(needle)))
+          .sort((a, b) => { const x = key(a), y = key(b); return (x < y ? -1 : x > y ? 1 : a.name.localeCompare(b.name)) * (s.dir === 'asc' ? 1 : -1); });
+        const from = (s.page - 1) * s.pageSize;
+        return { ...meta, total: all.length, items: all.slice(from, from + s.pageSize) };
+      }
+      const p = filterParams();
+      p.set('page', String(s.page));
+      p.set('pageSize', String(s.pageSize));
+      p.set('sort', s.sort);
+      p.set('dir', s.dir);
+      return api(`/machines?${p}`);
+    }
+    let data = await load();
+
     view.innerHTML = `
       <div class="page-head"><div><h1>Postes</h1><p class="muted">Dernier rapport reçu de chaque poste enrôlé.
-        ${operate ? 'Cochez des postes pour leur envoyer une action à distance ou les ranger dans un groupe.' : ''}</p></div></div>
+        ${operate ? 'Cochez des postes pour leur envoyer une action à distance ou les ranger dans un groupe.' : ''}</p></div>
+        <div class="actions"><button id="m-csv" class="btn" type="button" title="Tous les postes correspondant aux filtres">Exporter (CSV)</button></div></div>
       <div class="toolbar">
         <input id="m-search" type="search" placeholder="Rechercher un poste, un modèle, un n° de série…" aria-label="Rechercher" value="${esc(s.search)}">
         <select id="m-status" aria-label="Filtrer par état">
@@ -729,7 +770,7 @@
             .map(([k, [label]]) => `<option value="${k}"${k === s.status ? ' selected' : ''}>${esc(label)}</option>`).join('')}
         </select>
         <select id="m-group" aria-label="Filtrer par groupe"${groups.length ? '' : ' hidden'}></select>
-        <span id="m-count" class="muted small count"></span>
+        <span id="m-count" class="muted small count" aria-live="polite"></span>
       </div>
       ${operate ? `<div class="bulkbar card">
         <div class="bulk-row">
@@ -753,7 +794,8 @@
       <div class="table-wrap"><table class="table-compact">
         <thead id="m-head"></thead>
         <tbody id="m-body"></tbody>
-      </table></div>`;
+      </table></div>
+      <div id="m-pager" class="pager"></div>`;
 
     function fillGroupSelects() {
       $('#m-group').innerHTML = `<option value="">Tous les groupes</option>
@@ -768,15 +810,15 @@
       }
     }
 
-    let visibleNames = [];
+    let visible = [];
     function head() {
       $('#m-head').innerHTML = `<tr>
-          ${operate ? '<th class="check-col"><input id="m-all" type="checkbox" aria-label="Sélectionner les postes affichés"></th>' : ''}
+          ${operate ? '<th class="check-col"><input id="m-all" type="checkbox" aria-label="Sélectionner les postes de la page"></th>' : ''}
           <th class="sortable" data-sort="name">Poste</th>
           <th class="sortable" data-sort="model">Modèle</th>
           <th class="sortable" data-sort="os">Windows</th>
           <th class="sortable" data-sort="status">État</th>
-          ${hasHealth() ? '<th class="sortable" data-sort="health">Santé</th>' : ''}
+          ${data.hasHealth ? '<th class="sortable" data-sort="health">Santé</th>' : ''}
           <th class="sortable num" data-sort="driverProblems">Pilotes en erreur</th>
           <th class="sortable num" data-sort="unresolved">Sans solution</th>
           <th class="sortable num" data-sort="proposed">Proposés</th>
@@ -786,40 +828,31 @@
       $$('th.sortable', view).forEach((th) => th.addEventListener('click', () => {
         if (s.sort === th.dataset.sort) s.dir = s.dir === 'asc' ? 'desc' : 'asc';
         else { s.sort = th.dataset.sort; s.dir = ['name', 'model', 'os', 'status', 'health'].includes(s.sort) ? 'asc' : 'desc'; }
-        draw();
+        s.page = 1;
+        reload();
       }));
       $('#m-all')?.addEventListener('change', (e) => {
-        visibleNames.forEach((n) => (e.target.checked ? s.selected.add(n) : s.selected.delete(n)));
+        visible.forEach((m) => select(m, e.target.checked));
         draw();
       });
     }
 
+    function select(m, on) {
+      if (on) { s.selected.add(m.name); s.picked.set(m.name, m); } else { s.selected.delete(m.name); s.picked.delete(m.name); }
+    }
+
     function draw() {
-      // La sélection ne garde que des postes encore connus.
-      const known = new Set(rows.map((m) => m.name));
-      [...s.selected].forEach((n) => { if (!known.has(n)) s.selected.delete(n); });
-      const needle = s.search.trim().toLowerCase();
-      const filter = STATUS_FILTERS[s.status][1];
-      const key = SORTS[s.sort];
-      const health = hasHealth();
-      const inGroup = (m) => (s.group === 'none' ? m.groups.length === 0 : !s.group || m.groups.includes(Number(s.group)));
-      const list = rows
-        .filter(filter)
-        .filter(inGroup)
-        .filter((m) => !needle || [m.name, m.model, m.serialNumber, m.os].some((v) => (v || '').toLowerCase().includes(needle)))
-        .sort((a, b) => {
-          const x = key(a), y = key(b);
-          return (x < y ? -1 : x > y ? 1 : a.name.localeCompare(b.name)) * (s.dir === 'asc' ? 1 : -1);
-        });
-      visibleNames = list.map((m) => m.name);
+      const list = data.items;
+      visible = list;
+      const pages = Math.max(1, Math.ceil(data.total / s.pageSize));
       $$('th.sortable', view).forEach((th) => {
         th.classList.toggle('sorted-asc', th.dataset.sort === s.sort && s.dir === 'asc');
         th.classList.toggle('sorted-desc', th.dataset.sort === s.sort && s.dir === 'desc');
       });
-      $('#m-count').textContent = `${list.length} / ${plural(rows.length, 'poste', 'postes')}`;
+      $('#m-count').textContent = `${data.total} / ${plural(data.machineCount, 'poste', 'postes')}`;
       if (operate) {
         $('#m-all').checked = list.length > 0 && list.every((m) => s.selected.has(m.name));
-        const todo = rows.filter((m) => !m.healthy).length;
+        const todo = data.toProcessCount;
         $('#m-selected').textContent = s.selected.size ? `${plural(s.selected.size, 'poste sélectionné', 'postes sélectionnés')}` : 'Aucun poste sélectionné';
         $('#m-run-selection').disabled = s.selected.size === 0;
         $('#m-clear').disabled = s.selected.size === 0;
@@ -830,15 +863,15 @@
         const g = currentGroup();
         $('#m-run-group').hidden = !g;
         if (g) {
-          const members = rows.filter((m) => m.groups.includes(g.id)).length;
+          const members = data.group ? data.group.machines : g.memberCount;
           $('#m-run-group').textContent = `Lancer sur le groupe « ${g.name} » (${members})`;
           $('#m-run-group').disabled = members === 0;
         }
       }
       const groupNames = (m) => m.groups.map((id) => groupById.get(id)?.name).filter(Boolean);
-      const cols = (health ? 11 : 10) - (operate ? 0 : 1);
+      const cols = (data.hasHealth ? 11 : 10) - (operate ? 0 : 1);
       $('#m-body').innerHTML = list.length === 0
-        ? `<tr><td colspan="${cols}" class="empty">${rows.length === 0 ? 'Aucun poste enrôlé pour l\'instant (voir <a href="#/enrolement">Enrôlement</a>).' : 'Aucun poste ne correspond à ces critères.'}</td></tr>`
+        ? `<tr><td colspan="${cols}" class="empty">${data.machineCount === 0 ? 'Aucun poste enrôlé pour l\'instant (voir <a href="#/enrolement">Enrôlement</a>).' : 'Aucun poste ne correspond à ces critères.'}</td></tr>`
         : list.map((m) => `
           <tr class="clickable${s.selected.has(m.name) ? ' is-selected' : ''}" data-href="#/postes/${enc(m.name)}">
             ${operate ? `<td class="check-col"><input type="checkbox" data-select="${esc(m.name)}" aria-label="Sélectionner ${esc(m.name)}"${s.selected.has(m.name) ? ' checked' : ''}></td>` : ''}
@@ -847,31 +880,63 @@
             <td class="wrap">${esc(m.model)}</td>
             <td>${esc(shortOs(m.os))}<div class="cell-sub">${esc(m.osVersion || '')} ${esc(m.architecture || '')}</div></td>
             <td>${machineBadges(m)}</td>
-            ${health ? `<td>${healthBadge(m.healthScore, m.healthGrade) || '<span class="muted">—</span>'}${m.healthCritical ? `<div class="cell-sub bad">${esc(plural(m.healthCritical, 'constat critique', 'constats critiques'))}</div>` : ''}</td>` : ''}
+            ${data.hasHealth ? `<td>${healthBadge(m.healthScore, m.healthGrade) || '<span class="muted">—</span>'}${m.healthCritical ? `<div class="cell-sub bad">${esc(plural(m.healthCritical, 'constat critique', 'constats critiques'))}</div>` : ''}</td>` : ''}
             ${num(m.driverProblems, 'warn')}${num(m.unresolved, 'bad')}${num(m.proposed)}${num(m.failed, 'bad')}
             <td class="nowrap">${esc(fmtDate(m.lastReport))}<div class="cell-sub">${esc(fmtAgo(m.lastReport))}</div></td>
           </tr>`).join('');
       $$('[data-select]', view).forEach((box) => box.addEventListener('change', () => {
-        if (box.checked) s.selected.add(box.dataset.select); else s.selected.delete(box.dataset.select);
+        const m = list.find((x) => x.name === box.dataset.select);
+        if (m) select(m, box.checked);
         draw();
       }));
+      $('#m-pager').innerHTML = data.total <= PAGE_SIZES[0] && s.page === 1 ? '' : `
+        <button class="btn btn-sm" type="button" data-page="${s.page - 1}"${s.page <= 1 ? ' disabled' : ''}>← Précédente</button>
+        <span class="small">Page ${esc(s.page)} / ${esc(pages)} · postes ${esc(data.total ? (s.page - 1) * s.pageSize + 1 : 0)} à ${esc(Math.min(data.total, s.page * s.pageSize))}</span>
+        <button class="btn btn-sm" type="button" data-page="${s.page + 1}"${s.page >= pages ? ' disabled' : ''}>Suivante →</button>
+        <label class="small inline">Par page <select id="m-page-size">${PAGE_SIZES.map((n) => `<option${n === s.pageSize ? ' selected' : ''}>${n}</option>`).join('')}</select></label>`;
+      $$('[data-page]', $('#m-pager')).forEach((b) => b.addEventListener('click', () => { s.page = Number(b.dataset.page); reload(true); }));
+      $('#m-page-size')?.addEventListener('change', (e) => { s.pageSize = Number(e.target.value); s.page = 1; reload(); });
     }
 
-    $('#m-search').addEventListener('input', (e) => { s.search = e.target.value; draw(); });
-    $('#m-status').addEventListener('change', (e) => { s.status = e.target.value; draw(); });
-    $('#m-group').addEventListener('change', (e) => { s.group = e.target.value; draw(); });
+    let ticket = 0;
+    /** Recharge la page courante (les réponses arrivées dans le désordre sont ignorées). */
+    async function reload(scrollTop = false) {
+      const mine = ++ticket;
+      try {
+        const fresh = await load();
+        if (mine !== ticket) return;
+        const healthChanged = !!fresh.hasHealth !== !!data.hasHealth;
+        data = fresh;
+        const pages = Math.max(1, Math.ceil(data.total / s.pageSize));
+        if (s.page > pages) { s.page = pages; await reload(scrollTop); return; }
+        if (healthChanged) head();
+        draw();
+        if (scrollTop) view.scrollIntoView({ block: 'start' });
+      } catch (e) { fail(e); }
+    }
+    const searchLater = debounce(() => { s.page = 1; reload(); }, 300);
+
+    $('#m-search').addEventListener('input', (e) => { s.search = e.target.value; searchLater(); });
+    $('#m-status').addEventListener('change', (e) => { s.status = e.target.value; s.page = 1; reload(); });
+    $('#m-group').addEventListener('change', (e) => { s.group = e.target.value; s.page = 1; reload(); });
+    $('#m-csv').addEventListener('click', async () => {
+      try {
+        const blob = await api(`/export/machines?${filterParams()}`, { blob: true });
+        download(`spokapilote-postes-${new Date().toISOString().slice(0, 10)}.csv`, blob);
+      } catch (e) { fail(e); }
+    });
     if (operate) {
       const selectedType = () => types.find((t) => t.id === $('#m-action').value);
-      $('#m-clear').addEventListener('click', () => { s.selected.clear(); draw(); });
+      $('#m-clear').addEventListener('click', () => { s.selected.clear(); s.picked.clear(); if (s.status === 'selected') reload(); else draw(); });
       $('#m-run-selection').addEventListener('click', async () => {
-        if (await requestJob(selectedType(), { machines: [...s.selected] })) { s.selected.clear(); await refresh(); }
+        if (await requestJob(selectedType(), { machines: [...s.selected] })) { s.selected.clear(); s.picked.clear(); await refresh(); }
       });
       $('#m-run-todo').addEventListener('click', async () => {
-        if (await requestJob(selectedType(), { target: 'to-process', count: rows.filter((m) => !m.healthy).length })) await refresh();
+        if (await requestJob(selectedType(), { target: 'to-process', count: data.toProcessCount })) await refresh();
       });
       $('#m-run-group').addEventListener('click', async () => {
         const g = currentGroup();
-        if (g && await requestJob(selectedType(), { group: g, count: rows.filter((m) => m.groups.includes(g.id)).length })) await refresh();
+        if (g && await requestJob(selectedType(), { group: g, count: data.group ? data.group.machines : g.memberCount })) await refresh();
       });
       const changeMembers = async (add) => {
         const g = groupById.get(Number($('#m-target-group').value));
@@ -888,17 +953,14 @@
       $('#m-add-group').addEventListener('click', () => changeMembers(true));
       $('#m-remove-group').addEventListener('click', () => changeMembers(false));
     }
-    let healthShown = hasHealth();
     fillGroupSelects();
     head();
     draw();
     async function refresh() {
-      rows = await api('/machines');
       groups = await groupsList(true);
       groupById = new Map(groups.map((g) => [g.id, g]));
       fillGroupSelects();
-      if (hasHealth() !== healthShown) { healthShown = hasHealth(); head(); }
-      draw();
+      await reload();
     }
     return { refresh };
   }
@@ -1113,54 +1175,79 @@
 
   async function missingPage(view) {
     const s = state.missing;
-    let list = (await api('/fleet')).missingDrivers;
+    const size = 100;
+    const filterParams = () => { const p = new URLSearchParams(); if (s.search.trim()) p.set('q', s.search.trim()); return p; };
+    /** Page de la liste agrégée par le serveur (12 postes au plus par ligne ; le nombre total est indiqué). */
+    function load() {
+      const p = filterParams();
+      p.set('offset', String((s.page - 1) * size));
+      p.set('limit', String(size));
+      p.set('machines', '12');
+      return api(`/missing-drivers?${p}`);
+    }
+    let data = await load();
 
     view.innerHTML = `
       <div class="page-head">
         <div><h1>Matériel sans pilote</h1>
           <p class="muted">Périphériques en erreur pour lesquels aucune source n'a proposé de pilote autorisé, regroupés par ID matériel
             sur tout le parc. Les pannes matérielles (USB qui ne répond pas…) sont exclues : aucun pilote ne peut les corriger.</p></div>
-        <div class="actions"><button id="x-csv" class="btn" type="button">Exporter (CSV)</button></div>
+        <div class="actions"><button id="x-csv" class="btn" type="button" title="Toutes les lignes correspondant à la recherche, avec tous les postes">Exporter (CSV)</button></div>
       </div>
       <div class="toolbar">
         <input id="x-search" type="search" placeholder="Rechercher un périphérique, un ID matériel, un poste…" aria-label="Rechercher" value="${esc(s.search)}">
-        <span id="x-count" class="muted small count"></span>
+        <span id="x-count" class="muted small count" aria-live="polite"></span>
       </div>
       <div class="table-wrap"><table>
         <thead><tr><th>Périphérique</th><th>ID matériel</th><th class="num">Postes</th><th>Postes concernés</th><th>Modèles</th><th>Remarque</th></tr></thead>
         <tbody id="x-body"></tbody>
       </table></div>
+      <div id="x-pager" class="pager"></div>
       <p class="muted small">Piste : ajoutez le pilote validé au dépôt interne (<code>spokapilote export</code> depuis un poste de référence),
         ou autorisez sa source dans la politique.</p>`;
 
-    const visible = () => {
-      const needle = s.search.trim().toLowerCase();
-      return list.filter((h) => !needle || [h.name, h.hardwareId, ...h.machines, ...h.models].some((v) => (v || '').toLowerCase().includes(needle)));
-    };
     function draw() {
-      const rows = visible();
-      $('#x-count').textContent = `${rows.length} / ${plural(list.length, 'type de matériel', 'types de matériel')}`;
+      const rows = data.items;
+      const pages = Math.max(1, Math.ceil(data.total / size));
+      $('#x-count').textContent = `${data.total} / ${plural(data.kinds, 'type de matériel', 'types de matériel')}`;
       $('#x-body').innerHTML = rows.length === 0
-        ? `<tr><td colspan="6" class="empty">${list.length === 0 ? 'Aucun matériel sans pilote sur le parc.' : 'Aucun résultat.'}</td></tr>`
+        ? `<tr><td colspan="6" class="empty">${data.kinds === 0 ? 'Aucun matériel sans pilote sur le parc.' : 'Aucun résultat.'}</td></tr>`
         : rows.map((h) => `
           <tr>
             <td class="wrap"><div class="cell-title">${esc(h.name)}</div><div class="cell-sub">${esc(h.statusText || '')}</div></td>
             <td class="wrap"><code>${esc(h.hardwareId)}</code> <button class="btn btn-sm btn-ghost" type="button" data-copy="${esc(h.hardwareId)}" title="Copier l'ID matériel">Copier</button></td>
             <td class="num bad">${esc(h.count)}</td>
-            <td class="wrap"><ul class="list-inline">${h.machines.slice(0, 12).map((n) => `<li>${machineLink(n)}</li>`).join('')}${h.machines.length > 12 ? `<li class="muted">+ ${esc(h.machines.length - 12)}</li>` : ''}</ul></td>
+            <td class="wrap"><ul class="list-inline">${h.machines.map((n) => `<li>${machineLink(n)}</li>`).join('')}${h.moreMachines > 0 ? `<li class="muted">+ ${esc(h.moreMachines)}</li>` : ''}</ul></td>
             <td class="wrap small">${esc(h.models.join(', '))}</td>
             <td class="wrap small muted">${h.blockedOn ? `Pilote bloqué par la politique sur ${esc(plural(h.blockedOn, 'poste', 'postes'))}. ` : ''}${esc(h.hint || '')}</td>
           </tr>`).join('');
+      $('#x-pager').innerHTML = pages <= 1 ? '' : `
+        <button class="btn btn-sm" type="button" data-page="${s.page - 1}"${s.page <= 1 ? ' disabled' : ''}>← Précédente</button>
+        <span class="small">Page ${esc(s.page)} / ${esc(pages)}</span>
+        <button class="btn btn-sm" type="button" data-page="${s.page + 1}"${s.page >= pages ? ' disabled' : ''}>Suivante →</button>`;
+      $$('[data-page]', $('#x-pager')).forEach((b) => b.addEventListener('click', () => { s.page = Number(b.dataset.page); reload(); }));
     }
-    $('#x-search').addEventListener('input', (e) => { s.search = e.target.value; draw(); });
-    $('#x-csv').addEventListener('click', () => {
-      const cell = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
-      const lines = [['Périphérique', 'ID matériel', 'Nombre de postes', 'Postes', 'Modèles', 'Bloqué sur'].map(cell).join(';')]
-        .concat(visible().map((h) => [h.name, h.hardwareId, h.count, h.machines.join(', '), h.models.join(', '), h.blockedOn].map(cell).join(';')));
-      download('materiel-sans-pilote.csv', new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' }));
+    let ticket = 0;
+    async function reload() {
+      const mine = ++ticket;
+      try {
+        const fresh = await load();
+        if (mine !== ticket) return;
+        data = fresh;
+        const pages = Math.max(1, Math.ceil(data.total / size));
+        if (s.page > pages) { s.page = pages; await reload(); return; }
+        draw();
+      } catch (e) { fail(e); }
+    }
+    const searchLater = debounce(() => { s.page = 1; reload(); }, 300);
+    $('#x-search').addEventListener('input', (e) => { s.search = e.target.value; searchLater(); });
+    $('#x-csv').addEventListener('click', async () => {
+      try {
+        download('materiel-sans-pilote.csv', await api(`/export/missing-drivers?${filterParams()}`, { blob: true }));
+      } catch (e) { fail(e); }
     });
     draw();
-    return { refresh: async () => { list = (await api('/fleet')).missingDrivers; draw(); } };
+    return { refresh: reload };
   }
 
   // ------------------------------------------------------------------ documents JSON (politique, profil d'imprimantes)
@@ -1559,7 +1646,10 @@ schtasks /Create /F /TN "SpokaPilote\\Analyse" /SC WEEKLY /D MON /ST 09:00 /RU S
               <td class="wrap">${ev.machine ? `${machineLink(ev.machine)} — ` : ''}${esc(ev.title)}</td>
               <td>${badge(ev.status, ALERT_STATUS[ev.status] ?? '')}</td><td class="wrap small muted">${esc(ev.detail || '')}</td></tr>`).join('')}</tbody>
           </table></div>`}
-        </section>`;
+        </section>
+
+        <section class="section" id="s-ops"></section>`;
+      renderOps();
 
       $('#s-add-hook').addEventListener('click', () => {
         $('#s-no-hook')?.remove();
@@ -1572,6 +1662,37 @@ schtasks /Create /F /TN "SpokaPilote\\Analyse" /SC WEEKLY /D MON /ST 09:00 /RU S
       });
       $('#s-save').addEventListener('click', save);
       $('#s-test').addEventListener('click', test);
+    }
+
+    /** Base de données et sauvegardes (3.2) : taille, contenu, files d'attente des postes, sauvegarde à chaud. */
+    async function renderOps() {
+      const box = $('#s-ops');
+      if (!box) return;
+      let m, b;
+      try { [m, b] = await Promise.all([api('/metrics'), api('/admin/backups')]); } catch (e) { fail(e); return; }
+      const mb = (n) => `${(n / 1048576).toLocaleString('fr-FR', { maximumFractionDigits: 1 })} Mo`;
+      const db = m.database;
+      box.innerHTML = `
+        <div class="section-head"><h2>Base de données et sauvegardes</h2>
+          <button id="s-backup" class="btn btn-sm" type="button"${b.running ? ' disabled' : ''}>${b.running ? 'Sauvegarde en cours…' : 'Sauvegarder maintenant'}</button></div>
+        <div class="card card-pad"><dl class="facts">
+          <div><dt>Taille de la base</dt><dd>${esc(mb(db.fileBytes))} (+ journal ${esc(mb(db.walBytes))}) · ${esc(Math.round(db.freeRatio * 100))} % libre</dd></div>
+          <div><dt>Contenu</dt><dd>${esc(plural(m.fleet.machines, 'poste', 'postes'))} · ${esc(plural(m.fleet.reports, 'rapport', 'rapports'))} · ${esc(plural(m.jobs.total, 'tâche', 'tâches'))}</dd></div>
+          ${db.legacyReports > 0 ? `<div><dt>Historique 3.1</dt><dd>${esc(db.legacyReports)} rapport(s) encore à compresser (en arrière-plan)</dd></div>` : ''}
+          <div><dt>Files des postes</dt><dd>${m.queues.map((q) => `${esc(q.name === 'reports' ? 'rapports' : 'agents')} : ${esc(q.queued)} en attente, ${esc(q.rejected)} refusé(s) depuis le démarrage`).join(' · ')}</dd></div>
+          <div><dt>Mémoire</dt><dd>${esc(mb(m.process.workingSetBytes))}</dd></div>
+          <div><dt>Dernière sauvegarde</dt><dd>${b.last ? `${esc(fmtDate(b.last.at))} — ${b.last.success ? esc(b.last.message) : `<span class="bad">${esc(b.last.message)}</span>`}` : (b.backups[0] ? esc(fmtDate(b.backups[0].createdAt)) : 'aucune')}</dd></div>
+          <div><dt>Sauvegardes conservées</dt><dd>${esc(b.backups.length)} / ${esc(b.keep)} dans <code>${esc(b.directory)}</code>${b.schedule ? ` · automatique chaque jour à ${esc(b.schedule)}` : ''}</dd></div>
+        </dl>
+        <p class="hint">Sauvegarde à chaud : la console continue de recevoir les rapports pendant la copie. Restauration et supervision
+          (<code>GET /api/metrics</code>, format Prometheus) : voir la documentation, section « Grands parcs ».</p></div>`;
+      $('#s-backup').addEventListener('click', async () => {
+        try {
+          await api('/admin/backup', { method: 'POST' });
+          toast('Sauvegarde lancée.');
+          setTimeout(renderOps, 1500);
+        } catch (e) { fail(e); }
+      });
     }
 
     function collect() {
@@ -1812,16 +1933,18 @@ schtasks /Create /F /TN "SpokaPilote\\Analyse" /SC WEEKLY /D MON /ST 09:00 /RU S
     return {};
   }
 
+  /** Membres affichés dans la fiche d'un groupe (les suivants sont dans la liste des postes filtrée par groupe). */
+  const MEMBERS_SHOWN = 200;
+
   async function groupPage(view, [id]) {
     const operate = can('operate');
     const types = operate ? await jobTypes() : [];
     async function render() {
-      const data = await api(`/groups/${enc(id)}`);
+      // Membres : les 200 premiers (par nom) ; le nombre total et les postes à traiter portent sur tout le groupe.
+      const data = await api(`/groups/${enc(id)}?limit=${MEMBERS_SHOWN}`);
       const g = data.group;
       const members = data.members;
-      const machines = operate ? await api('/machines') : [];
-      const candidates = machines.map((m) => m.name).filter((n) => !members.some((x) => x.manual && x.name === n));
-      const todo = members.filter((m) => !m.healthy).length;
+      const todo = data.toProcessCount ?? members.filter((m) => !m.healthy).length;
       view.innerHTML = `
         <p class="small"><a href="#/groupes">← Tous les groupes</a></p>
         <div class="page-head">
@@ -1854,11 +1977,12 @@ schtasks /Create /F /TN "SpokaPilote\\Analyse" /SC WEEKLY /D MON /ST 09:00 /RU S
           </div>
         </section>` : ''}
         <section class="section">
-          <div class="section-head"><h2>Postes du groupe</h2><span class="muted small">${esc(plural(members.length, 'poste', 'postes'))}</span></div>
+          <div class="section-head"><h2>Postes du groupe</h2><span class="muted small">${esc(plural(data.memberTotal ?? members.length, 'poste', 'postes'))}
+            ${(data.memberTotal ?? members.length) > members.length ? ` · ${esc(members.length)} premiers affichés — <a href="#/postes?groupe=${enc(g.id)}">tous dans la liste des postes</a>` : ''}</span></div>
           ${operate ? `<form id="gd-add" class="member-add" novalidate>
               <label class="visually-hidden" for="gd-add-name">Poste à ajouter au groupe</label>
               <input id="gd-add-name" type="text" list="gd-machines" placeholder="Nom du poste à ajouter à la main" autocomplete="off" spellcheck="false">
-              <datalist id="gd-machines">${candidates.map((n) => `<option value="${esc(n)}"></option>`).join('')}</datalist>
+              <datalist id="gd-machines"></datalist>
               <button class="btn btn-sm" type="submit">Ajouter</button>
               <span class="hint">ou cochez des postes dans la <a href="#/postes">liste des postes</a>.</span>
             </form>` : ''}
@@ -1893,6 +2017,17 @@ schtasks /Create /F /TN "SpokaPilote\\Analyse" /SC WEEKLY /D MON /ST 09:00 /RU S
           await render();
         } catch (e) { fail(e); }
       };
+      // Suggestions de noms demandées au serveur pendant la saisie (le parc entier n'est jamais chargé).
+      const suggest = debounce(async () => {
+        const text = $('#gd-add-name')?.value.trim();
+        if (!text) return;
+        try {
+          const found = await api(`/machines?q=${enc(text)}&pageSize=20&sort=name`);
+          const list = $('#gd-machines');
+          if (list) list.innerHTML = found.items.map((m) => `<option value="${esc(m.name)}"></option>`).join('');
+        } catch { /* suggestions facultatives */ }
+      }, 250);
+      $('#gd-add-name').addEventListener('input', suggest);
       $('#gd-add').addEventListener('submit', async (e) => {
         e.preventDefault();
         const name = $('#gd-add-name').value.trim();
