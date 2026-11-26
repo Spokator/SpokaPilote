@@ -41,6 +41,12 @@ public sealed class PolicyRollout
     /// <summary>Retenir les versions d'une famille jamais vue par la console (anneau avec délai ou validation).</summary>
     public bool HoldUnknown { get; set; }
     public bool ApplyToMissingDrivers { get; set; }
+    /// <summary>
+    /// Console qui décide proposition par proposition (POST /api/rollout/decide) : la politique ne contient que les
+    /// suspensions ; les retenues viennent des décisions demandées après la recherche des pilotes (<see cref="RolloutDecisions"/>).
+    /// Absent (consoles 4.0 antérieures) : retenues dans les règles « anneau-… » de la politique.
+    /// </summary>
+    public bool Decisions { get; set; }
     public string? GeneratedAt { get; set; }
     /// <summary>Identifiant de règle de retenue → instant de disponibilité (ISO 8601).</summary>
     public Dictionary<string, string>? Availability { get; set; }
@@ -68,6 +74,11 @@ public sealed class PolicyRollout
     public string AvailableReason(DriverCandidate c, DateTimeOffset at) => Ring is null
         ? $"Pilote {DisplayName(c)} : en cours de diffusion par anneaux, disponible pour ce poste le {FormatLocal(at)} (anneau le plus prudent : poste non identifié par la console)"
         : $"Pilote {DisplayName(c)} : disponible pour votre anneau « {Ring} » le {FormatLocal(at)}";
+
+    /// <summary>Motif d'une proposition sans décision de la console (console injoignable, aucune décision en cache).</summary>
+    public string NoDecisionReason(DriverCandidate c) =>
+        $"Pilote {DisplayName(c)} : décision de diffusion indisponible (console injoignable, aucune décision connue pour cette version) — " +
+        $"retenu pour {(Ring is null ? "ce poste" : $"votre anneau « {Ring} »")} jusqu'au retour de la console";
 
     /// <summary>Motif d'une version jamais vue par la console (famille inconnue).</summary>
     public string UnknownReason(DriverCandidate c, DateTime now)

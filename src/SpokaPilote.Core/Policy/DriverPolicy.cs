@@ -45,6 +45,12 @@ public sealed class DriverPolicy
     /// </summary>
     public PolicyRollout? Rollout { get; set; }
 
+    /// <summary>
+    /// Décisions de diffusion de la console pour les propositions de l'analyse en cours (console en mode décisions :
+    /// <see cref="PolicyRollout.Decisions"/>). Renseignées par l'analyse après la recherche des pilotes ; jamais lues d'un fichier.
+    /// </summary>
+    [JsonIgnore] public RolloutDecisions? Decisions { get; set; }
+
     [JsonIgnore] public PolicyLayer Layer { get; private set; } = PolicyLayer.Organization;
     [JsonIgnore] public bool IsEmpty => Rules.Count == 0 && Settings.IsDefault;
 
@@ -275,11 +281,45 @@ public sealed class DriverPolicy
         // Diffusion par anneaux : une version d'une famille de pilotes que la console n'a encore jamais vue (aucune règle de
         // famille ne la couvre) est retenue dans les anneaux à délai, jusqu'à ce qu'un rapport la signale à la console. Une
         // règle « allow » de l'organisation ne lève pas cette retenue ; un blocage de l'organisation reste affiché comme tel.
-        var unknownHold = Rollout is { HoldUnknown: true } rollout && rollout.AppliesTo(candidate) && !candidate.IsInformational &&
+        PolicyDecision? unknownHold;
+        if (Rollout is { Decisions: true } decided)
+        {
+            // Console en mode décisions : retenues et suspensions décidées par la console pour CETTE proposition (les règles
+            // de la politique ne portent que les suspensions). Évaluées avant les règles de l'organisation, comme les règles
+            // « anneau-… » : une règle « allow » ne lève pas une retenue.
+            unknownHold = null;
+            if (!candidate.IsInformational && DriverVersion.Parse(candidate.Version) is not null)
+            {
+                var d = Decisions?.For(candidate);
+                switch (d?.Status)
+                {
+                    case RolloutDecision.Suspended:
+                        return PolicyDecision.Block(d.Reason ?? $"Pilote {PolicyRollout.DisplayName(candidate)} : suspendu sur tout le parc", setting: "rollout");
+                    case RolloutDecision.Held:
+                        return d.AvailableAt is { } available
+                            ? PolicyDecision.Block(decided.AvailableReason(candidate, available), setting: "rollout", availableAt: available)
+                            : PolicyDecision.Block(d.Reason ?? $"Pilote {PolicyRollout.DisplayName(candidate)} : en cours de diffusion par anneaux", setting: "rollout");
+                    case RolloutDecision.Unknown:
+                        unknownHold = PolicyDecision.Block(d.Reason ?? decided.UnknownReason(candidate, at), setting: "rollout");
+                        break;
+                    case RolloutDecision.Allowed:
+                        break;
+                    default:
+                        // Aucune décision (console injoignable, rien en cache) : retenue prudente si l'anneau retient les nouveautés.
+                        if (decided.HoldUnknown && decided.AppliesTo(candidate))
+                            unknownHold = PolicyDecision.Block(decided.NoDecisionReason(candidate), setting: "rollout");
+                        break;
+                }
+            }
+        }
+        else
+        {
+            unknownHold = Rollout is { HoldUnknown: true } rollout && rollout.AppliesTo(candidate) && !candidate.IsInformational &&
                           DriverVersion.Parse(candidate.Version) is not null &&
                           !Rules.Any(r => r.IsRolloutFamily && !r.IsExpired(at) && r.Matches(candidate, targets))
-            ? PolicyDecision.Block(rollout.UnknownReason(candidate, at), setting: "rollout")
-            : null;
+                ? PolicyDecision.Block(rollout.UnknownReason(candidate, at), setting: "rollout")
+                : null;
+        }
 
         foreach (var rule in Rules)
         {
