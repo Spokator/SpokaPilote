@@ -52,6 +52,7 @@ internal static partial class Program
             WriteLine($"« {text} » désigne {matches.Count} périphériques : précisez le n° ou l'identifiant complet.", ConsoleColor.Yellow);
             foreach (var (d, i) in matches.Take(10)) WriteLine($"  {i + 1,4}. {d.Name}  [{d.InstanceId}]", ConsoleColor.Gray);
         }
+        else WriteLine($"Périphérique introuvable : {text} (voir « spokapilote device list »).", ConsoleColor.Red);
         return (null, 0);
     }
 
@@ -104,8 +105,7 @@ internal static partial class Program
         var (device, number) = ResolveDevice(devices, a.Positional(1));
         if (device is null)
         {
-            if (a.Positional(1) is not null) WriteLine($"Périphérique introuvable : {a.Positional(1)}", ConsoleColor.Red);
-            return DeviceUsage();
+            return a.Positional(1) is null ? DeviceUsage() : ExitError;
         }
 
         var originals = DriverStoreCleaner.ReadOriginalInfNames();
@@ -184,8 +184,7 @@ internal static partial class Program
         var (device, number) = ResolveDevice(devices, a.Positional(1));
         if (device is null)
         {
-            if (a.Positional(1) is not null) WriteLine($"Périphérique introuvable : {a.Positional(1)}", ConsoleColor.Red);
-            return DeviceUsage();
+            return a.Positional(1) is null ? DeviceUsage() : ExitError;
         }
 
         RepairActionKind? action = null;
