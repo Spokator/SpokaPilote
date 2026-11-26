@@ -103,7 +103,8 @@
         <div class="icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg></div>
         <h3>Console centrale</h3>
         <p>Une console web auto-hébergée (Docker, HTTPS automatique) : état et santé du parc, postes à traiter, matériel
-          sans pilote, <strong>actions à distance</strong> et <strong>alertes</strong> par e-mail, Teams, Discord ou Slack.
+          sans pilote, <strong>actions à distance</strong> et <strong>alertes</strong> par e-mail, Teams, Discord ou Slack,
+          comptes nominatifs, groupes de postes et actions planifiées.
           <a href="{{ROOT}}console.html">En savoir plus</a></p>
       </div>
       <div class="card">
@@ -141,6 +142,18 @@
         <h3>Accessible, en français et en anglais</h3>
         <p>Assistant de premier lancement, raccourcis clavier (F5, Ctrl+1 à 8), compatible lecteurs d'écran, thème clair
           ou sombre de Windows, interface en français ou en anglais.</p>
+      </div>
+      <div class="card">
+        <div class="icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="2" width="10" height="13" rx="2"/><path d="M10 15v5h4v-5M10 6h4"/></svg></div>
+        <h3>Mode portable sur clé USB</h3>
+        <p>La clé du technicien : SpokaPilote et votre dépôt de pilotes sans rien installer, un dossier par poste pour
+          l'historique et les sauvegardes, rien d'écrit sur le PC hors pilotes.</p>
+      </div>
+      <div class="card">
+        <div class="icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9h6v6H9zM9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 14h3M1 9h3M1 14h3"/></svg></div>
+        <h3>État du BIOS</h3>
+        <p>Dell, HP et Lenovo : le BIOS installé est comparé au catalogue officiel du modèle, avec l'importance donnée par
+          le constructeur. Signalé, jamais flashé sans votre demande.</p>
       </div>
     </div>
   </div>
@@ -248,6 +261,13 @@ spokapilote help                            # toutes les commandes</code></pre>
         <p>PC Snapdragon (Copilot+ PC), Surface Pro X et suivantes.</p>
         <a class="btn btn-secondary" data-download="arm64" href="{{REPO}}/releases/latest">Télécharger <span data-size="arm64"></span></a>
         <p class="sha" data-sha="arm64"></p>
+      </div>
+      <div class="card download-card">
+        <h3>Version portable (clé USB)</h3>
+        <p>Sans installation : à extraire à la racine d'une clé, avec votre dépôt de pilotes.
+          <a href="{{ROOT}}docs/mode-portable.html">Mode d'emploi</a></p>
+        <a class="btn btn-secondary" data-download="portable-x64" href="{{REPO}}/releases/latest">Télécharger le .zip <span data-size="portable-x64"></span></a>
+        <p class="sha" data-sha="portable-x64"></p>
       </div>
       <div class="card">
         <h3>Déploiement sur un parc</h3>

@@ -52,6 +52,8 @@ Une chaîne de contrôle stricte, **non désactivable** :
 | **Historique** | Chaque intervention est tracée ; annulation = retour aux pilotes précédents ; sauvegardes réinstallables |
 | **Maintenance automatique** | Tâche planifiée (SYSTEM) : pilotes manquants, mises à jour ou analyse seule, chaque semaine / jour / au démarrage |
 | **Santé des pilotes** | Note de A à E : pilotes manquants, en erreur, non signés, très anciens, pilotes dangereux déjà installés |
+| **État du BIOS** | Dell / HP / Lenovo : BIOS installé comparé au catalogue officiel, importance et lien constructeur (jamais flashé sans demande) |
+| **Mode portable** | Sur clé USB sans installation : un dossier par poste, dépôt de pilotes de la clé utilisé automatiquement |
 | **Réparation guidée** | Périphérique en erreur : redémarrer, réactiver, réinstaller le pilote ; diagnostic des pannes matérielles |
 | **Nettoyage du magasin** | Anciennes versions de pilotes inutilisées, sauvegardées avant suppression (simulation par défaut) |
 | **Accessibilité** | Assistant de premier lancement, raccourcis clavier, lecteurs d'écran, interface en français ou en anglais |
@@ -62,6 +64,7 @@ Une chaîne de contrôle stricte, **non désactivable** :
 | **Console centrale** | Les postes envoient leurs rapports ; vue d'ensemble, note de santé, postes à traiter, matériel sans pilote sur tout le parc, historique |
 | **Actions à distance** | Depuis la console : analyser, installer, déployer les imprimantes, annuler, mettre à jour ; exécutées par l'agent du poste |
 | **Alertes** | E-mail, Teams, Discord, Slack ou webhook : poste critique, pilote dangereux, échec d'installation, poste silencieux |
+| **Équipe** | Comptes nominatifs (Administrateur, Technicien, Lecture seule), groupes de postes, actions planifiées, journal d'audit |
 | **Politique de pilotes** | `driver-policy.json` : bloquer un pilote / une version / un matériel, figer une version, limiter les sources ; diffusée par la console, un partage ou une URL |
 | **Packs constructeur** | Le pack de déploiement officiel Dell / HP / Lenovo / Microsoft Surface d'un modèle, vérifié et rangé dans le dépôt : plus besoin de poste de référence |
 | **Profils d'imprimantes** | Exporter les imprimantes d'un poste, déployer sur les autres (conditions par sous-réseau ou nom de poste), idempotent |
@@ -76,6 +79,7 @@ Téléchargez l'installeur depuis les [Releases](https://github.com/Spokator/Spo
 `SpokaPilote-Setup-<version>.exe` (PC Intel/AMD) ou `SpokaPilote-Installer-<version>-arm64.exe` (Snapdragon, Surface).
 Installation dans `Program Files`, menu Démarrer, commande `spokapilote` dans tous les terminaux, mise à jour
 automatique. Pour un parc : `SpokaPilote-Setup-<version>.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART`.
+Sur clé USB, sans installation : `SpokaPilote-Portable-<version>-x64.zip` (voir [docs/MODE-PORTABLE.md](docs/MODE-PORTABLE.md)).
 
 ### Interface
 **Analyser ce poste** → onglet **Pilotes** → **Installer la sélection** (relance en administrateur proposée).
@@ -121,7 +125,8 @@ sur un poste connecté, puis `spokapilote install --repo E:\pack --yes`.
 - [Packs constructeur et images](docs/PACKS-ET-IMAGES.md)
 - [Imprimantes et maintenance planifiée](docs/IMPRIMANTES-ET-PLANIFICATION.md)
 - [Pilotes graphiques](docs/PILOTES-GRAPHIQUES.md)
-- [Boîte à outils du technicien](docs/OUTILS-TECHNICIEN.md) — santé, réparation guidée, nettoyage du magasin
+- [Boîte à outils du technicien](docs/OUTILS-TECHNICIEN.md) — santé, état du BIOS, réparation guidée, nettoyage du magasin
+- [Mode portable](docs/MODE-PORTABLE.md) — clé USB du technicien
 - [Signature de code](docs/SIGNATURE.md) et [distribution / winget](docs/DISTRIBUTION.md)
 - [Publication sur le Microsoft Store](docs/PUBLICATION-STORE.md)
 - Site : https://spokator.github.io/SpokaPilote/
@@ -141,7 +146,7 @@ src/SpokaPilote.Core/         moteur (aucune dépendance UI)
 src/SpokaPilote.Cli/          spokapilote.exe (Commands/ : une commande par fichier)
 src/SpokaPilote.App/          SpokaPilote.App.exe (WPF .NET 10, thème Fluent)
 server/SpokaPilote.Server/    console centrale (ASP.NET Core, SQLite, Docker)
-tests/                        ~600 tests (cœur + serveur)
+tests/                        ~825 tests (cœur + serveur)
 installer/ packaging/ scripts/  Inno Setup x64/ARM64, MSIX Store, build et publication
 ```
 
@@ -154,7 +159,7 @@ dotnet test SpokaPilote.sln                           # tests
 ```
 Version : `Directory.Build.props`. Visuels : `tools\make-assets.ps1`.
 
-## État et limites connues (v3.0)
+## État et limites connues (v3.1)
 
 - **Validé en réel** (Windows 11 25H2) : installeur, mise à jour automatique, installation de pilotes Windows Update,
   installation depuis un dépôt puis annulation, pack hors ligne, packs officiels Dell / HP / Lenovo / Surface
@@ -172,7 +177,7 @@ Version : `Directory.Build.props`. Visuels : `tools\make-assets.ps1`.
 
 ## Feuille de route
 
-- Validation terrain sur parcs Dell, HP et Lenovo, et sur un PC ARM64
-- Firmware Thunderbolt / stations d'accueil (Dell WD, HP, Lenovo)
-- Console : comptes nominatifs et rôles, groupes de postes, actions planifiées par groupe
+- Validation terrain sur parcs Dell, HP et Lenovo (état du BIOS contrôlé sur les catalogues officiels réels, pas
+  encore sur un poste de ces marques), mode portable sur une vraie clé USB, et sur un PC ARM64
+- Console : authentification unique (Entra ID / OIDC), rapports périodiques par e-mail
 - Publication winget et Microsoft Store

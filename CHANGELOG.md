@@ -1,5 +1,34 @@
 # Journal des versions
 
+## 3.1.0 — 26/11/2026
+
+**Console centrale : travail en équipe**
+- **Comptes nominatifs** avec trois rôles : Administrateur (tout, y compris comptes, alertes, politique), Technicien
+  (consulter, lancer des actions et des planifications, gérer les groupes), Lecture seule. Mots de passe protégés
+  (PBKDF2-SHA256, 310 000 itérations), session sécurisée (cookie HttpOnly / SameSite=Strict, anti-CSRF, expiration
+  après 8 h d'inactivité), tentatives limitées. Le jeton administrateur reste valable pour les scripts et sert à créer
+  le premier compte.
+- **Groupes de postes** : ajout manuel ou règles automatiques (nom, constructeur, modèle, Windows, sous-réseau), avec
+  aperçu des postes concernés ; vue d'ensemble et liste filtrables par groupe ; action à distance sur tout un groupe.
+- **Actions planifiées** : une action de la liste blanche, chaque jour ou certains jours à heure fixe, pour un groupe
+  ou tout le parc, avec fenêtre de maintenance facultative ; pas de doublon si une action identique est déjà en attente ;
+  changements d'heure gérés.
+- **Journal d'audit** : qui a fait quoi et quand (connexions, actions, planifications, groupes, comptes, réglages,
+  politique), filtrable et exportable en CSV ; conservation réglable.
+- Migration automatique de la base 3.0 ; les postes en 3.0 continuent de fonctionner sans changement.
+
+**Poste**
+- **Mode portable (clé USB du technicien)** : archives `SpokaPilote-Portable-<version>-<arch>.zip` à extraire sur une
+  clé ; rien n'est écrit sur le PC hors installation de pilotes ; un dossier par poste sur la clé (journaux,
+  historique, sauvegardes) ; dépôt `<clé>\SpokaPilote\Depot` utilisé automatiquement ; mise à jour par archive vérifiée.
+  Une intervention ne peut être annulée que sur le poste où elle a été faite.
+- **État du BIOS** (Dell, HP, Lenovo) : version installée comparée au catalogue officiel du modèle, importance donnée
+  par le constructeur (critique, recommandée…), lien officiel ; dans la note de santé, l'interface, le rapport HTML et
+  `spokapilote health`. Rien n'est jamais flashé sans `--include-firmware`, et les précautions (secteur, BitLocker)
+  sont rappelées. Firmwares de stations d'accueil / Thunderbolt signalés à titre d'information.
+- CLI : aide par commande (`spokapilote scan --help`, `spokapilote help printers`), `spokapilote --version` ; code 64
+  pour une commande inconnue.
+
 ## 3.0.0 — 26/11/2026
 
 SpokaPilote devient la boîte à outils complète du technicien, et la console pilote le parc à distance.

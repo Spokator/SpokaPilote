@@ -50,7 +50,11 @@
   }).then(function (release) {
     var assets = release.assets || [];
     function find(re) { for (var i = 0; i < assets.length; i++) if (re.test(assets[i].name)) return assets[i]; return null; }
-    var byArch = { x64: find(/^SpokaPilote-Setup-[\d.]+\.exe$/i), arm64: find(/-arm64\.exe$/i) };
+    var byArch = {
+      x64: find(/^SpokaPilote-Setup-[\d.]+\.exe$/i),
+      arm64: find(/-arm64\.exe$/i),
+      "portable-x64": find(/^SpokaPilote-Portable-[\d.]+-x64\.zip$/i)
+    };
     var version = String(release.tag_name || "").replace(/^v/, "");
     if (version) setText("[data-version]", version);
     if (release.published_at) setText("[data-release-date]", new Date(release.published_at).toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" }));
@@ -60,7 +64,7 @@
       var asset = byArch[all[i].getAttribute("data-download")];
       if (asset) all[i].href = asset.browser_download_url;
     }
-    ["x64", "arm64"].forEach(function (arch) {
+    ["x64", "arm64", "portable-x64"].forEach(function (arch) {
       var a = byArch[arch];
       if (!a) return;
       setText("[data-size=\"" + arch + "\"]", formatSize(a.size));
