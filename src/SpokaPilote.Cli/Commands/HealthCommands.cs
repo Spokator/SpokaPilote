@@ -1,4 +1,5 @@
 using SpokaPilote.Core.Engine;
+using SpokaPilote.Core.Firmware;
 using SpokaPilote.Core.Health;
 using SpokaPilote.Core.Models;
 using SpokaPilote.Core.Sources;
@@ -49,6 +50,7 @@ internal static partial class Program
         PrintPolicySummary(scan.Policy);
         foreach (var (src, err) in scan.SourceErrors) WriteLine($"  ⚠ {src} indisponible : {err}", ConsoleColor.Yellow);
         PrintHealth(health, detailed: true);
+        if (!a.Flag("quick")) PrintFirmware(scan, detailed: true);
         if (a.Flag("quick")) WriteLine("\n(Mode rapide : les mises à jour disponibles ne sont pas comptées ; relancez sans --quick pour une note complète.)", ConsoleColor.DarkGray);
 
         if (a.Value("json") is { } jsonFile)
@@ -94,5 +96,39 @@ internal static partial class Program
         }
         if (!detailed && health.InfoCount > 0)
             WriteLine($"  + {health.InfoCount} information(s) (détail : spokapilote health ou rapport HTML).", ConsoleColor.DarkGray);
+    }
+
+    /// <summary>
+    /// Ligne « BIOS : 1.12.0 installé, 1.18.0 disponible (critique) → https://... » et firmwares d'accessoires détectés.
+    /// Information seulement : rien n'est installé sans --include-firmware.
+    /// </summary>
+    private static void PrintFirmware(ScanResult scan, bool detailed)
+    {
+        var firmware = scan.Firmware;
+        var bios = firmware?.Bios;
+        var color = bios?.State switch
+        {
+            BiosState.Outdated => bios.IsCritical ? ConsoleColor.Red : ConsoleColor.Yellow,
+            BiosState.UpToDate or BiosState.InstalledNewer => ConsoleColor.Green,
+            _ => ConsoleColor.Gray,
+        };
+        WriteLine($"\n{FirmwareStatus.Describe(firmware, scan.System)}", color);
+        if (bios is { State: BiosState.Outdated })
+            WriteLine($"  ⚠ {BiosStatus.UpdateWarning}", ConsoleColor.DarkYellow);
+        if (firmware is null) return;
+        foreach (var c in firmware.Components)
+        {
+            WriteLine($"  · {c.KindLabel} : {c.Title} {c.Version} disponible (information, non installé) — {string.Join(", ", c.Devices.Take(3))}", ConsoleColor.Gray);
+            if (detailed && (c.InfoUrl ?? c.DownloadUrl) is { } url) WriteLine($"      → {url}", ConsoleColor.DarkGray);
+        }
+        if (detailed)
+            foreach (var note in firmware.Notes) WriteLine($"  ({note})", ConsoleColor.DarkGray);
+    }
+
+    /// <summary>Précautions affichées avant d'installer une sélection qui contient un BIOS ou un firmware.</summary>
+    private static void WarnFirmwareSelection(IEnumerable<DriverCandidate> selection)
+    {
+        if (!selection.Any(c => c.Kind == CandidateKind.Firmware)) return;
+        WriteLine($"\n⚠ La sélection contient une mise à jour de BIOS / firmware. {BiosStatus.UpdateWarning}", ConsoleColor.Yellow);
     }
 }

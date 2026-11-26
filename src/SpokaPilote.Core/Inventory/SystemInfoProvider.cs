@@ -13,7 +13,7 @@ public static class SystemInfoProvider
         var cs = FirstOrDefault("SELECT Manufacturer, Model, SystemSKUNumber FROM Win32_ComputerSystem");
         var csp = FirstOrDefault("SELECT Version, IdentifyingNumber FROM Win32_ComputerSystemProduct");
         var bb = FirstOrDefault("SELECT Manufacturer, Product FROM Win32_BaseBoard");
-        var bios = FirstOrDefault("SELECT SMBIOSBIOSVersion, SerialNumber FROM Win32_BIOS");
+        var bios = FirstOrDefault("SELECT SMBIOSBIOSVersion, SerialNumber, ReleaseDate FROM Win32_BIOS");
         var os = FirstOrDefault("SELECT Caption, Version FROM Win32_OperatingSystem");
 
         string? displayVersion = null;
@@ -46,6 +46,7 @@ public static class SystemInfoProvider
             BaseBoardProduct = NullIfJunk(Str(bb, "Product")),
             BaseBoardManufacturer = NullIfJunk(Str(bb, "Manufacturer")),
             BiosVersion = NullIfJunk(Str(bios, "SMBIOSBIOSVersion")),
+            BiosReleaseDate = ParseCimDate(Str(bios, "ReleaseDate")),
             SerialNumber = NullIfJunk(Str(bios, "SerialNumber")) ?? NullIfJunk(Str(csp, "IdentifyingNumber")),
             OsCaption = Str(os, "Caption").Trim(),
             OsVersion = osVersion,
@@ -82,6 +83,14 @@ public static class SystemInfoProvider
     /// <summary>GUID en minuscules au format « d » ; toute autre valeur (vide, GUID nul, texte) donne null.</summary>
     public static string? NormalizeMachineId(string? value) =>
         Guid.TryParse(value?.Trim(), out var g) && g != Guid.Empty ? g.ToString("D") : null;
+
+    /// <summary>Date CIM (« 20230622000000.000000+000 ») → date seule ; null si vide ou invalide.</summary>
+    internal static DateTime? ParseCimDate(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value) || value.Length < 8) return null;
+        return DateTime.TryParseExact(value[..8], "yyyyMMdd", System.Globalization.CultureInfo.InvariantCulture,
+            System.Globalization.DateTimeStyles.None, out var d) && d.Year >= 1990 ? d : null;
+    }
 
     private static string? NullIfJunk(string? value)
     {

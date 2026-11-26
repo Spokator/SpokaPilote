@@ -607,6 +607,43 @@ public sealed class MainViewModel : ObservableObject
     public List<Core.Health.HealthFinding> HealthFindings =>
         LastScan?.Health?.Findings.OrderBy(f => f.Severity).Take(10).ToList() ?? new();
 
+    // ------------------------------------------------------------------ état du BIOS et des firmwares (information)
+
+    private Core.Firmware.BiosStatus? Bios => LastScan?.Firmware?.Bios;
+
+    /// <summary>« BIOS : 1.12.0 installé, 1.18.0 disponible (critique) » — rien n'est installé sans l'option BIOS / firmware.</summary>
+    public string BiosStatusText
+    {
+        get
+        {
+            if (LastScan is null) return "";
+            var installed = LastScan.System.BiosVersion ?? Loc.T("version inconnue");
+            if (Bios is not { } b)
+            {
+                return LastScan.System.Vendor is OemVendor.Dell or OemVendor.HP or OemVendor.Lenovo
+                    ? Loc.F("BIOS : {0} installé — non vérifié (catalogue {1} non interrogé ou indisponible)", installed, LastScan.System.Vendor)
+                    : Loc.F("BIOS : {0} installé — non vérifié (comparaison disponible pour Dell, HP et Lenovo)", installed);
+            }
+            return b.State switch
+            {
+                Core.Firmware.BiosState.Outdated => Loc.F("BIOS : {0} installé, {1} disponible ({2})", installed, b.LatestVersion, Loc.T(b.ImportanceText)),
+                Core.Firmware.BiosState.UpToDate => Loc.F("BIOS : {0} installé, à jour (dernière version {1} : {2})", installed, b.Vendor, b.LatestVersion),
+                Core.Firmware.BiosState.InstalledNewer => Loc.F("BIOS : {0} installé, plus récent que le catalogue {1} ({2})", installed, b.Vendor, b.LatestVersion),
+                Core.Firmware.BiosState.NotInCatalog => Loc.F("BIOS : {0} installé — aucun BIOS pour ce modèle dans le catalogue {1}", installed, b.Vendor),
+                _ => Loc.F("BIOS : {0} installé — impossible de comparer avec le catalogue {1}", installed, b.Vendor)
+                     + (b.Reason is null ? "" : $" ({b.Reason})"),
+            };
+        }
+    }
+    public bool IsBiosOutdated => Bios?.State == Core.Firmware.BiosState.Outdated;
+    public string BiosWarningText => IsBiosOutdated ? "⚠ " + Loc.T(Core.Firmware.BiosStatus.UpdateWarning) : "";
+    public string? BiosLink => Bios?.Link;
+    public bool HasBiosLink => IsBiosOutdated && BiosLink is not null;
+    /// <summary>Firmwares de stations d'accueil / Thunderbolt détectés (information, jamais installés ici).</summary>
+    public string FirmwareComponentsText => LastScan?.Firmware is not { } fw ? "" :
+        string.Join("\n", fw.Components.Select(c => Loc.F("{0} : {1} {2} disponible (information, non installé)", Loc.T(c.KindLabel), c.Title, c.Version)));
+    public bool HasFirmwareComponents => LastScan?.Firmware?.Components.Count > 0;
+
     // ------------------------------------------------------------------ réparation guidée
 
     private DeviceItem? _selectedDevice;
@@ -798,6 +835,13 @@ public sealed class MainViewModel : ObservableObject
             OnPropertyChanged(nameof(HealthScoreText));
             OnPropertyChanged(nameof(HealthSummaryText));
             OnPropertyChanged(nameof(HealthFindings));
+            OnPropertyChanged(nameof(BiosStatusText));
+            OnPropertyChanged(nameof(IsBiosOutdated));
+            OnPropertyChanged(nameof(BiosWarningText));
+            OnPropertyChanged(nameof(BiosLink));
+            OnPropertyChanged(nameof(HasBiosLink));
+            OnPropertyChanged(nameof(FirmwareComponentsText));
+            OnPropertyChanged(nameof(HasFirmwareComponents));
         }
     }
 
@@ -911,7 +955,7 @@ public sealed class MainViewModel : ObservableObject
 
         var selected = Candidates.Where(c => c.IsSelected).ToList();
         if (!dryRun && selected.Any(c => c.IsFirmware) &&
-            MessageBox.Show("La sélection contient une mise à jour de BIOS/firmware.\nBranchez le secteur et ne coupez pas l'alimentation pendant l'opération.\n\nContinuer ?",
+            MessageBox.Show(Loc.T("La sélection contient une mise à jour de BIOS/firmware.\nBranchez le secteur, suspendez BitLocker (Suspend-BitLocker -MountPoint C: -RebootCount 1 : SpokaPilote ne le fait pas lui-même) et ne coupez pas l'alimentation pendant l'opération.\n\nContinuer ?"),
                 "SpokaPilote", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes)
             return;
 

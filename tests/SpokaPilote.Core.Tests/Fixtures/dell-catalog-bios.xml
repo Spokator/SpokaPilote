@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Extrait réduit au format du CatalogPC Dell (SoftwareComponent, ComponentType BIOS / FRMW, ImportantInfo, Criticality).
+     Identifiants et dates d'exemple ; la structure et les libellés de criticité sont ceux du catalogue. -->
+<Manifest baseLocation="downloads.dell.com" version="26.11.20">
+  <SoftwareComponent schemaVersion="2.0" packageID="BIOS118" releaseID="BIOS118" hashMD5="3b1d6a3c0a4f2c1e9f0d8b7a6c5e4d3f" path="FOLDER12000118M/1/Latitude_7420_7520_1.18.0.exe" dateTime="2026-09-15T10:12:33+05:30" releaseDate="September 15, 2026" vendorVersion="1.18.0" dellVersion="1.18.0" packageType="LWXP" size="34567890" rebootRequired="true">
+    <Name><Display lang="en"><![CDATA[Dell Latitude 7420/7520 System BIOS,1.18.0,1.18.0]]></Display></Name>
+    <ComponentType value="BIOS"><Display lang="en"><![CDATA[BIOS]]></Display></ComponentType>
+    <Category value="BI"><Display lang="en"><![CDATA[BIOS]]></Display></Category>
+    <SupportedDevices><Device componentID="159" embedded="0"><Display lang="en"><![CDATA[System BIOS]]></Display></Device></SupportedDevices>
+    <SupportedSystems><Brand key="4" prefix="LAT"><Display lang="en"><![CDATA[Latitude]]></Display><Model systemID="0A6B" systemIDType="BIOS"><Display lang="en"><![CDATA[7420]]></Display></Model></Brand></SupportedSystems>
+    <SupportedOperatingSystems>
+      <OperatingSystem osCode="W11P4" osVendor="Microsoft" osArch="x64" osType="WIN"><Display lang="en"><![CDATA[Windows 11 x64]]></Display></OperatingSystem>
+    </SupportedOperatingSystems>
+    <ImportantInfo URL="http://www.dell.com/support/home/en-us/drivers/DriversDetails?driverId=BIOS118" />
+    <Criticality value="1"><Display lang="en"><![CDATA[Recommended-Dell recommends applying this update during your next scheduled update cycle. The update contains feature enhancements or changes that will help keep your system software current and compatible with other system modules (firmware, BIOS, drivers and software).]]></Display></Criticality>
+  </SoftwareComponent>
+  <SoftwareComponent schemaVersion="2.0" packageID="BIOS115" releaseID="BIOS115" hashMD5="00" path="FOLDER11000115M/1/Latitude_7420_7520_1.15.0.exe" dateTime="2026-03-02T09:00:00+05:30" vendorVersion="1.15.0" dellVersion="1.15.0" packageType="LWXP" size="34000000" rebootRequired="true">
+    <Name><Display lang="en"><![CDATA[Dell Latitude 7420/7520 System BIOS,1.15.0,1.15.0]]></Display></Name>
+    <ComponentType value="BIOS"><Display lang="en"><![CDATA[BIOS]]></Display></ComponentType>
+    <Category value="BI"><Display lang="en"><![CDATA[BIOS]]></Display></Category>
+    <SupportedSystems><Brand key="4" prefix="LAT"><Model systemID="0A6B" systemIDType="BIOS" /></Brand></SupportedSystems>
+    <SupportedOperatingSystems><OperatingSystem osArch="x64"><Display lang="en"><![CDATA[Windows 11 x64]]></Display></OperatingSystem></SupportedOperatingSystems>
+    <ImportantInfo URL="https://www.dell.com/support/home/en-us/drivers/DriversDetails?driverId=BIOS115" />
+    <Criticality value="2"><Display lang="en"><![CDATA[Urgent-Dell highly recommends applying this update as soon as possible. The update contains changes to improve the reliability and availability of your Dell system.]]></Display></Criticality>
+  </SoftwareComponent>
+  <SoftwareComponent schemaVersion="2.0" packageID="BIOSX" releaseID="BIOSX" hashMD5="00" path="FOLDER11000999M/1/OptiPlex_7090_1.30.0.exe" dateTime="2026-10-01T09:00:00+05:30" vendorVersion="1.30.0" size="1000">
+    <Name><Display lang="en"><![CDATA[Dell OptiPlex 7090 System BIOS,1.30.0]]></Display></Name>
+    <ComponentType value="BIOS" />
+    <SupportedSystems><Brand key="2" prefix="OP"><Model systemID="0A7A" /></Brand></SupportedSystems>
+    <SupportedOperatingSystems><OperatingSystem osArch="x64"><Display lang="en"><![CDATA[Windows 11 x64]]></Display></OperatingSystem></SupportedOperatingSystems>
+  </SoftwareComponent>
+  <SoftwareComponent schemaVersion="2.0" packageID="TBT01" releaseID="TBT01" hashMD5="00" path="FOLDER11000777M/1/Intel_TBT4_Controller_FW_37.0.exe" dateTime="2026-05-20T09:00:00+05:30" vendorVersion="37.0" dellVersion="A03" size="1000" rebootRequired="true">
+    <Name><Display lang="en"><![CDATA[Intel Thunderbolt 4 Controller Firmware Update,37.0,A03]]></Display></Name>
+    <ComponentType value="FRMW"><Display lang="en"><![CDATA[Firmware]]></Display></ComponentType>
+    <Category value="CS"><Display lang="en"><![CDATA[Chipset]]></Display></Category>
+    <SupportedDevices><Device componentID="1"><PCIInfo deviceID="9A1B" vendorID="8086" subDeviceID="" subVendorID="" /></Device></SupportedDevices>
+    <SupportedSystems><Brand key="4" prefix="LAT"><Model systemID="0A6B" /></Brand></SupportedSystems>
+    <SupportedOperatingSystems><OperatingSystem osArch="x64"><Display lang="en"><![CDATA[Windows 11 x64]]></Display></OperatingSystem></SupportedOperatingSystems>
+    <ImportantInfo URL="https://www.dell.com/support/home/en-us/drivers/DriversDetails?driverId=TBT01" />
+    <Criticality value="1"><Display lang="en"><![CDATA[Recommended-Dell recommends applying this update during your next scheduled update cycle.]]></Display></Criticality>
+  </SoftwareComponent>
+  <SoftwareComponent schemaVersion="2.0" packageID="WD19FW" releaseID="WD19FW" hashMD5="00" path="FOLDER11000888M/1/DellDockFirmwarePackage_WIN_01.00.36.exe" dateTime="2026-06-11T09:00:00+05:30" vendorVersion="01.00.36" dellVersion="A13" size="1000">
+    <Name><Display lang="en"><![CDATA[Dell Dock WD19 Firmware Update,01.00.36,A13]]></Display></Name>
+    <ComponentType value="FRMW"><Display lang="en"><![CDATA[Firmware]]></Display></ComponentType>
+    <Category value="DK"><Display lang="en"><![CDATA[Docks/Stands]]></Display></Category>
+    <SupportedDevices><Device componentID="108" embedded="0"><Display lang="en"><![CDATA[Dell Dock WD19]]></Display></Device></SupportedDevices>
+    <SupportedSystems><Brand key="4" prefix="LAT"><Model systemID="0A6B" /></Brand></SupportedSystems>
+    <SupportedOperatingSystems><OperatingSystem osArch="x64"><Display lang="en"><![CDATA[Windows 11 x64]]></Display></OperatingSystem></SupportedOperatingSystems>
+    <Criticality value="2"><Display lang="en"><![CDATA[Urgent-Dell highly recommends applying this update as soon as possible.]]></Display></Criticality>
+  </SoftwareComponent>
+</Manifest>

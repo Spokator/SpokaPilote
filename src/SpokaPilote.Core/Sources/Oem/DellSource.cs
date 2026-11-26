@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Xml;
 using System.Xml.Linq;
+using SpokaPilote.Core.Firmware;
 using SpokaPilote.Core.Infrastructure;
 using SpokaPilote.Core.Install;
 using SpokaPilote.Core.Models;
@@ -49,11 +50,16 @@ public sealed class DellSource : IDriverSource
 
             var type = el.Element("ComponentType")?.Attribute("value")?.Value;
             var isFirmware = type is "BIOS" or "FRMW";
-            if (type != "DRVR" && !(isFirmware && includeFirmware)) continue;
+            if (type != "DRVR" && !isFirmware) continue;
 
             var forThisModel = el.Element("SupportedSystems")?.Descendants("Model")
                 .Any(m => string.Equals(m.Attribute("systemID")?.Value, sku, StringComparison.OrdinalIgnoreCase)) ?? false;
             if (!forThisModel) continue;
+
+            // État du BIOS et firmwares d'accessoires : toujours évalués (information), même sans --include-firmware.
+            if (type == "BIOS") context.BiosEntries.Add(BiosEntry(el));
+            else if (type == "FRMW") RecordAccessory(el, context);
+            if (isFirmware && !includeFirmware) continue;
 
             var oses = el.Element("SupportedOperatingSystems")?.Elements("OperatingSystem").ToList() ?? new();
             var osOk = oses.Any(os =>
@@ -78,7 +84,7 @@ public sealed class DellSource : IDriverSource
 
             var candidate = new DriverCandidate
             {
-                Id = $"dell:{el.Attribute("releaseID")?.Value ?? path}",
+                Id = CandidateId(el),
                 Source = DriverSourceKind.Dell,
                 PackageKind = DriverPackageKind.VendorInstaller,
                 Title = name,
@@ -124,8 +130,60 @@ public sealed class DellSource : IDriverSource
 
             results.Add(candidate);
         }
+        // BIOS déjà à jour (comparaison fiable) : candidat retiré ; état publié dans le rapport.
+        BiosEvaluator.Finish(context, OemVendor.Dell, results);
         Log.Info($"Catalogue Dell : {results.Count} paquet(s) pour le système {sku}.");
         return results;
+    }
+
+    internal static string CandidateId(XElement el) => $"dell:{el.Attribute("releaseID")?.Value ?? el.Attribute("path")?.Value ?? ""}";
+
+    private static string DetailsUrl(XElement el) =>
+        el.Element("ImportantInfo")?.Attribute("URL")?.Value is { Length: > 0 } info
+            ? TrustPolicy.NormalizeUrl(info).ToString()
+            : $"https://www.dell.com/support/home/drivers/driversdetails?driverid={el.Attribute("releaseID")?.Value}";
+
+    /// <summary>Criticité Dell : &lt;Criticality value="n"&gt;&lt;Display&gt;Urgent-Dell highly recommends...&lt;/Display&gt;.</summary>
+    private static (VendorImportance Importance, string? Label) Criticality(XElement el)
+    {
+        var text = el.Element("Criticality")?.Element("Display")?.Value?.Trim();
+        if (string.IsNullOrEmpty(text)) return (VendorImportance.Unknown, null);
+        var label = text.Split('-', 2)[0].Trim();
+        return (BiosEvaluator.ImportanceFromText(label), label);
+    }
+
+    private static BiosCatalogEntry BiosEntry(XElement el)
+    {
+        var (importance, label) = Criticality(el);
+        var path = el.Attribute("path")?.Value ?? "";
+        return new BiosCatalogEntry
+        {
+            Title = (el.Element("Name")?.Element("Display")?.Value ?? path).Split(',')[0].Trim(),
+            Version = el.Attribute("vendorVersion")?.Value?.Trim(),
+            Date = ParseDate(el.Attribute("dateTime")?.Value),
+            Importance = importance,
+            ImportanceLabel = label,
+            DownloadUrl = $"https://downloads.dell.com/{path.TrimStart('/')}",
+            InfoUrl = DetailsUrl(el),
+            CandidateId = CandidateId(el),
+        };
+    }
+
+    /// <summary>Firmware de station d'accueil (catégorie « Docks/Stands ») ou Thunderbolt : listé si le matériel est présent.</summary>
+    private static void RecordAccessory(XElement el, ScanContext context)
+    {
+        var name = (el.Element("Name")?.Element("Display")?.Value ?? "").Split(',')[0].Trim();
+        var kind = BiosEvaluator.AccessoryKind(name, el.Element("Category")?.Element("Display")?.Value);
+        if (kind is null) return;
+        var ids = el.Element("SupportedDevices")?.Descendants("PCIInfo")
+            .Select(p => (Ven: p.Attribute("vendorID")?.Value, Dev: p.Attribute("deviceID")?.Value))
+            .Where(p => !string.IsNullOrWhiteSpace(p.Ven) && !string.IsNullOrWhiteSpace(p.Dev))
+            .Select(p => $"PCI\\VEN_{p.Ven}&DEV_{p.Dev}")
+            .Distinct(StringComparer.OrdinalIgnoreCase).ToList() ?? new();
+        var (importance, label) = Criticality(el);
+        var path = el.Attribute("path")?.Value ?? "";
+        BiosEvaluator.AddComponent(context, kind, name, el.Attribute("vendorVersion")?.Value, ParseDate(el.Attribute("dateTime")?.Value),
+            importance, label, $"https://downloads.dell.com/{path.TrimStart('/')}", DetailsUrl(el), ids);
     }
 
     private static DateTime? ParseDate(string? value) =>

@@ -2,6 +2,8 @@ using System.Net;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using SpokaPilote.Core.Firmware;
+using SpokaPilote.Core.Infrastructure;
 using SpokaPilote.Core.Install;
 using SpokaPilote.Core.Models;
 using SpokaPilote.Core.Policy;
@@ -82,8 +84,10 @@ public static class ReportWriter
                 }
                 sb.Append("</ul>");
             }
-            sb.Append("<p class=\"muted\">Pondération : pilote dangereux −30 (note D au mieux), sans pilote / en erreur / non signé −15, pilote ancien −3 (−15 max), mise à jour −2 (−10 max) ; pannes matérielles et périphériques désactivés non comptés.</p></div></div>");
+            sb.Append("<p class=\"muted\">Pondération : pilote dangereux −30 (note D au mieux), sans pilote / en erreur / non signé −15, pilote ancien −3 (−15 max), mise à jour −2 (−10 max), BIOS obsolète −5 si critique sinon −2 ; pannes matérielles et périphériques désactivés non comptés.</p></div></div>");
         }
+
+        AppendFirmware(sb, scan);
 
         if (scan.Policy is { } applied)
         {
@@ -143,5 +147,47 @@ public static class ReportWriter
         }
         sb.Append("</table></div><p class=\"muted\">Généré par SpokaPilote.</p></main></body></html>");
         return sb.ToString();
+    }
+
+    /// <summary>Carte « BIOS et firmwares » : état du BIOS, firmwares d'accessoires détectés (information seulement).</summary>
+    private static void AppendFirmware(StringBuilder sb, ScanResult scan)
+    {
+        static string E(string? s) => WebUtility.HtmlEncode(s ?? "");
+        // Liens : uniquement HTTPS vers un domaine officiel (déjà filtrés, revérifiés ici).
+        static string Link(string? url, string label) =>
+            TrustPolicy.OfficialLink(url) is { } ok ? $"<a href=\"{E(ok)}\" rel=\"noopener noreferrer\">{E(label)}</a>" : "";
+        static string Date(DateTime? d) => d is { } v ? $" <span class=\"muted\">du {v:dd/MM/yyyy}</span>" : "";
+
+        var firmware = scan.Firmware;
+        var bios = firmware?.Bios;
+        var cls = bios?.State switch
+        {
+            BiosState.Outdated => bios.IsCritical ? "bad" : "warn",
+            BiosState.UpToDate or BiosState.InstalledNewer => "ok",
+            _ => "muted",
+        };
+        sb.Append("<h2>BIOS et firmwares</h2><div class=\"card\">");
+        sb.Append($"<p class=\"{cls}\"><b>{E(FirmwareStatus.Describe(firmware, scan.System))}</b></p>");
+        if (bios is not null && bios.LatestVersion is not null)
+        {
+            sb.Append("<div class=\"scroll\"><table><tr><th>BIOS installé</th><th>Dernière version au catalogue</th><th>Importance (constructeur)</th><th>Liens officiels</th></tr>");
+            var links = string.Join(" · ", new[] { Link(bios.InfoUrl, "détails"), Link(bios.DownloadUrl, "paquet") }.Where(l => l.Length > 0));
+            sb.Append($"<tr><td>{E(bios.InstalledVersion ?? "?")}{Date(bios.InstalledDate)}</td><td>{E(bios.LatestVersion)}{Date(bios.LatestDate)}<br><span class=\"muted\">{E(bios.Title)}</span></td>" +
+                      $"<td>{E(bios.ImportanceText)}{(bios.ImportanceLabel is null ? "" : $" <span class=\"muted\">({E(bios.ImportanceLabel)})</span>")}</td><td>{links}</td></tr></table></div>");
+        }
+        if (bios is { State: BiosState.Outdated })
+            sb.Append($"<p class=\"warn\">⚠ {E(BiosStatus.UpdateWarning)}</p>");
+        if (firmware is { Components.Count: > 0 })
+        {
+            sb.Append("<p><b>Stations d'accueil et Thunderbolt</b> <span class=\"muted\">(information : firmware publié pour du matériel détecté, version en place non lisible, rien n'est installé)</span></p><ul>");
+            foreach (var c in firmware.Components)
+            {
+                var links = string.Join(" · ", new[] { Link(c.InfoUrl, "détails"), Link(c.DownloadUrl, "paquet") }.Where(l => l.Length > 0));
+                sb.Append($"<li>{E(c.KindLabel)} : <b>{E(c.Title)}</b> {E(c.Version)}{Date(c.Date)} — {E(string.Join(", ", c.Devices))}{(links.Length > 0 ? " — " + links : "")}</li>");
+            }
+            sb.Append("</ul>");
+        }
+        foreach (var note in firmware?.Notes ?? new List<string>()) sb.Append($"<p class=\"muted\">{E(note)}</p>");
+        sb.Append("<p class=\"muted\">Information seulement : SpokaPilote n'installe un BIOS ou un firmware qu'avec --include-firmware (réglage « Proposer aussi les mises à jour de BIOS et de firmware »).</p></div>");
     }
 }

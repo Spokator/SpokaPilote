@@ -296,5 +296,29 @@
   "Télécharger sur la clé": "Download to the USB key",
   "Mode portable : téléchargez la nouvelle version. L'archive est vérifiée (taille + SHA-256) et rangée sur la clé ; extrayez-la ensuite par-dessus l'ancienne version.": "Portable mode: download the new version. The archive is verified (size + SHA-256) and saved on the USB key; then extract it over the previous version.",
   "Téléchargement de SpokaPilote {0} (archive portable)...": "Downloading SpokaPilote {0} (portable archive)...",
-  "Archive vérifiée (SHA-256) : {0}. Fermez SpokaPilote puis extrayez-la à la racine de la clé, par-dessus l'ancienne version (Data et Depot sont conservés).": "Archive verified (SHA-256): {0}. Close SpokaPilote, then extract it to the root of the USB key over the previous version (Data and Depot are kept)."
+  "Archive vérifiée (SHA-256) : {0}. Fermez SpokaPilote puis extrayez-la à la racine de la clé, par-dessus l'ancienne version (Data et Depot sont conservés).": "Archive verified (SHA-256): {0}. Close SpokaPilote, then extract it to the root of the USB key over the previous version (Data and Depot are kept).",
+
+  // ---------------------------------------------------------------- état du BIOS et des firmwares
+  "BIOS et firmwares": "BIOS and firmware",
+  "État du BIOS": "BIOS status",
+  "Page officielle du BIOS": "Official BIOS page",
+  "Ouvrir la page officielle du BIOS": "Open the official BIOS page",
+  "Précautions avant la mise à jour du BIOS": "Precautions before updating the BIOS",
+  "Firmwares de stations d'accueil et Thunderbolt": "Docking station and Thunderbolt firmware",
+  "version inconnue": "unknown version",
+  "BIOS : {0} installé — non vérifié (catalogue {1} non interrogé ou indisponible)": "BIOS: {0} installed — not checked ({1} catalog not queried or unavailable)",
+  "BIOS : {0} installé — non vérifié (comparaison disponible pour Dell, HP et Lenovo)": "BIOS: {0} installed — not checked (comparison available for Dell, HP and Lenovo)",
+  "BIOS : {0} installé, {1} disponible ({2})": "BIOS: {0} installed, {1} available ({2})",
+  "BIOS : {0} installé, à jour (dernière version {1} : {2})": "BIOS: {0} installed, up to date (latest {1} version: {2})",
+  "BIOS : {0} installé, plus récent que le catalogue {1} ({2})": "BIOS: {0} installed, newer than the {1} catalog ({2})",
+  "BIOS : {0} installé — aucun BIOS pour ce modèle dans le catalogue {1}": "BIOS: {0} installed — no BIOS for this model in the {1} catalog",
+  "BIOS : {0} installé — impossible de comparer avec le catalogue {1}": "BIOS: {0} installed — cannot be reliably compared with the {1} catalog",
+  "critique": "critical",
+  "recommandée": "recommended",
+  "facultative": "optional",
+  "importance non précisée": "importance not specified",
+  "Station d'accueil": "Docking station",
+  "{0} : {1} {2} disponible (information, non installé)": "{0}: {1} {2} available (information only, not installed)",
+  "Avant de mettre à jour le BIOS : secteur branché (batterie chargée), BitLocker suspendu (Suspend-BitLocker -MountPoint C: -RebootCount 1, sinon la clé de récupération sera demandée au redémarrage), ne pas éteindre pendant l'opération. SpokaPilote ne l'installe jamais sans --include-firmware.": "Before updating the BIOS: AC power connected (battery charged), BitLocker suspended (Suspend-BitLocker -MountPoint C: -RebootCount 1, otherwise the recovery key will be requested at restart), do not power off during the update. SpokaPilote never installs it without --include-firmware.",
+  "La sélection contient une mise à jour de BIOS/firmware.\nBranchez le secteur, suspendez BitLocker (Suspend-BitLocker -MountPoint C: -RebootCount 1 : SpokaPilote ne le fait pas lui-même) et ne coupez pas l'alimentation pendant l'opération.\n\nContinuer ?": "The selection contains a BIOS/firmware update.\nConnect AC power, suspend BitLocker (Suspend-BitLocker -MountPoint C: -RebootCount 1: SpokaPilote does not do it for you) and do not cut the power during the update.\n\nContinue?"
 }

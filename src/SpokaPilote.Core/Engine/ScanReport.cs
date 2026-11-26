@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using SpokaPilote.Core.Firmware;
 using SpokaPilote.Core.Health;
 using SpokaPilote.Core.Install;
 using SpokaPilote.Core.Models;
@@ -74,6 +75,12 @@ public sealed class ScanReport
     public ReportPolicy? Policy { get; set; }
     /// <summary>Santé des pilotes (facultatif) : { score, grade, findings: [ { severity, code, title, detail, deviceId } ] }.</summary>
     public HealthReport? Health { get; set; }
+    /// <summary>
+    /// État du BIOS et des firmwares (facultatif, absent des rapports antérieurs et des postes sans catalogue
+    /// constructeur) : { bios: { vendor, state, installedVersion, latestVersion, importance, downloadUrl, infoUrl... },
+    /// components: [ ... ], notes: [ ... ] }.
+    /// </summary>
+    public FirmwareStatus? Firmware { get; set; }
     public List<ReportOutcome>? Installation { get; set; }
     public List<DeviceInfo> Devices { get; set; } = new();
 
@@ -106,6 +113,7 @@ public sealed class ScanReport
         SourceErrors = scan.SourceErrors,
         Devices = scan.Devices,
         Health = scan.Health,
+        Firmware = scan.Firmware,
         Candidates = scan.Candidates.Select(c => new ReportCandidate
         {
             Title = c.Title,

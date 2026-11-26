@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!-- Extrait réduit au format de la référence HP Image Assistant (ImagePal) : SoftPaq BIOS, firmware Thunderbolt de
+     station d'accueil associé à un identifiant USB dans <Devices>, firmware de dock sans identifiant.
+     Numéros de SoftPaq et dates d'exemple. -->
+<ImagePal>
+  <Version>3</Version>
+  <Devices>
+    <Device>
+      <DeviceId>USB\VID_03F0&amp;PID_0667</DeviceId>
+      <Solutions><UpdateInfo IdRef="sp171002" /></Solutions>
+    </Device>
+  </Devices>
+  <Solutions>
+    <UpdateInfo>
+      <Id>sp171001</Id>
+      <Name>HP Notebook System BIOS Update (T37)</Name>
+      <Category>BIOS</Category>
+      <Version>01.17.00 Rev.A</Version>
+      <Vendor>HP</Vendor>
+      <ReleaseType>Critical</ReleaseType>
+      <SilentInstall>HPFirmwareUpdRec64.exe -s -r -b</SilentInstall>
+      <Url>ftp.hp.com/pub/softpaq/sp171001-171500/sp171001.exe</Url>
+      <ReleaseNotesUrl>ftp.hp.com/pub/softpaq/sp171001-171500/sp171001.html</ReleaseNotesUrl>
+      <SHA256>A1B2C3D4E5F60718293A4B5C6D7E8F90112233445566778899AABBCCDDEEFF00</SHA256>
+      <Size>30000000</Size>
+      <DateReleased>2026-10-02</DateReleased>
+    </UpdateInfo>
+    <UpdateInfo>
+      <Id>sp171002</Id>
+      <Name>HP Thunderbolt Dock G4 Firmware</Name>
+      <Category>Firmware</Category>
+      <Version>1.0.71.1</Version>
+      <ReleaseType>Recommended</ReleaseType>
+      <SilentInstall>HPFirmwareInstaller.exe -s</SilentInstall>
+      <Url>ftp.hp.com/pub/softpaq/sp171001-171500/sp171002.exe</Url>
+      <ReleaseNotesUrl>ftp.hp.com/pub/softpaq/sp171001-171500/sp171002.html</ReleaseNotesUrl>
+      <Size>1000</Size>
+      <DateReleased>2026-08-12</DateReleased>
+    </UpdateInfo>
+    <UpdateInfo>
+      <Id>sp171003</Id>
+      <Name>HP USB-C Dock G5 Firmware</Name>
+      <Category>Firmware</Category>
+      <Version>1.0.20.0</Version>
+      <ReleaseType>Routine</ReleaseType>
+      <SilentInstall>HPFirmwareInstaller.exe -s</SilentInstall>
+      <Url>ftp.hp.com/pub/softpaq/sp171001-171500/sp171003.exe</Url>
+      <Size>1000</Size>
+    </UpdateInfo>
+  </Solutions>
+</ImagePal>

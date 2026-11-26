@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Xml.Linq;
+using SpokaPilote.Core.Firmware;
 using SpokaPilote.Core.Infrastructure;
 using SpokaPilote.Core.Models;
 
@@ -60,6 +61,7 @@ public sealed class LenovoSource : IDriverSource
             context.Report(Name, $"Catalogue Lenovo : {n}/{packages.Count} paquet(s) analysé(s)", 100.0 * n / Math.Max(1, packages.Count));
         }).ConfigureAwait(false);
 
+        BiosEvaluator.Finish(context, OemVendor.Lenovo, results);
         Log.Info($"Catalogue Lenovo : {results.Count} paquet(s) applicable(s) pour {mtm}.");
         return results;
     }
@@ -87,12 +89,16 @@ public sealed class LenovoSource : IDriverSource
         // PackageType : 1 = application, 2 = pilote, 3 = BIOS, 4 = firmware.
         var packageType = pkg.Element("PackageType")?.Attribute("type")?.Value;
         var isFirmware = packageType is "3" or "4";
-        if (packageType != "2" && !(isFirmware && context.Settings.IncludeBiosAndFirmware)) return null;
+        if (packageType != "2" && !isFirmware) return null;
 
         var installer = pkg.Element("Files")?.Element("Installer")?.Element("File");
         var fileName = installer?.Element("Name")?.Value?.Trim();
         if (string.IsNullOrEmpty(fileName)) return null;
         var baseUri = new Uri(descriptorUri, ".");
+
+        // État du BIOS et firmwares d'accessoires : toujours évalués (information), même sans --include-firmware.
+        if (isFirmware) RecordFirmwareInfo(pkg, packageType!, baseUri, fileName, category, context);
+        if (isFirmware && !context.Settings.IncludeBiosAndFirmware) return null;
 
         var install = pkg.Element("Install");
         var installType = install?.Attribute("type")?.Value ?? "cmd";
@@ -152,5 +158,50 @@ public sealed class LenovoSource : IDriverSource
             candidate.Kind = CandidateKind.Optional;
         }
         return candidate;
+    }
+
+    private static string? EnglishTitle(XElement pkg) =>
+        (pkg.Element("Title")?.Elements("Desc").FirstOrDefault(d => d.Attribute("id")?.Value == "EN")?.Value
+         ?? pkg.Element("Title")?.Element("Desc")?.Value)?.Trim();
+
+    private static string? ReadmeUrl(XElement pkg, Uri baseUri) =>
+        pkg.Element("Files")?.Element("Readme")?.Element("File")?.Element("Name")?.Value?.Trim() is { Length: > 0 } readme
+            ? new Uri(baseUri, readme).ToString() : null;
+
+    /// <summary>
+    /// BIOS (PackageType 3 avec contrôle « _Bios » ou intitulé « BIOS ») : entrée pour l'état du BIOS. Firmware de
+    /// station d'accueil / Thunderbolt : listé si ses _PnPID correspondent à un périphérique présent.
+    /// </summary>
+    private static void RecordFirmwareInfo(XElement pkg, string packageType, Uri baseUri, string fileName, string? category, ScanContext context)
+    {
+        var title = EnglishTitle(pkg) ?? pkg.Attribute("name")?.Value ?? fileName;
+        var severity = pkg.Element("Severity")?.Attribute("type")?.Value;
+        var date = DateTime.TryParse(pkg.Element("ReleaseDate")?.Value, CultureInfo.InvariantCulture, DateTimeStyles.None, out var d) ? d : (DateTime?)null;
+        var levels = pkg.Descendants("_Bios").Elements("Level").Select(l => l.Value.Trim().TrimEnd('^').Trim()).Where(l => l.Length > 0).ToList();
+        var isBios = packageType == "3" && (levels.Count > 0 || title.Contains("BIOS", StringComparison.OrdinalIgnoreCase));
+        if (isBios)
+        {
+            if (pkg.Attribute("name")?.Value is { Length: > 0 } name) levels.Add(name.Trim());
+            context.BiosEntries.Add(new BiosCatalogEntry
+            {
+                Title = title,
+                Version = pkg.Attribute("version")?.Value?.Trim(),
+                BuildIds = levels.Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
+                Date = date,
+                Importance = BiosEvaluator.ImportanceFromLenovoSeverity(severity),
+                ImportanceLabel = BiosEvaluator.LenovoSeverityLabel(severity),
+                DownloadUrl = new Uri(baseUri, fileName).ToString(),
+                InfoUrl = ReadmeUrl(pkg, baseUri),
+                CandidateId = $"lenovo:{pkg.Attribute("id")?.Value ?? fileName}",
+            });
+            return;
+        }
+        if (BiosEvaluator.AccessoryKind(title, category) is not { } kind) return;
+        var pnpIds = pkg.Descendants("_PnPID").Select(e => e.Value.Trim())
+            .Concat(pkg.Descendants("_Driver").Elements("HardwareID").Select(e => e.Value.Trim()))
+            .Where(s => s.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        BiosEvaluator.AddComponent(context, kind, title, pkg.Attribute("version")?.Value, date,
+            BiosEvaluator.ImportanceFromLenovoSeverity(severity), BiosEvaluator.LenovoSeverityLabel(severity),
+            new Uri(baseUri, fileName).ToString(), ReadmeUrl(pkg, baseUri), pnpIds);
     }
 }

@@ -114,6 +114,7 @@ internal static partial class Program
         PrintSystem(scan);
         PrintCandidates(scan);
         PrintHealth(scan.Health, detailed: false);
+        PrintFirmware(scan, detailed: false);
 
         List<InstallOutcome>? outcomes = null;
         var exit = ExitOk;
@@ -127,6 +128,7 @@ internal static partial class Program
             else
             {
                 WriteLine($"\n{selection.Count} pilote(s) sélectionné(s) pour installation{(a.Flag("dry-run") ? " (SIMULATION)" : "")}.", ConsoleColor.Cyan);
+                WarnFirmwareSelection(selection);
                 if (!a.Flag("yes") && !a.Flag("dry-run") && !Confirm("Continuer ?"))
                     return ExitOk;
 
@@ -771,7 +773,9 @@ internal static partial class Program
             BOÎTE À OUTILS DU TECHNICIEN (voir docs/OUTILS-TECHNICIEN.md)
               spokapilote health [--quick] [--json [fichier]] [--html rapport.html]
                                    note A-E et constats : pilotes dangereux installés, manquants, en erreur,
-                                   non signés, anciens, mises à jour (--json seul : JSON sur la sortie standard)
+                                   non signés, anciens, mises à jour (--json seul : JSON sur la sortie standard),
+                                   état du BIOS comparé au catalogue Dell / HP / Lenovo (information, rien n'est
+                                   installé : le BIOS ne s'installe qu'avec « install --include-firmware »)
               spokapilote device list [--problems] [--all]      périphériques numérotés (en erreur d'abord)
               spokapilote device info <n°|id>                   fiche, diagnostic et actions possibles
               spokapilote device repair <n°|id> [--action restart|enable|reinstall|rescan] [--dry-run] [--yes]
