@@ -19,7 +19,7 @@ RUN dotnet publish server/SpokaPilote.Server/SpokaPilote.Server.csproj \
       -c Release -o /app --no-restore -p:UseAppHost=false
 
 # ---------------------------------------------------------------- exécution
-FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS final
+FROM mcr.microsoft.com/dotnet/aspnet:11.0 AS final
 LABEL org.opencontainers.image.title="SpokaPilote Server" \
       org.opencontainers.image.description="Console centrale SpokaPilote : rapports des postes, matériel sans pilote, politique de pilotes" \
       org.opencontainers.image.source="https://github.com/Spokator/SpokaPilote"
