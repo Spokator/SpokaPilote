@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.IO.Compression;
 using System.Text;
+using System.Text.Json.Nodes;
 using SpokaPilote.Server.Alerts;
 using SpokaPilote.Server.Audit;
 using SpokaPilote.Server.Fleet;
@@ -30,6 +31,8 @@ public sealed class RolloutService(ServerStore store, AlertService alerts, Audit
 {
     public const string BreakerActor = "Disjoncteur automatique";
     public const string RolloutHeader = "X-SpokaPilote-Rollout";
+    /// <summary>Poste 4.0 qui demande ses retenues proposition par proposition (POST /api/rollout/decide) plutôt que dans sa politique.</summary>
+    public const string DecisionsHeader = "X-SpokaPilote-Rollout-Decisions";
 
     /// <summary>Âge maximal de l'état (délais qui s'écoulent, versions vues entre-temps).</summary>
     public static readonly TimeSpan MaxAge = TimeSpan.FromSeconds(60);
@@ -51,7 +54,11 @@ public sealed class RolloutService(ServerStore store, AlertService alerts, Audit
         public int Suspended { get; init; }
         public int Attention { get; init; }
         public int InRollout { get; init; }
-        public ConcurrentDictionary<(long Target, bool Aware, bool Known), ServedPolicy> Policies { get; } = new();
+        public ConcurrentDictionary<(long Target, bool Aware, bool Known, bool Decisions), ServedPolicy> Policies { get; } = new();
+        /// <summary>Index des décisions par proposition (construit à la première demande d'un poste 4.0).</summary>
+        public required Lazy<RolloutIndex> Index { get; init; }
+        /// <summary>Listes de versions filtrées et triées de la page « Déploiement » (une par filtre).</summary>
+        public ConcurrentDictionary<string, List<VersionPlan>> Lists { get; } = new(StringComparer.Ordinal);
     }
 
     private readonly object _gate = new();
@@ -108,6 +115,7 @@ public sealed class RolloutService(ServerStore store, AlertService alerts, Audit
             Suspended = plans.Count(p => p.Version.Suspended),
             Attention = plans.Count(p => p.Version.NeedsAttention),
             InRollout = snapshot.RingsActive ? plans.Count(p => p.Status == "rollout") : 0,
+            Index = new Lazy<RolloutIndex>(() => new RolloutIndex(snapshot, plans, now), LazyThreadSafetyMode.ExecutionAndPublication),
         };
     }
 
@@ -118,31 +126,59 @@ public sealed class RolloutService(ServerStore store, AlertService alerts, Audit
     /// telle quelle (comportement 3.x). Sinon : poste identifié (en-têtes X-SpokaPilote-Machine-Id / -Machine, envoyés par
     /// les postes 4.0) → politique de son anneau ; poste non identifié (3.x) → anneau le plus prudent.
     /// </summary>
-    public ServedPolicy Serve(string? machineId, string? machineName, bool rolloutAware)
+    /// <param name="decisions">Poste 4.0 qui demande ses décisions proposition par proposition (en-tête
+    /// X-SpokaPilote-Rollout-Decisions) : le document ne contient que les suspensions, la section « rollout » l'indique.</param>
+    public ServedPolicy Serve(string? machineId, string? machineName, bool rolloutAware, bool decisions = false)
     {
         var view = Current();
-        var s = view.Snapshot;
-        PolicyTarget target;
-        var known = false;
-        if (!s.RingsActive) target = PolicyTarget.SuspensionsOnly;
-        else if (string.IsNullOrWhiteSpace(machineId) && string.IsNullOrWhiteSpace(machineName)) target = new PolicyTarget(null, true);
-        else
-        {
-            var (isKnown, ringId) = store.ResolveMachineRing(machineId, machineName);
-            known = isKnown;
-            target = new PolicyTarget(s.Rings.FirstOrDefault(r => r.Id == ringId) ?? s.DefaultRing, false);
-        }
-        var aware = rolloutAware && s.RingsActive;
-        return view.Policies.GetOrAdd((target.CacheKey, aware, aware && known), _ => Compose(view, target, aware, known));
+        var (target, known) = Resolve(view, machineId, machineName);
+        var aware = rolloutAware && view.Snapshot.RingsActive;
+        var decide = aware && decisions;
+        return view.Policies.GetOrAdd((target.CacheKey, aware, aware && known, decide), _ => Compose(view, target, aware, known, decide));
     }
 
-    private ServedPolicy Compose(View view, PolicyTarget target, bool aware, bool known)
+    /// <summary>Destinataire d'une demande de poste : non identifié → anneau le plus prudent ; identifié → son anneau.</summary>
+    private (PolicyTarget Target, bool Known) Resolve(View view, string? machineId, string? machineName)
+    {
+        var s = view.Snapshot;
+        if (!s.RingsActive) return (PolicyTarget.SuspensionsOnly, false);
+        if (string.IsNullOrWhiteSpace(machineId) && string.IsNullOrWhiteSpace(machineName)) return (new PolicyTarget(null, true), false);
+        var (isKnown, ringId) = store.ResolveMachineRing(machineId, machineName);
+        return (new PolicyTarget(s.Rings.FirstOrDefault(r => r.Id == ringId) ?? s.DefaultRing, false), isKnown);
+    }
+
+    /// <summary>Plafond des règles de diffusion des politiques servies (postes 3.x, postes 4.0 sans décisions).</summary>
+    public RolloutLimits Limits { get; set; } = RolloutLimits.Default;
+
+    /// <summary>Propositions au plus par demande de décisions.</summary>
+    public const int MaxDecisionCandidates = 1000;
+
+    /// <summary>Décisions de diffusion d'un poste 4.0, dans l'ordre des propositions.</summary>
+    public sealed record DecisionBatch(PolicyTarget Target, bool Known, JsonObject Section, IReadOnlyList<RolloutDecision> Decisions);
+
+    /// <summary>
+    /// Décisions pour les propositions d'un poste (POST /api/rollout/decide) : anneau résolu comme pour sa politique, coût
+    /// proportionnel au nombre de propositions (index en mémoire, aucune écriture en base).
+    /// </summary>
+    public DecisionBatch Decide(string? machineId, string? machineName, IReadOnlyList<CandidateQuery> candidates)
+    {
+        var view = Current();
+        var (target, known) = Resolve(view, machineId, machineName);
+        var index = view.Index.Value;
+        var decisions = candidates.Select(c => index.Decide(c, target, Zone, view.BuiltAt)).ToList();
+        var section = RolloutPolicyBuilder.RolloutSection(view.Snapshot, target, new RolloutRules(), known, view.BuiltAt, decisions: true);
+        section.Remove("availability");
+        return new DecisionBatch(target, known, section, decisions);
+    }
+
+    private ServedPolicy Compose(View view, PolicyTarget target, bool aware, bool known, bool decide)
     {
         var now = view.BuiltAt;
+        var reserved = (view.OrganizationJson?.Length ?? 0) + (aware ? 600 : 0);
         var rules = view.Snapshot.RingsActive || view.Suspended > 0
-            ? RolloutPolicyBuilder.Build(view.Snapshot, view.Plans, target, now, Zone)
+            ? RolloutPolicyBuilder.Build(view.Snapshot, view.Plans, target, now, Zone, Limits, suspensionsOnly: decide, reservedBytes: reserved)
             : new RolloutRules();
-        var section = aware ? RolloutPolicyBuilder.RolloutSection(view.Snapshot, target, rules, known, now) : null;
+        var section = aware ? RolloutPolicyBuilder.RolloutSection(view.Snapshot, target, rules, known, now, decisions: decide) : null;
         var json = RolloutPolicyBuilder.Compose(view.OrganizationJson, rules, section);
         var utf8 = json is null ? null : Encoding.UTF8.GetBytes(json);
         return new ServedPolicy
@@ -159,12 +195,8 @@ public sealed class RolloutService(ServerStore store, AlertService alerts, Audit
         return output.ToArray();
     }
 
-    /// <summary>Politique qu'un poste précis recevrait (aperçu de la console) : anneau résolu comme pour une requête du poste.</summary>
-    public (ServedPolicy Policy, RingRecord? Ring, bool Known) Preview(MachineSummary machine)
-    {
-        var served = Serve(machine.MachineId, machine.Name, rolloutAware: true);
-        return (served, served.Target.Ring, true);
-    }
+    /// <summary>Politique servie aux postes 3.x (non identifiés : anneau le plus prudent), pour l'aperçu de la console.</summary>
+    public ServedPolicy ServeLegacy() => Serve(null, null, rolloutAware: false);
 
     // ------------------------------------------------------------------ disjoncteur
 

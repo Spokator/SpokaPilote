@@ -1,3 +1,7 @@
+using System.IO.Compression;
+using System.Text;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using SpokaPilote.Server.Audit;
 using SpokaPilote.Server.Rollout;
 using SpokaPilote.Server.Security;
@@ -45,6 +49,11 @@ public static class RolloutEndpoints
         var view = api.MapGroup("/rollout").RequireAccess(Access.View);
         var operate = api.MapGroup("/rollout").RequireAccess(Access.Operate);
         var admin = api.MapGroup("/rollout").RequireAccess(Access.Admin);
+
+        // Postes 4.0 (jeton d'enrôlement) : décision de diffusion pour CHACUNE de leurs propositions, au lieu de la liste des
+        // retenues de tout le parc dans leur politique. Lecture seule (rien n'est enregistré : la première détection reste
+        // la réception du premier rapport qui propose une version).
+        api.MapPost("/rollout/decide", DecideAsync).RequireAccess(Access.Agent);
 
         // Compteurs légers (menu, vue d'ensemble) : suspensions à examiner, versions en cours de diffusion.
         view.MapGet("/summary", (RolloutService rollout) =>
@@ -166,7 +175,9 @@ public static class RolloutEndpoints
             if (filter is not ("active" or "rollout" or "suspended" or "attention" or "completed" or "all"))
                 return BadRequest("Filtre inconnu (active, rollout, suspended, attention, completed, all).");
             var search = q?.Trim();
-            IEnumerable<VersionPlan> rows = v.Plans.Where(p => filter switch
+            // Liste filtrée et triée calculée une fois par état de la diffusion (des dizaines de milliers de versions) ; la recherche
+            // et la pagination ne font ensuite que parcourir cette liste.
+            IReadOnlyList<VersionPlan> sorted = v.Lists.GetOrAdd(filter, f => v.Plans.Where(p => f switch
             {
                 "active" => p.Version.Suspended || (v.Snapshot.RingsActive && p.Status == "rollout"),
                 "rollout" => v.Snapshot.RingsActive && p.Status == "rollout",
@@ -174,12 +185,13 @@ public static class RolloutEndpoints
                 "attention" => p.Version.NeedsAttention,
                 "completed" => !p.Version.Suspended && (!v.Snapshot.RingsActive || p.Completed),
                 _ => true,
-            });
+            }).OrderByDescending(p => p.Version.NeedsAttention).ThenByDescending(p => p.Version.FirstSeen).ThenByDescending(p => p.Version.Id).ToList());
+            IEnumerable<VersionPlan> rows = sorted;
             if (!string.IsNullOrEmpty(search))
                 rows = rows.Where(p => p.Version.Title.Contains(search, StringComparison.OrdinalIgnoreCase) ||
                                        p.Version.Version.Contains(search, StringComparison.OrdinalIgnoreCase) ||
                                        RolloutKeys.SourceLabel(p.Version.Source).Contains(search, StringComparison.OrdinalIgnoreCase));
-            var ordered = rows.OrderByDescending(p => p.Version.NeedsAttention).ThenByDescending(p => p.Version.FirstSeen).ThenByDescending(p => p.Version.Id).ToList();
+            var ordered = string.IsNullOrEmpty(search) ? sorted : rows.ToList();
             var skip = Math.Max(0, offset ?? 0);
             var take = Math.Clamp(limit ?? 50, 1, MaxPageSize);
             return Results.Ok(new
@@ -270,24 +282,135 @@ public static class RolloutEndpoints
             return Results.Ok(new { total, items = items.Select(Event) });
         });
 
-        // Politique qu'un poste reçoit (anneau résolu comme pour le poste lui-même, client 4.0).
+        // Ce qu'un poste reçoit (anneau résolu comme pour le poste lui-même) : poste 4.0 — politique (suspensions seules) et
+        // décisions pour les propositions de son dernier rapport —, poste 4.0 sans décisions et poste 3.x (document borné).
         view.MapGet("/preview", (string? machine, ServerStore store, RolloutService rollout) =>
         {
             if (string.IsNullOrWhiteSpace(machine) || store.GetMachineSummary(machine.Trim()) is not { } m) return ApiEndpoints.NotFound(machine ?? "");
-            var served = rollout.Serve(m.MachineId, m.Name, rolloutAware: true);
+            var served = rollout.Serve(m.MachineId, m.Name, rolloutAware: true, decisions: true);
+            var rulesMode = rollout.Serve(m.MachineId, m.Name, rolloutAware: true);
+            var legacy = rollout.ServeLegacy();
+            var candidates = new List<Fleet.CandidateEntry>();
+            if (store.GetRawReport(m.Name) is { } raw)
+            {
+                try { candidates = Fleet.ReportParser.Parse(raw).Candidates; }
+                catch (Fleet.InvalidReportException) { /* rapport illisible : aucune proposition à montrer */ }
+            }
+            var queries = candidates.Select(c => new CandidateQuery(c.Source, c.Title, c.Version, c.Kind)).ToList();
+            var batch = rollout.Decide(m.MachineId, m.Name, queries);
+            var request = JsonSerializer.Serialize(new { candidates = queries.Select(q => new { source = RolloutKeys.SourceKey(q.Source), title = q.Title, version = q.Version, kind = RolloutKeys.CandidateKind(q.Kind) ?? q.Kind }) });
             return Results.Ok(new
             {
                 machine = m.Name,
                 ring = served.Target.Ring?.Name,
                 conservative = served.Target.Conservative,
                 suspensions = served.Rules.Suspensions,
-                holds = served.Rules.Holds,
-                families = served.Rules.Families,
-                holdUnknown = served.Rules.HoldUnknown,
+                holds = rulesMode.Rules.Holds,
+                families = rulesMode.Rules.Families,
+                holdUnknown = RolloutPolicyBuilder.HoldsNewVersions(rollout.Current().Snapshot, served.Target),
                 bytes = served.Utf8?.Length ?? 0,
                 policy = served.Json,
+                decisions = new
+                {
+                    candidates = batch.Decisions.Count,
+                    allowed = batch.Decisions.Count(d => d.Status == DecisionStatus.Allowed),
+                    held = batch.Decisions.Count(d => d.Status == DecisionStatus.Held),
+                    suspended = batch.Decisions.Count(d => d.Status == DecisionStatus.Suspended),
+                    unknown = batch.Decisions.Count(d => d.Status == DecisionStatus.Unknown),
+                    requestBytes = Encoding.UTF8.GetByteCount(request),
+                    items = candidates.Zip(batch.Decisions, (c, d) => new
+                    {
+                        title = c.Title, version = c.Version, source = c.Source, kind = c.Kind, status = d.Status, availableAt = d.AvailableAt, reason = d.Reason,
+                    }),
+                },
+                withoutDecisions = Summary(rulesMode, rollout.Limits),
+                legacy = Summary(legacy, rollout.Limits),
             });
         });
+    }
+
+    // ------------------------------------------------------------------ décisions (postes 4.0)
+
+    /// <summary>Taille maximale (décompressée) d'une demande de décisions.</summary>
+    public const int MaxDecideBytes = 512 * 1024;
+
+    private static async Task<IResult> DecideAsync(HttpRequest request, RolloutService rollout, CancellationToken ct)
+    {
+        var body = await BodyReader.ReadAsync(request, MaxDecideBytes, "Liste des propositions", ct);
+        if (body.Error is not null) return body.Error;
+        DecideRequest? req;
+        try
+        {
+            req = JsonSerializer.Deserialize<DecideRequest>(body.Text!, ServerStore.Json);
+        }
+        catch (JsonException ex)
+        {
+            return BadRequest($"Demande illisible : {ex.Message}");
+        }
+        if (req?.Candidates is not { } list) return BadRequest("« candidates » manquant (liste des propositions du poste).");
+        if (list.Count > RolloutService.MaxDecisionCandidates) return BadRequest($"{RolloutService.MaxDecisionCandidates} propositions au plus par demande.");
+        var headers = request.Headers;
+        var machineId = headers[Jobs.JobEndpoints.MachineIdHeader].ToString() is { Length: > 0 } h ? h : req.MachineId;
+        var machine = headers["X-SpokaPilote-Machine"].ToString() is { Length: > 0 } n ? n : req.Machine;
+        var batch = rollout.Decide(machineId, machine, list.Select(c => new CandidateQuery(c?.Source, c?.Title, c?.Version, c?.Kind)).ToList());
+
+        var root = batch.Section;
+        root["decisions"] = new JsonArray(batch.Decisions.Select(d =>
+        {
+            var o = new JsonObject { ["status"] = d.Status };
+            if (d.AvailableAt is { } at) o["availableAt"] = at.ToUniversalTime().ToString("O");
+            if (d.Reason is not null) o["reason"] = d.Reason;
+            if (d.Rule is not null) o["rule"] = d.Rule;
+            return (JsonNode)o;
+        }).ToArray());
+        if (batch.Target.Ring is { } ring) request.HttpContext.Response.Headers["X-SpokaPilote-Ring"] = Uri.EscapeDataString(ring.Name);
+        else if (batch.Target.Conservative) request.HttpContext.Response.Headers["X-SpokaPilote-Ring"] = "conservative";
+        var utf8 = Encoding.UTF8.GetBytes(root.ToJsonString());
+        if (utf8.Length > 1024 && headers.AcceptEncoding.ToString().Contains("gzip", StringComparison.OrdinalIgnoreCase))
+        {
+            using var output = new MemoryStream(utf8.Length / 4 + 64);
+            using (var gzip = new GZipStream(output, CompressionLevel.Fastest, leaveOpen: true)) gzip.Write(utf8);
+            request.HttpContext.Response.Headers.ContentEncoding = "gzip";
+            request.HttpContext.Response.Headers.Vary = "Accept-Encoding";
+            return Results.Bytes(output.ToArray(), "application/json; charset=utf-8");
+        }
+        return Results.Bytes(utf8, "application/json; charset=utf-8");
+    }
+
+    /// <summary>Taille et forme d'une politique servie (aperçu).</summary>
+    private static object Summary(ServedPolicy p, RolloutLimits limits) => new
+    {
+        bytes = p.Utf8?.Length ?? 0,
+        gzipBytes = p.Gzip?.Length ?? p.Utf8?.Length ?? 0,
+        rules = p.Rules.Rules.Count,
+        form = p.Rules.Form,
+        sourceHolds = p.Rules.SourceHolds,
+        heldVersions = p.Rules.HeldVersions,
+        datedHolds = p.Rules.Holds,
+        undatedHolds = p.Rules.UndatedHolds,
+        families = p.Rules.Families,
+        omittedFamilies = p.Rules.OmittedFamilies,
+        suspensions = p.Rules.Suspensions,
+        maxRules = limits.MaxRules,
+        maxBytes = limits.MaxBytes,
+    };
+
+    /// <summary>Corps de POST /api/rollout/decide.</summary>
+    public sealed class DecideRequest
+    {
+        /// <summary>Identité (si les en-têtes X-SpokaPilote-Machine-Id / X-SpokaPilote-Machine ne sont pas envoyés).</summary>
+        public string? MachineId { get; set; }
+        public string? Machine { get; set; }
+        public List<DecideCandidate?>? Candidates { get; set; }
+    }
+
+    /// <summary>Proposition : source (nom de source du poste : WindowsUpdate, Dell...), titre, version, type (MissingDriver, Update, Optional, Firmware).</summary>
+    public sealed class DecideCandidate
+    {
+        public string? Source { get; set; }
+        public string? Title { get; set; }
+        public string? Version { get; set; }
+        public string? Kind { get; set; }
     }
 
     // ------------------------------------------------------------------ utilitaires

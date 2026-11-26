@@ -54,6 +54,9 @@ services:
       SPOKAPILOTE_CACHE_CATALOG_HOURS: ${SPOKAPILOTE_CACHE_CATALOG_HOURS:-}
       SPOKAPILOTE_CACHE_FILE_DAYS: ${SPOKAPILOTE_CACHE_FILE_DAYS:-}
       SPOKAPILOTE_CACHE_MAX_DOWNLOADS: ${SPOKAPILOTE_CACHE_MAX_DOWNLOADS:-}
+      # Diffusion par anneaux (4.0) : plafond de la politique servie aux postes 3.x (règles, Ko ; défaut 2000 et 1024).
+      SPOKAPILOTE_ROLLOUT_MAX_RULES: ${SPOKAPILOTE_ROLLOUT_MAX_RULES:-}
+      SPOKAPILOTE_ROLLOUT_MAX_KB: ${SPOKAPILOTE_ROLLOUT_MAX_KB:-}
       # Proxy sortant de la console vers les sources officielles (si le serveur n'a pas d'accès direct à Internet).
       HTTPS_PROXY: ${SPOKAPILOTE_HTTPS_PROXY:-}
       NO_PROXY: ${SPOKAPILOTE_NO_PROXY:-}

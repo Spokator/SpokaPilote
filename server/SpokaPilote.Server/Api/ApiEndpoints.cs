@@ -25,8 +25,9 @@ public static class ApiEndpoints
     /// cache de pilotes et de catalogues (4.0, état réel : GET /api/cache/status).
     /// </summary>
     /// « rollout » (4.0) : diffusion par anneaux (politique effective par poste, section « rollout » sur demande) ;
+    /// « rollout-decisions » (4.0) : décisions de diffusion proposition par proposition (POST /api/rollout/decide) ;
     /// « driver-cache » (4.0) : cache de pilotes et de catalogues sur le réseau local.
-    public static readonly string[] Capabilities = ["gzip-reports", "retry-after", "machines-paging", "metrics", "backup", "rollout", Cache.DriverCacheEndpoints.Capability];
+    public static readonly string[] Capabilities = ["gzip-reports", "retry-after", "machines-paging", "metrics", "backup", "rollout", "rollout-decisions", Cache.DriverCacheEndpoints.Capability];
 
     public static void MapSpokaPiloteApi(this WebApplication app)
     {
@@ -280,14 +281,16 @@ public static class ApiEndpoints
 
     /// <summary>
     /// Politique effective d'un poste : identité facultative (en-têtes X-SpokaPilote-Machine-Id et X-SpokaPilote-Machine,
-    /// postes 4.0) ; section « rollout » seulement si le poste la demande (X-SpokaPilote-Rollout: 1). Réponse compressée si
+    /// postes 4.0) ; section « rollout » seulement si le poste la demande (X-SpokaPilote-Rollout: 1) ; retenues remplacées
+    /// par des décisions proposition par proposition si le poste les demande (X-SpokaPilote-Rollout-Decisions: 1, puis
+    /// POST /api/rollout/decide). Document borné (RolloutLimits) quelle que soit la taille du parc. Réponse compressée si
     /// le poste l'accepte (tous les postes SpokaPilote l'acceptent). 204 si rien à servir (comme en 3.x).
     /// </summary>
     private static IResult? ServeEffectivePolicy(HttpContext http, RolloutService rollout)
     {
         var headers = http.Request.Headers;
         var served = rollout.Serve(headers["X-SpokaPilote-Machine-Id"].ToString(), headers["X-SpokaPilote-Machine"].ToString(),
-            headers[RolloutService.RolloutHeader].ToString().Trim() == "1");
+            headers[RolloutService.RolloutHeader].ToString().Trim() == "1", headers[RolloutService.DecisionsHeader].ToString().Trim() == "1");
         if (served.Passthrough) return null; // rien d'ajouté : document enregistré servi tel quel (en-tête Last-Modified compris)
         if (served.Utf8 is null) return Results.NoContent();
         if (served.Target.Ring is { } ring) http.Response.Headers["X-SpokaPilote-Ring"] = Uri.EscapeDataString(ring.Name);

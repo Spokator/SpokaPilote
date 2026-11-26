@@ -56,6 +56,13 @@ public sealed class ServerOptions
     public int CacheMaxDownloads { get; init; } = 8;
     public string CacheDirectory => CacheDirectoryOverride ?? Path.Combine(DataDirectory, "cache");
 
+    // ------------------------------------------------------------------ diffusion par anneaux (4.0)
+
+    /// <summary>Règles de diffusion au plus dans la politique d'un poste 3.x (ou 4.0 sans décisions) : au-delà, forme compacte.</summary>
+    public int RolloutMaxRules { get; init; } = 2000;
+    /// <summary>Taille maximale de cette politique, en Ko (les postes refusent une politique de plus de 2 Mo).</summary>
+    public int RolloutMaxKb { get; init; } = 1024;
+
     public string DatabasePath => Path.Combine(DataDirectory, "spokapilote.db");
     public string BackupDirectory => Path.Combine(DataDirectory, "backups");
 
@@ -87,6 +94,8 @@ public sealed class ServerOptions
             BackupTime = string.IsNullOrWhiteSpace(config["SPOKAPILOTE_BACKUP_TIME"]) ? null : config["SPOKAPILOTE_BACKUP_TIME"]!.Trim(),
             CacheDirectoryOverride = string.IsNullOrWhiteSpace(config["SPOKAPILOTE_CACHE_DIR"]) ? null : Path.GetFullPath(config["SPOKAPILOTE_CACHE_DIR"]!.Trim()),
             CacheMaxDownloads = Int(config, "SPOKAPILOTE_CACHE_MAX_DOWNLOADS", 8, 1, 256),
+            RolloutMaxRules = Int(config, "SPOKAPILOTE_ROLLOUT_MAX_RULES", 2000, 50, 20_000),
+            RolloutMaxKb = Int(config, "SPOKAPILOTE_ROLLOUT_MAX_KB", 1024, 64, 1900),
         };
     }
 }
