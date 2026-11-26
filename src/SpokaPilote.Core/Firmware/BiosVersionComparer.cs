@@ -54,9 +54,17 @@ public static partial class BiosVersionComparer
     [GeneratedRegex(@"^(?<l>[A-Z])\.?(?<n>\d{1,3})$", RegexOptions.IgnoreCase)]
     private static partial Regex LetterRx();
 
-    /// <summary>Identifiant de build Lenovo : 4 caractères de famille + « T » + 2 chiffres + 1 lettre (N2XET39W, M3AKT56A).</summary>
-    [GeneratedRegex(@"^(?<f>[A-Z0-9]{4}T)(?<n>\d{2})[A-Z]$", RegexOptions.IgnoreCase)]
+    /// <summary>
+    /// Identifiant de build Lenovo : 4 caractères de famille + « T » + 2 caractères de build + 1 lettre (N2XET39W,
+    /// M3AKT56A). Après 99, Lenovo continue en A0, A1... (N32ETA2W) ; dans les descripteurs, le niveau est un motif
+    /// (« N32ETA2* », lettre finale absente).
+    /// </summary>
+    [GeneratedRegex(@"^(?<f>[A-Z0-9]{4}T)(?<n>[A-Z0-9]{2})[A-Z]?$", RegexOptions.IgnoreCase)]
     private static partial Regex LenovoBuildRx();
+
+    /// <summary>Rang d'un build Lenovo : chiffres avant lettres (… 98, 99, A0, A1 …), soit une lecture en base 36.</summary>
+    private static int LenovoBuildRank(string build) =>
+        build.ToUpperInvariant().Aggregate(0, (acc, c) => acc * 36 + (char.IsDigit(c) ? c - '0' : c - 'A' + 10));
 
     /// <summary>SMBIOS Lenovo : « N2XET39W (1.29 ) ».</summary>
     [GeneratedRegex(@"^(?<b>[A-Z0-9]{8})\s*\(\s*(?<v>\d+\.\d+)\s*\)$", RegexOptions.IgnoreCase)]
@@ -84,9 +92,9 @@ public static partial class BiosVersionComparer
     private static BiosVersionKey? ParseLenovoBuild(string? value)
     {
         if (string.IsNullOrWhiteSpace(value)) return null;
-        var m = LenovoBuildRx().Match(value.Trim().TrimEnd('^').Trim());
+        var m = LenovoBuildRx().Match(value.Trim().TrimEnd('^', '*').Trim());
         return m.Success
-            ? new BiosVersionKey(BiosVersionKey.LenovoBuild, m.Groups["f"].Value.ToUpperInvariant(), new[] { int.Parse(m.Groups["n"].Value, CultureInfo.InvariantCulture) })
+            ? new BiosVersionKey(BiosVersionKey.LenovoBuild, m.Groups["f"].Value.ToUpperInvariant(), new[] { LenovoBuildRank(m.Groups["n"].Value) })
             : null;
     }
 

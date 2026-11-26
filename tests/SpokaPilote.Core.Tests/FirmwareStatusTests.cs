@@ -71,6 +71,11 @@ public class FirmwareStatusTests
     [InlineData(OemVendor.Lenovo, "N2XET39W (1.29 )", "1.67", "N35ET67W", null, null)] // autre famille de BIOS
     [InlineData(OemVendor.Lenovo, "N2XET39W (1.29 )", "0131", null, null, null)] // format inconnu : pas de devinette
     [InlineData(OemVendor.Lenovo, "M3AKT56A", "M3AKT59A", null, null, 1)] // ThinkCentre
+    // Descripteurs réels : niveau en motif (« N32ETA2* ») et builds au-delà de 99 (… 99, A0, A1, A2).
+    [InlineData(OemVendor.Lenovo, "N32ET99W (1.69 )", "1.78", "N32ETA2*", null, 1)]
+    [InlineData(OemVendor.Lenovo, "N32ETA1W (1.77 )", "1.78", "N32ETA2*", null, 1)]
+    [InlineData(OemVendor.Lenovo, "N32ETA2W (1.78 )", "1.78", "N32ETA2*", null, 0)]
+    [InlineData(OemVendor.Lenovo, "N32ETA3W (1.79 )", "1.78", "N32ETA2*", null, -1)]
     [InlineData(OemVendor.Dell, null, "1.18.0", null, null, null)]
     public void Bios_versions_are_compared_per_vendor_scheme(OemVendor vendor, string? installed, string catalog, string? build, string? title, int? expected)
     {
@@ -298,6 +303,49 @@ public class FirmwareStatusTests
         var results = new List<DriverCandidate> { LenovoSource.ParseDescriptor(LenovoBiosDescriptor, uri, "BIOS/UEFI", context)! };
         Assert.Equal(BiosState.UpToDate, BiosEvaluator.Finish(context, OemVendor.Lenovo, results).State);
         Assert.Empty(results);
+    }
+
+    /// <summary>
+    /// Structure d'un descripteur BIOS Lenovo réel (download.lenovo.com, 2026) : les _Bios de Dependencies listent les
+    /// BIOS prérequis, seul DetectInstall désigne le BIOS livré.
+    /// </summary>
+    private const string LenovoRealBiosDescriptor = """
+        <?xml version="1.0" encoding="utf-8"?>
+        <Package name="BIOS_N32UJ" id="n32uj36w" version="1.78" hide="False">
+          <Title default="EN"><Desc id="EN">BIOS Update Utility - 10/11</Desc></Title>
+          <Severity type="2" />
+          <Vendor>Lenovo</Vendor>
+          <ReleaseDate>2026-08-20</ReleaseDate>
+          <Reboot type="5" />
+          <PackageType type="3" />
+          <Install rc="0,1" type="cmd" default="EN"><Cmdline id="EN">%PACKAGEPATH%\winuptp.exe -s -f</Cmdline></Install>
+          <DetectInstall><_Bios><Level>N32ETA2*</Level></_Bios></DetectInstall>
+          <Dependencies><And>
+            <_Bios>
+              <Level>N32ET39*</Level><Level>N32ET4*</Level><Level>N32ET9*</Level>
+              <Level>N32ETA0*</Level><Level>N32ETA1*</Level>
+            </_Bios>
+          </And></Dependencies>
+          <Files>
+            <Installer><File><Name>n32uj36w.exe</Name><CRC>37197AFCD9BF947A3C30E90FD1B3F5D16F66FD163015CDF71436C8FE11F3ACE5</CRC><Size>13398384</Size></File></Installer>
+            <Readme default="EN"><File id="EN"><Name>n32uj36w.html</Name></File></Readme>
+          </Files>
+        </Package>
+        """;
+
+    [Theory]
+    [InlineData("N32ET39W (1.21 )", BiosState.Outdated)]
+    [InlineData("N32ETA1W (1.77 )", BiosState.Outdated)] // prérequis listé dans Dependencies : pas « à jour » pour autant
+    [InlineData("N32ETA2W (1.78 )", BiosState.UpToDate)]
+    public void Lenovo_real_descriptor_compares_with_the_shipped_bios_not_the_prerequisites(string installed, BiosState expected)
+    {
+        var uri = new Uri("https://download.lenovo.com/pccbbs/mobiles/n32uj36w_2_.xml");
+        var context = Context("LENOVO", installed);
+        LenovoSource.ParseDescriptor(LenovoRealBiosDescriptor, uri, "BIOS UEFI", context);
+        var bios = BiosEvaluator.Finish(context, OemVendor.Lenovo, new List<DriverCandidate>());
+        Assert.Equal(expected, bios.State);
+        Assert.Equal("1.78", bios.LatestVersion);
+        Assert.Equal(VendorImportance.Recommended, bios.Importance);
     }
 
     // ------------------------------------------------------------------ santé

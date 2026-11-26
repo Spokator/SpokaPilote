@@ -177,11 +177,14 @@ public sealed class LenovoSource : IDriverSource
         var title = EnglishTitle(pkg) ?? pkg.Attribute("name")?.Value ?? fileName;
         var severity = pkg.Element("Severity")?.Attribute("type")?.Value;
         var date = DateTime.TryParse(pkg.Element("ReleaseDate")?.Value, CultureInfo.InvariantCulture, DateTimeStyles.None, out var d) ? d : (DateTime?)null;
-        var levels = pkg.Descendants("_Bios").Elements("Level").Select(l => l.Value.Trim().TrimEnd('^').Trim()).Where(l => l.Length > 0).ToList();
-        var isBios = packageType == "3" && (levels.Count > 0 || title.Contains("BIOS", StringComparison.OrdinalIgnoreCase));
+        // Seul DetectInstall/_Bios/Level désigne le BIOS livré par le paquet (« N32ETA2* ») ; les _Bios de Dependencies
+        // listent les BIOS *prérequis* (« N32ET39* », « N32ETA1* »…) : les lire comme version livrée fausserait la comparaison.
+        var levels = (pkg.Element("DetectInstall")?.Descendants("_Bios").Elements("Level") ?? Enumerable.Empty<XElement>())
+            .Select(l => l.Value.Trim()).Where(l => l.Length > 0).ToList();
+        var isBios = packageType == "3" &&
+                     (levels.Count > 0 || pkg.Descendants("_Bios").Any() || title.Contains("BIOS", StringComparison.OrdinalIgnoreCase));
         if (isBios)
         {
-            if (pkg.Attribute("name")?.Value is { Length: > 0 } name) levels.Add(name.Trim());
             context.BiosEntries.Add(new BiosCatalogEntry
             {
                 Title = title,
