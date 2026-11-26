@@ -1,0 +1,66 @@
+name: Bug
+description: SpokaPilote ne fait pas ce qu'il devrait (erreur, plantage, mauvais pilote proposé…)
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Merci de prendre le temps de signaler ce problème. Une faille de sécurité ne se signale **pas** ici :
+        utilisez le [signalement privé](https://github.com/Spokator/SpokaPilote/security/advisories/new).
+  - type: input
+    id: version
+    attributes:
+      label: Version de SpokaPilote
+      description: "Commande `spokapilote version`, ou Paramètres dans l'application."
+      placeholder: "2.0.1"
+    validations:
+      required: true
+  - type: dropdown
+    id: composant
+    attributes:
+      label: Où se produit le problème ?
+      options:
+        - Application (interface)
+        - Ligne de commande (spokapilote)
+        - Installation / mise à jour de SpokaPilote
+        - Maintenance planifiée
+        - Console centrale (serveur)
+        - Autre
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows et architecture
+      description: "Exemple : Windows 11 Professionnel 25H2, x64 (ou ARM64)."
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: Ce qui se passe
+      description: Décrivez le problème et les étapes pour le reproduire. Copiez le message d'erreur exact.
+      placeholder: |
+        1. Analyser ce poste
+        2. Onglet Pilotes, cocher…
+        3. Message : …
+    validations:
+      required: true
+  - type: textarea
+    id: attendu
+    attributes:
+      label: Ce qui était attendu
+  - type: textarea
+    id: rapport
+    attributes:
+      label: Rapport JSON du poste
+      description: |
+        Dans une console : `spokapilote scan --json rapport.json`, puis glissez le fichier **rapport.json** ici.
+        Il contient l'inventaire matériel et le nom du poste (vous pouvez remplacer ce nom avant de l'envoyer).
+  - type: textarea
+    id: journal
+    attributes:
+      label: Journal (facultatif)
+      description: "Extrait du journal du jour, dossier `%ProgramData%\\SpokaPilote\\Logs` (bouton « Ouvrir le dossier des journaux »)."
+      render: text
