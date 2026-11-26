@@ -26,7 +26,24 @@ public sealed class LoadedPolicy
 
     public string Summary => Organization is null
         ? $"aucune politique d'organisation · liste de référence : {ReferenceRuleCount} règle(s)"
-        : $"{Organization.DisplayName} ({Organization.Rules.Count} règle(s){(FromCache ? ", depuis le cache" : "")}) · liste de référence : {ReferenceRuleCount} règle(s)";
+        : $"{Organization.DisplayName} ({Organization.Rules.Count(r => !r.IsRollout)} règle(s){(FromCache ? ", depuis le cache" : "")}) · liste de référence : {ReferenceRuleCount} règle(s)" +
+          RolloutSummary;
+
+    /// <summary>« · diffusion par anneaux : anneau « Général », 3 retenue(s) » (console 4.0), vide sinon.</summary>
+    public string RolloutSummary
+    {
+        get
+        {
+            if (Organization?.Rollout is not { } r) return "";
+            var holds = Organization.Rules.Count(x => x.IsRollout && x.Id!.StartsWith(PolicyRollout.HoldPrefix, StringComparison.Ordinal));
+            var suspended = Organization.Rules.Count(x => x.IsRollout && x.Id!.StartsWith(PolicyRollout.SuspendedPrefix, StringComparison.Ordinal));
+            var parts = new List<string>();
+            if (r.Enabled) parts.Add($"anneau {r.RingLabel}");
+            if (holds > 0) parts.Add($"{holds} version(s) retenue(s)");
+            if (suspended > 0) parts.Add($"{suspended} suspendue(s)");
+            return parts.Count == 0 ? "" : $" · diffusion par anneaux : {string.Join(", ", parts)}";
+        }
+    }
 
     public int ReferenceRuleCount => Organization?.Settings.UseReferenceBlocklist == false ? 0 : Reference?.Rules.Count ?? 0;
 }
@@ -65,6 +82,14 @@ public sealed class PolicyLoader
     public TimeSpan Timeout { get; init; } = TimeSpan.FromSeconds(15);
     public string CacheFile { get; init; } = AppPaths.PolicyCache;
     public string ReferenceCacheFile { get; init; } = Path.Combine(AppPaths.Cache, "known-bad-drivers.json");
+
+    /// <summary>En-tête par lequel un poste 4.0 demande la section « rollout » de sa politique (diffusion par anneaux).</summary>
+    public const string RolloutHeader = "X-SpokaPilote-Rollout";
+
+    /// <summary>Identité envoyée à la console avec la demande de politique (identifiant machine, nom) ; par défaut, celle du poste.</summary>
+    public Func<(string? MachineId, string Name)>? Identity { get; init; }
+
+    private static (string? MachineId, string Name) DefaultIdentity() => (Inventory.SystemInfoProvider.ReadMachineId(), Environment.MachineName);
 
     /// <summary>Source effective de la politique de l'organisation (null = aucune).</summary>
     public string? ResolveSource()
@@ -163,7 +188,15 @@ public sealed class PolicyLoader
             using var request = new HttpRequestMessage(HttpMethod.Get, uri);
             request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
             if (ShouldSendToken(uri))
+            {
                 request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _settings.ServerToken);
+                // Console 4.0 : le poste s'identifie pour recevoir la politique de SON anneau de déploiement, et demande la
+                // section « rollout » (anneau, dates de disponibilité). Une console plus ancienne ignore ces en-têtes.
+                var (machineId, machineName) = (Identity ?? DefaultIdentity)();
+                if (machineId is not null) request.Headers.TryAddWithoutValidation(Online.ServerClient.MachineIdHeader, machineId);
+                request.Headers.TryAddWithoutValidation(Online.ServerClient.MachineNameHeader, machineName);
+                request.Headers.TryAddWithoutValidation(RolloutHeader, "1");
+            }
 
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             cts.CancelAfter(Timeout);

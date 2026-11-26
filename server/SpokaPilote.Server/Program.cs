@@ -31,6 +31,8 @@ builder.Services.AddSpokaPiloteAlerts();
 // Grands parcs (3.2) : contrôle d'admission des postes (503 + Retry-After en cas d'afflux), mesures de l'API,
 // sauvegardes à chaud et entretien de la base en arrière-plan (compression de l'historique hérité, rétention, ANALYZE).
 builder.Services.AddSingleton<AdmissionControl>();
+// Diffusion par anneaux et suspension automatique (4.0) : politiques effectives par anneau, disjoncteur.
+builder.Services.AddSingleton<SpokaPilote.Server.Rollout.RolloutService>();
 builder.Services.AddSingleton<RequestMetrics>();
 builder.Services.AddSingleton<BackupService>();
 builder.Services.AddSingleton<StorageMaintenance>();

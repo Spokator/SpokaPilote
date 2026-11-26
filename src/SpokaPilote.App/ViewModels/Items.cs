@@ -17,7 +17,14 @@ public sealed class CandidateItem : ObservableObject
         // Sélection par défaut : pilotes manquants et mises à jour ciblées ; optionnels et firmware à cocher manuellement.
         // Un pilote bloqué par la politique n'est jamais sélectionnable.
         _isSelected = candidate.BlockedReason is null && !candidate.IsInformational && candidate.Kind is CandidateKind.MissingDriver or CandidateKind.Update;
-        if (candidate.BlockedReason is not null)
+        if (candidate.HeldByRollout)
+        {
+            // Retenu par la diffusion par anneaux de la console : affiché comme un pilote bloqué (non sélectionnable), avec la
+            // date de disponibilité pour l'anneau du poste, à l'heure locale.
+            _status = Loc.T("⏳ Retenu (diffusion par anneaux)");
+            _statusDetail = HoldText(candidate);
+        }
+        else if (candidate.BlockedReason is not null)
         {
             _status = Loc.T("⛔ Bloqué par la politique");
             _statusDetail = candidate.BlockedReason;
@@ -46,7 +53,13 @@ public sealed class CandidateItem : ObservableObject
     public string Size => Candidate.SizeLabel;
     public string Devices => Candidate.TargetDeviceNames.Count == 0 ? "—" : string.Join(", ", Candidate.TargetDeviceNames.Distinct());
     /// <summary>Seconde ligne de la liste : le motif de blocage, sinon les périphériques concernés.</summary>
-    public string Subtitle => Candidate.BlockedReason ?? (Candidate.TargetDeviceNames.Count == 0 ? "" : Loc.F("Pour : {0}", Devices));
+    public string Subtitle => Candidate.HeldByRollout ? HoldText(Candidate)
+        : Candidate.BlockedReason ?? (Candidate.TargetDeviceNames.Count == 0 ? "" : Loc.F("Pour : {0}", Devices));
+
+    /// <summary>Motif d'une retenue de la diffusion par anneaux (traduit quand la date et l'anneau sont connus).</summary>
+    private static string HoldText(DriverCandidate c) => c.RolloutAvailableAt is { } at && c.RolloutRing is { } ring
+        ? Loc.F("Disponible pour votre anneau « {0} » le {1}", ring, at.ToLocalTime().ToString("g", System.Globalization.CultureInfo.CurrentCulture))
+        : c.BlockedReason ?? "";
     public bool IsMissing => Candidate.Kind == CandidateKind.MissingDriver;
     public bool IsFirmware => Candidate.Kind == CandidateKind.Firmware;
 

@@ -90,6 +90,12 @@ public sealed class DriverCandidate
 
     /// <summary>Motif de blocage par la politique de pilotes (null = autorisé). Un candidat bloqué n'est jamais installé.</summary>
     public string? BlockedReason { get; set; }
+    /// <summary>Retenu par la diffusion par anneaux de la console (anneau pas encore autorisé, ou version suspendue) : jamais installé.</summary>
+    public bool HeldByRollout { get; set; }
+    /// <summary>Date à laquelle la version sera disponible pour l'anneau du poste (retenue datée), sinon null.</summary>
+    public DateTimeOffset? RolloutAvailableAt { get; set; }
+    /// <summary>Anneau du poste (null : non identifié par la console, ou sans anneau).</summary>
+    public string? RolloutRing { get; set; }
 
     public string KindLabel => Kind switch
     {

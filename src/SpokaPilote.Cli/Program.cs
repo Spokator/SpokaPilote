@@ -220,6 +220,11 @@ internal static partial class Program
                         if (c.IsInformational && c.InfoUrl is not null)
                             WriteLine($"        → à télécharger manuellement : {c.InfoUrl}", ConsoleColor.DarkGray);
                     }
+                    else if (c.HeldByRollout)
+                    {
+                        WriteLine($"    ⏳ {c.Title} {c.Version} [{c.SourceLabel}]{devices}", ConsoleColor.DarkGray);
+                        WriteLine($"       retenu par la diffusion par anneaux : {c.BlockedReason}", ConsoleColor.DarkYellow);
+                    }
                     else
                     {
                         WriteLine($"    ⛔ {c.Title} {c.Version} [{c.SourceLabel}]{devices}", ConsoleColor.DarkGray);
@@ -227,8 +232,10 @@ internal static partial class Program
                     }
                 }
             }
-            var blocked = scan.Candidates.Count(c => c.BlockedReason is not null);
+            var held = scan.Candidates.Count(c => c.HeldByRollout);
+            var blocked = scan.Candidates.Count(c => c.BlockedReason is not null) - held;
             if (blocked > 0) WriteLine($"  {blocked} pilote(s) bloqué(s) par la politique : jamais installé(s).", ConsoleColor.DarkYellow);
+            if (held > 0) WriteLine($"  {held} pilote(s) retenu(s) par la diffusion par anneaux : installé(s) quand l'anneau du poste y aura droit.", ConsoleColor.DarkYellow);
         }
         var hidden = scan.PolicyDecisions.Count(d => d.Decision.Verdict == Core.Policy.PolicyVerdict.Hidden);
         if (hidden > 0) WriteLine($"  {hidden} autre(s) pilote(s) masqué(s) par la politique (détail : spokapilote policy test).", ConsoleColor.DarkGray);

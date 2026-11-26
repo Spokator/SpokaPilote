@@ -39,6 +39,11 @@ public sealed class DriverPolicy
     public string? Comment { get; set; }
     public PolicySettings Settings { get; set; } = new();
     public List<PolicyRule> Rules { get; set; } = new();
+    /// <summary>
+    /// Diffusion par anneaux (console 4.0) : anneau du poste et dates de disponibilité. Absente des fichiers écrits par
+    /// l'IT ; ajoutée par la console aux postes qui la demandent (voir <see cref="PolicyRollout"/>).
+    /// </summary>
+    public PolicyRollout? Rollout { get; set; }
 
     [JsonIgnore] public PolicyLayer Layer { get; private set; } = PolicyLayer.Organization;
     [JsonIgnore] public bool IsEmpty => Rules.Count == 0 && Settings.IsDefault;
@@ -145,6 +150,9 @@ public sealed class DriverPolicy
             }
             rule.Number = i + 1;
             rule.Layer = Layer;
+            // Règles de la diffusion par anneaux : uniquement dans une politique servie par la console (section « rollout »).
+            rule.IsRollout = Rollout is not null && Layer == PolicyLayer.Organization &&
+                             rule.Id?.StartsWith(PolicyRollout.RulePrefix, StringComparison.Ordinal) == true;
             rule.Compile(v);
             if (rule.Id is { Length: > 0 } id)
             {
@@ -228,6 +236,7 @@ public sealed class DriverPolicy
             Description = organization?.Description,
             Settings = settings,
             Rules = rules,
+            Rollout = organization?.Rollout,
             Layer = organization?.Layer ?? PolicyLayer.Organization,
             _validated = true,
             _allowedSources = settings.ParsedSources,
@@ -263,13 +272,25 @@ public sealed class DriverPolicy
         if (!AllowsSource(candidate.Source))
             return PolicyDecision.Block($"Source « {candidate.SourceLabel} » non autorisée par la politique (allowedSources)", setting: "allowedSources");
 
+        // Diffusion par anneaux : une version d'une famille de pilotes que la console n'a encore jamais vue (aucune règle de
+        // famille ne la couvre) est retenue dans les anneaux à délai, jusqu'à ce qu'un rapport la signale à la console. Une
+        // règle « allow » de l'organisation ne lève pas cette retenue ; un blocage de l'organisation reste affiché comme tel.
+        var unknownHold = Rollout is { HoldUnknown: true } rollout && rollout.AppliesTo(candidate) && !candidate.IsInformational &&
+                          DriverVersion.Parse(candidate.Version) is not null &&
+                          !Rules.Any(r => r.IsRolloutFamily && !r.IsExpired(at) && r.Matches(candidate, targets))
+            ? PolicyDecision.Block(rollout.UnknownReason(candidate, at), setting: "rollout")
+            : null;
+
         foreach (var rule in Rules)
         {
             if (rule.IsExpired(at) || !rule.Matches(candidate, targets)) continue;
             switch (rule.ParsedAction)
             {
                 case PolicyAction.Allow:
-                    return PolicyDecision.Allow(rule);
+                    return unknownHold ?? PolicyDecision.Allow(rule);
+                case PolicyAction.Block when rule.IsRollout && Rollout?.AvailableAt(rule.Id) is { } available:
+                    // Retenue datée : motif recalculé à l'heure locale du poste.
+                    return PolicyDecision.Block(Rollout.AvailableReason(candidate, available), rule, availableAt: available);
                 case PolicyAction.Block:
                     return PolicyDecision.Block(rule.Reason ?? "Pilote bloqué par la politique", rule);
                 case PolicyAction.Pin:
@@ -281,6 +302,7 @@ public sealed class DriverPolicy
                     break; // version conforme : les règles suivantes peuvent encore s'appliquer
             }
         }
+        if (unknownHold is not null) return unknownHold;
 
         var s = Settings;
         if (!s.AllowFirmware && candidate.Kind == CandidateKind.Firmware)
@@ -311,7 +333,16 @@ public sealed class DriverPolicy
         {
             var decision = Evaluate(c, devices, now);
             decisions.Add(new CandidateDecision(c, decision));
-            if (decision.IsBlocked) c.BlockedReason ??= decision.Reason;
+            if (decision.IsBlocked && c.BlockedReason is null)
+            {
+                c.BlockedReason = decision.Reason;
+                if (decision.IsRolloutHold)
+                {
+                    c.HeldByRollout = true;
+                    c.RolloutAvailableAt = decision.AvailableAt;
+                    c.RolloutRing = Rollout?.Ring;
+                }
+            }
             if (decision.Verdict == PolicyVerdict.Hidden) candidates.Remove(c);
 
             // Alternatives (autres paquets de la même source essayés en repli) : une version bloquée n'est jamais tentée.
@@ -464,6 +495,10 @@ public sealed class PolicyRule
     [JsonIgnore] public PolicyLayer Layer { get; internal set; }
     [JsonIgnore] public PolicyAction ParsedAction { get; private set; }
     [JsonIgnore] public DateTime? ExpiresAt { get; private set; }
+    /// <summary>Règle ajoutée par la diffusion par anneaux de la console (identifiant « anneau-… », politique avec section « rollout »).</summary>
+    [JsonIgnore] public bool IsRollout { get; internal set; }
+    /// <summary>Règle de famille de la diffusion par anneaux (« pin » à la dernière version autorisée pour l'anneau).</summary>
+    [JsonIgnore] public bool IsRolloutFamily => IsRollout && Id!.StartsWith(PolicyRollout.FamilyPrefix, StringComparison.Ordinal);
 
     private Regex[]? _hw, _title, _manufacturer, _category, _device;
     private HashSet<DriverSourceKind>? _sources;
@@ -472,7 +507,8 @@ public sealed class PolicyRule
     private List<Version>? _exact;
 
     [JsonIgnore] public string Label => Id is { Length: > 0 } ? $"« {Id} »" : $"n°{Number}";
-    [JsonIgnore] public string DisplayRef => Layer == PolicyLayer.Reference ? $"liste de référence SpokaPilote, règle {Label}" : $"règle {Label}";
+    [JsonIgnore] public string DisplayRef => Layer == PolicyLayer.Reference ? $"liste de référence SpokaPilote, règle {Label}"
+        : IsRollout ? "diffusion par anneaux de la console" : $"règle {Label}";
     [JsonIgnore] public string ActionLabel => ParsedAction switch { PolicyAction.Allow => "allow", PolicyAction.Pin => "pin", _ => "block" };
 
     public bool IsExpired(DateTime now) => ExpiresAt is { } e && now > e;
@@ -673,19 +709,22 @@ public sealed class PolicyRule
     }
 }
 
-public sealed record PolicyDecision(PolicyVerdict Verdict, string? Reason, PolicyRule? Rule = null, string? Setting = null)
+/// <param name="AvailableAt">Retenue de la diffusion par anneaux : date à laquelle la version sera disponible pour l'anneau du poste.</param>
+public sealed record PolicyDecision(PolicyVerdict Verdict, string? Reason, PolicyRule? Rule = null, string? Setting = null, DateTimeOffset? AvailableAt = null)
 {
     public static readonly PolicyDecision Default = new(PolicyVerdict.Allowed, null);
 
     public bool IsBlocked => Verdict != PolicyVerdict.Allowed;
+    /// <summary>Retenue (ou suspension) de la diffusion par anneaux de la console, plutôt qu'un blocage de la politique de l'organisation.</summary>
+    public bool IsRolloutHold => IsBlocked && (Setting == "rollout" || Rule?.IsRollout == true);
     public bool IsExplicitAllow => Verdict == PolicyVerdict.Allowed && Rule is not null;
 
     internal static PolicyDecision Allow(PolicyRule rule) =>
         new(PolicyVerdict.Allowed, $"Autorisé explicitement ({rule.DisplayRef}){(rule.Reason is null ? "" : " : " + rule.Reason)}", rule);
 
-    internal static PolicyDecision Block(string reason, PolicyRule? rule = null, string? setting = null) =>
+    internal static PolicyDecision Block(string reason, PolicyRule? rule = null, string? setting = null, DateTimeOffset? availableAt = null) =>
         new(rule?.Hide == true ? PolicyVerdict.Hidden : PolicyVerdict.Blocked,
-            rule is null ? reason : $"{reason} ({rule.DisplayRef})", rule, setting);
+            rule is null || rule.IsRollout ? reason : $"{reason} ({rule.DisplayRef})", rule, setting, availableAt);
 
     /// <summary>Texte pour l'affichage (« policy test »).</summary>
     public string Describe() => Verdict switch

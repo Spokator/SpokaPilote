@@ -500,6 +500,7 @@
     { re: /^\/groupes$/, nav: 'groups', page: groupsPage },
     { re: /^\/groupes\/(\d+)$/, nav: 'groups', page: groupPage },
     { re: /^\/planifications$/, nav: 'schedules', page: schedulesPage },
+    { re: /^\/deploiement$/, nav: 'rollout', page: rolloutPage },
     { re: /^\/comptes$/, nav: 'accounts', page: accountsPage, perm: 'admin' },
     { re: /^\/journal$/, nav: 'audit', page: auditPage, perm: 'admin' },
     { re: /^\/compte$/, nav: 'me', page: mePage },
@@ -529,6 +530,7 @@
       state.page = await match.r.page(view, match.m.slice(1).map((x) => (x === undefined ? x : decodeURIComponent(x))), query) || {};
       if (state.page.refresh) startTimer();
       markRefreshed();
+      refreshRolloutBadge();
     } catch (e) {
       if (e.status === 401) return;
       state.page = {};
@@ -578,7 +580,7 @@
 
     async function render() {
       // Listes limitées aux 12 premiers par le serveur (?top=) : la page reste légère quelle que soit la taille du parc.
-      const f = await api(`/fleet?top=12${s.group ? `&group=${enc(s.group)}` : ''}`);
+      const [f, rolloutBanner] = await Promise.all([api(`/fleet?top=12${s.group ? `&group=${enc(s.group)}` : ''}`), rolloutNotice()]);
       const group = groups.find((g) => String(g.id) === s.group);
       const bootstrap = can('admin') && state.auth.accountCount === 0
         ? `<div class="notice notice-warn">Aucun compte nominatif n'existe encore. <a href="#/comptes">Créez le premier compte Administrateur</a> :
@@ -607,6 +609,7 @@
       const todo = f.toProcessMachines.slice(0, 12);
       view.innerHTML = `
         ${bootstrap}
+        ${rolloutBanner}
         ${head(`<p class="muted">${esc(plural(f.machineCount, 'poste', 'postes'))} ·
             ${esc(plural(f.modelCount, 'modèle', 'modèles'))} · synthèse du ${esc(fmtDate(f.generatedAt))}
             ${group ? ` · <a href="#/groupes/${enc(group.id)}">fiche du groupe</a>` : ''}</p>`)}
@@ -1554,6 +1557,7 @@ schtasks /Create /F /TN "SpokaPilote\\Analyse" /SC WEEKLY /D MON /ST 09:00 /RU S
     ['jobFailed', 'Tâche à distance échouée', 'ou restée sans résultat'],
     ['machineStale', 'Poste non vu', 'aucun rapport depuis le délai ci-dessous ; une alerte par période d\'absence'],
     ['dangerousDriver', 'Pilote dangereux détecté', 'constat critique « known-bad-driver » dans la santé du poste'],
+    ['rolloutSuspended', 'Pilote suspendu automatiquement', 'le disjoncteur de la diffusion a bloqué une version sur tout le parc (page Déploiement)'],
   ];
   const ALERT_STATUS = { 'envoyée': 'ok', partielle: 'warn', 'échec': 'bad', 'aucun canal': '' };
 
@@ -2315,6 +2319,446 @@ schtasks /Create /F /TN "SpokaPilote\\Analyse" /SC WEEKLY /D MON /ST 09:00 /RU S
     }
     return { refresh: render };
   }
+
+  // ------------------------------------------------------------------ déploiement (4.0 : anneaux et suspension automatique)
+  // Bloc autonome : page « Déploiement » (#/deploiement), pastille du menu, encart de la vue d'ensemble. Lecture seule :
+  // consultation ; Technicien : suspendre, reprendre, maintenir un blocage ; Administrateur : anneaux, réglages, diffusion forcée.
+
+  const RING_STATES = {
+    waiting: ['En attente', 'muted'],
+    validation: ['Validation en attente', 'warn'],
+    allowed: ['Autorisé', 'accent'],
+    validated: ['Validé', 'ok'],
+    suspended: ['Suspendu', 'bad'],
+  };
+  const ROLLOUT_FILTERS = [
+    ['active', 'En cours et suspendus'], ['rollout', 'En cours de diffusion'], ['attention', 'Suspensions à examiner'],
+    ['suspended', 'Suspendus'], ['completed', 'Diffusion terminée'], ['all', 'Tous les pilotes vus'],
+  ];
+  const ROLLOUT_PAGE = 50;
+  const ringStateBadge = (r) => { const [label, kind] = RING_STATES[r.state] || [r.state, '']; return badge(label, kind); };
+  const versionStatusBadge = (v) => (v.status === 'suspended' ? badge(v.suspension?.automatic ? 'Suspendu automatiquement' : 'Suspendu', 'bad')
+    : v.status === 'completed' ? badge('Diffusion terminée', 'ok') : v.status === 'rollout' ? badge('En cours de diffusion', 'accent') : badge('Suivi', 'muted'));
+
+  /** Pastille du menu : suspensions automatiques à examiner. */
+  async function refreshRolloutBadge() {
+    const el = $('#nav-rollout-badge');
+    if (!el || !state.auth) return;
+    try {
+      const s = await api('/rollout/summary');
+      el.textContent = s.attention > 0 ? String(s.attention) : '';
+      el.hidden = !(s.attention > 0);
+      el.title = s.attention > 0 ? `${plural(s.attention, 'pilote suspendu', 'pilotes suspendus')} automatiquement à examiner` : '';
+    } catch { el.hidden = true; }
+  }
+
+  /** Encart de la vue d'ensemble (rien si aucune suspension à examiner). */
+  async function rolloutNotice() {
+    try {
+      const s = await api('/rollout/summary');
+      if (!(s.attention > 0)) return '';
+      return `<div class="notice notice-bad"><b>${esc(plural(s.attention, 'pilote suspendu', 'pilotes suspendus'))} automatiquement</b> par le disjoncteur
+        de la diffusion (trop d'échecs d'installation) : bloqué${s.attention > 1 ? 's' : ''} sur tout le parc.
+        <a href="#/deploiement?filtre=attention">Examiner et décider</a> (reprendre la diffusion ou maintenir le blocage).</div>`;
+    } catch { return ''; }
+  }
+
+  /** Réglages (Administrateur) : activation, anneau par défaut, pilotes manquants, disjoncteur. */
+  async function editRolloutSettings(data) {
+    const s = data.settings;
+    const b = s.breaker;
+    const form = await openModal({
+      title: 'Réglages de la diffusion',
+      confirmLabel: 'Enregistrer',
+      wide: true,
+      body: `
+        <label class="check block"><input type="checkbox" name="enabled"${s.enabled ? ' checked' : ''}> Diffusion par anneaux active
+          <span class="muted">(sinon les postes reçoivent la politique telle quelle ; les suspensions s'appliquent toujours)</span></label>
+        <div class="form-grid section-tight">
+          <div><label for="rs-default">Anneau des postes sans groupe d'anneau</label>
+            <select id="rs-default" name="defaultRingId">${data.rings.map((r) => `<option value="${esc(r.id)}"${r.isDefault ? ' selected' : ''}>${esc(r.name)}</option>`).join('')
+              || '<option value="">(aucun anneau)</option>'}</select></div>
+          <div><label for="rs-retention">Mémoire des familles de pilotes (jours)</label>
+            <input id="rs-retention" name="familyRetentionDays" type="number" min="30" max="3650" value="${esc(s.familyRetentionDays)}"></div>
+        </div>
+        <label class="check block section-tight"><input type="checkbox" name="applyToMissingDrivers"${s.applyToMissingDrivers ? ' checked' : ''}>
+          Soumettre aussi les pilotes manquants (périphérique sans pilote) aux délais des anneaux</label>
+        <fieldset class="section">
+          <legend>Disjoncteur (suspension automatique)</legend>
+          <label class="check block"><input type="checkbox" name="breakerEnabled"${b.enabled ? ' checked' : ''}> Suspendre automatiquement une version
+            qui échoue trop dans un anneau</label>
+          <div class="form-grid section-tight">
+            <div><label for="rs-minf">Échecs (postes) au moins</label><input id="rs-minf" name="minFailures" type="number" min="1" max="10000" value="${esc(b.minFailures)}"></div>
+            <div><label for="rs-rate">et part des tentatives (%) au moins</label><input id="rs-rate" name="minFailureRatePercent" type="number" min="1" max="100" value="${esc(b.minFailureRatePercent)}"></div>
+            <div><label for="rs-win">sur une fenêtre de (heures)</label><input id="rs-win" name="windowHours" type="number" min="1" max="2160" value="${esc(b.windowHours)}"></div>
+          </div>
+          <label class="check block section-tight"><input type="checkbox" name="countRegressions"${b.countRegressions ? ' checked' : ''}>
+            Compter comme un échec un périphérique passé en erreur après l'installation (régression signalée par le rapport suivant)</label>
+        </fieldset>`,
+      onConfirm: async (f) => {
+        const n = (name) => Number(f.elements[name].value);
+        await api('/rollout/settings', {
+          method: 'PUT',
+          body: JSON.stringify({
+            enabled: f.elements.enabled.checked,
+            defaultRingId: f.elements.defaultRingId.value ? Number(f.elements.defaultRingId.value) : null,
+            applyToMissingDrivers: f.elements.applyToMissingDrivers.checked,
+            familyRetentionDays: n('familyRetentionDays'),
+            breaker: {
+              enabled: f.elements.breakerEnabled.checked, minFailures: n('minFailures'), minFailureRatePercent: n('minFailureRatePercent'),
+              windowHours: n('windowHours'), countRegressions: f.elements.countRegressions.checked,
+            },
+          }),
+        });
+        toast('Réglages de la diffusion enregistrés.');
+        return null;
+      },
+    });
+    return !!form;
+  }
+
+  /** Création (ring = null) ou modification d'un anneau (Administrateur). */
+  async function editRing(ring, previous) {
+    const groups = await groupsList(true);
+    const chosen = new Set((ring?.groups || []).map((g) => g.id));
+    const form = await openModal({
+      title: ring ? `Modifier l'anneau « ${ring.name} »` : 'Nouvel anneau de déploiement',
+      confirmLabel: ring ? 'Enregistrer' : 'Créer l\'anneau',
+      wide: true,
+      body: `
+        <div class="form-grid">
+          <div><label for="ring-name">Nom</label><input id="ring-name" name="name" type="text" maxlength="60" required value="${esc(ring?.name || '')}" placeholder="Ex. Pilote"></div>
+          <div><label for="ring-delay">Délai après la première détection (jours)</label>
+            <input id="ring-delay" name="delayDays" type="number" min="0" max="365" value="${esc(ring?.delayDays ?? 0)}"></div>
+        </div>
+        <label class="field">Description <span class="muted">(facultative)</span>
+          <textarea name="description" rows="2" maxlength="300">${esc(ring?.description || '')}</textarea></label>
+        <fieldset class="section">
+          <legend>Validation dans l'anneau précédent${previous ? ` (« ${esc(previous)} »)` : ''}</legend>
+          ${previous ? '' : '<p class="hint">Premier anneau : pas d\'anneau précédent (l\'option est ignorée).</p>'}
+          <label class="check block"><input type="checkbox" name="requireValidation"${ring?.requireValidation ? ' checked' : ''}>
+            Exiger que la version ait fait ses preuves dans l'anneau précédent</label>
+          <div class="form-grid section-tight">
+            <div><label for="ring-min">Installations réussies au moins (postes)</label>
+              <input id="ring-min" name="minSuccesses" type="number" min="1" max="10000" value="${esc(ring?.minSuccesses ?? 3)}"></div>
+            <div><label for="ring-maxf">Échecs tolérés (postes)</label>
+              <input id="ring-maxf" name="maxFailures" type="number" min="0" max="10000" value="${esc(ring?.maxFailures ?? 0)}"></div>
+          </div>
+        </fieldset>
+        <fieldset class="section">
+          <legend>Groupes de postes</legend>
+          <p class="hint">Un poste membre de groupes de plusieurs anneaux reçoit l'anneau le plus <b>tardif</b> (règle prudente). Les postes
+            sans groupe d'anneau reçoivent l'anneau par défaut (Réglages).</p>
+          ${groups.length === 0 ? '<p class="muted">Aucun groupe : créez-en sur la page <a href="#/groupes">Groupes</a>.</p>' : `
+          <div class="radio-list">${groups.map((g) => `<label class="check"><input type="checkbox" name="group" value="${esc(g.id)}"${chosen.has(g.id) ? ' checked' : ''}>
+            ${esc(g.name)} <span class="muted">(${esc(g.memberCount)})</span></label>`).join('')}</div>`}
+        </fieldset>`,
+      onConfirm: async (f) => {
+        const payload = {
+          name: f.elements.name.value.trim(),
+          delayDays: Number(f.elements.delayDays.value),
+          description: f.elements.description.value.trim() || null,
+          requireValidation: f.elements.requireValidation.checked,
+          minSuccesses: Number(f.elements.minSuccesses.value),
+          maxFailures: Number(f.elements.maxFailures.value),
+          groups: $$('input[name=group]:checked', f).map((c) => Number(c.value)),
+        };
+        if (!payload.name) return 'Le nom de l\'anneau est obligatoire.';
+        await api(ring ? `/rollout/rings/${enc(ring.id)}` : '/rollout/rings', { method: ring ? 'PUT' : 'POST', body: JSON.stringify(payload) });
+        toast(ring ? 'Anneau enregistré.' : `Anneau « ${payload.name} » créé.`);
+        return null;
+      },
+    });
+    return !!form;
+  }
+
+  /**
+   * Action sur une version : suspend, resume, acknowledge (Technicien), approve, unapprove (Administrateur).
+   * Renvoie true si la version a changé.
+   */
+  async function rolloutAction(v, action) {
+    const texts = {
+      suspend: ['Suspendre ce pilote ?', `<p><b>${esc(v.driver)}</b> (${esc(v.sourceLabel)}) sera bloqué sur <b>tout le parc</b>, dans tous les anneaux,
+        jusqu'à ce que sa diffusion soit reprise. Les postes déjà installés ne sont pas modifiés.</p>
+        <label class="field">Motif <span class="muted">(affiché aux techniciens et sur les postes)</span>
+          <input type="text" name="text" maxlength="300" placeholder="Ex. écrans bleus signalés sur les Latitude 5420 (ticket #4512)"></label>`, 'Suspendre', true],
+      resume: ['Reprendre la diffusion ?', `<p><b>${esc(v.driver)}</b> redevient installable selon les anneaux (délais et validations).
+        Seuls les échecs postérieurs à la reprise comptent pour le disjoncteur.</p>
+        ${v.suspension ? `<div class="notice notice-warn">${esc(v.suspension.reason || '')}</div>` : ''}
+        <label class="field">Commentaire <span class="muted">(facultatif, journal)</span><input type="text" name="text" maxlength="300"
+          placeholder="Ex. échecs dus à une coupure réseau, version validée par l'équipe"></label>`, 'Reprendre la diffusion', false],
+      acknowledge: ['Maintenir le blocage ?', `<p><b>${esc(v.driver)}</b> reste bloqué sur tout le parc ; la suspension n'est plus signalée comme à examiner.
+        Vous pourrez toujours reprendre la diffusion plus tard.</p>
+        <label class="field">Commentaire <span class="muted">(facultatif, journal)</span><input type="text" name="text" maxlength="300"></label>`, 'Maintenir le blocage', false],
+      approve: ['Diffuser partout maintenant ?', `<p><b>${esc(v.driver)}</b> devient installable dans <b>tous les anneaux</b>, sans attendre les délais ni les
+        validations (correctif urgent). Une suspension reste prioritaire.</p>
+        <label class="field">Commentaire <span class="muted">(facultatif, journal)</span><input type="text" name="text" maxlength="300"></label>`, 'Diffuser partout', true],
+      unapprove: ['Revenir à la diffusion progressive ?', `<p><b>${esc(v.driver)}</b> suit de nouveau les délais et validations des anneaux.</p>`, 'Confirmer', false],
+    };
+    const [title, body, label, danger] = texts[action];
+    const form = await openModal({ title, body, confirmLabel: label, danger });
+    if (!form) return false;
+    const text = form.elements.text ? form.elements.text.value.trim() : '';
+    try {
+      await api(`/rollout/versions/${enc(v.id)}/${action}`, { method: 'POST', body: JSON.stringify(action === 'suspend' ? { reason: text } : { comment: text }) });
+      toast({ suspend: 'Pilote suspendu sur tout le parc.', resume: 'Diffusion reprise.', acknowledge: 'Blocage maintenu.',
+        approve: 'Pilote diffusé partout.', unapprove: 'Retour à la diffusion progressive.' }[action]);
+      refreshRolloutBadge();
+      return true;
+    } catch (e) { fail(e); return false; }
+  }
+
+  /** Boutons d'action d'une version selon le rôle. */
+  function versionButtons(v, small = true) {
+    const sm = small ? ' btn-sm' : '';
+    const out = [];
+    if (can('operate')) {
+      if (v.suspension) {
+        out.push(`<button class="btn${sm}" type="button" data-rv-action="resume" data-rv="${esc(v.id)}">Reprendre</button>`);
+        if (v.attention) out.push(`<button class="btn${sm}" type="button" data-rv-action="acknowledge" data-rv="${esc(v.id)}">Maintenir le blocage</button>`);
+      } else {
+        out.push(`<button class="btn${sm} btn-danger" type="button" data-rv-action="suspend" data-rv="${esc(v.id)}">Suspendre</button>`);
+      }
+    }
+    if (can('admin') && !v.suspension && v.status === 'rollout') {
+      out.push(v.approval ? `<button class="btn${sm}" type="button" data-rv-action="unapprove" data-rv="${esc(v.id)}">Annuler la diffusion forcée</button>`
+        : `<button class="btn${sm}" type="button" data-rv-action="approve" data-rv="${esc(v.id)}">Diffuser partout</button>`);
+    }
+    return out.join(' ');
+  }
+
+  /** Fiche d'une version : état par anneau, échecs récents, historique, actions. */
+  async function showRolloutVersion(id, onChange) {
+    const d = await api(`/rollout/versions/${enc(id)}`);
+    const v = d.version;
+    const facts = [
+      ['Source', esc(v.sourceLabel)], ['Type', esc(v.kind || '—')], ['Version', esc(v.version)],
+      ['Première détection', `${esc(fmtDate(v.firstSeen))}${v.firstMachine ? ` <span class="muted">(${machineLink(v.firstMachine)})</span>` : ''}`],
+      ['Dernière détection', esc(fmtDate(v.lastSeen))], ['Famille', `<code>${esc(v.family)}</code>`], ['État', versionStatusBadge(v)],
+      ...(v.approval ? [['Diffusion forcée', `par ${esc(v.approval.by)} le ${esc(fmtDate(v.approval.at))}`]] : []),
+    ];
+    let chosen = null;
+    await openModal({
+      title: v.driver,
+      confirmLabel: null,
+      cancelLabel: 'Fermer',
+      wide: true,
+      body: `
+        ${v.suspension ? `<div class="notice notice-bad"><b>${v.suspension.automatic ? 'Suspendu automatiquement' : 'Suspendu'}</b> le
+          ${esc(fmtDate(v.suspension.at))} par ${esc(v.suspension.by)} — ${esc(v.suspension.reason || '')}
+          ${v.suspension.acknowledgedAt ? `<div class="small">Blocage maintenu par ${esc(v.suspension.acknowledgedBy)} le ${esc(fmtDate(v.suspension.acknowledgedAt))}.</div>` : ''}</div>` : ''}
+        <dl class="facts">${facts.map(([k, val]) => `<div><dt>${esc(k)}</dt><dd>${val}</dd></div>`).join('')}</dl>
+        <h3 class="section-tight">Par anneau</h3>
+        ${v.rings.length === 0 ? '<p class="muted">Aucun anneau configuré.</p>' : `<div class="table-wrap"><table class="table-compact">
+          <thead><tr><th>Anneau</th><th>État</th><th class="num">Réussies</th><th class="num">En échec</th><th class="num">Régressions</th></tr></thead>
+          <tbody>${v.rings.map((r) => `<tr><td class="cell-title">${esc(r.name)}</td><td class="wrap">${ringStateBadge(r)}<div class="cell-sub">${esc(r.label)}</div></td>
+            ${num(r.successes, 'ok')}${num(r.failures, 'bad')}${num(r.regressions, 'bad')}</tr>`).join('')}
+          ${d.unassigned.successes + d.unassigned.failures > 0 ? `<tr><td class="muted">Hors anneau</td><td></td>${num(d.unassigned.successes, 'ok')}${num(d.unassigned.failures, 'bad')}${num(d.unassigned.regressions, 'bad')}</tr>` : ''}
+          </tbody></table></div>`}
+        <h3 class="section-tight">Échecs récents</h3>
+        ${d.failures.length === 0 ? '<p class="muted">Aucun échec signalé.</p>' : `<div class="table-wrap"><table class="table-compact">
+          <thead><tr><th>Poste</th><th>Anneau</th><th>Date</th><th>Détail</th></tr></thead>
+          <tbody>${d.failures.map((f) => `<tr><td class="nowrap">${machineLink(f.machine)}</td><td class="small">${esc(f.ring.replace(/^dans l'anneau /, ''))}</td>
+            <td class="nowrap small">${esc(fmtDate(f.at))}</td><td class="wrap small">${f.regression ? badge('régression', 'bad') + ' ' : ''}${esc(f.message || '')}</td></tr>`).join('')}</tbody></table></div>`}
+        <h3 class="section-tight">Historique</h3>
+        ${d.history.length === 0 ? '<p class="muted">Aucun événement.</p>' : `<ul class="list-plain small">${d.history.map((e) =>
+          `<li>${esc(fmtDate(e.at))} — <b>${esc(e.actionLabel)}</b> par ${esc(e.actor)}${e.detail ? ` : ${esc(e.detail)}` : ''}</li>`).join('')}</ul>`}
+        <div class="actions section-tight" id="rv-actions">${versionButtons(v, false)}</div>`,
+      onOpen: (body) => body.addEventListener('click', (e) => {
+        const b = e.target.closest('[data-rv-action]');
+        if (!b) return;
+        // Fermeture par le bouton « Fermer » (la fenêtre est réutilisée par la confirmation de l'action).
+        chosen = b.dataset.rvAction;
+        $('#modal-cancel').click();
+      }),
+    });
+    if (chosen && await rolloutAction(v, chosen) && onChange) await onChange();
+  }
+
+  async function rolloutPage(view, _params, query) {
+    const s = state.rollout || (state.rollout = { filter: 'active', search: '', page: 1, history: 1 });
+    if (query.has('filtre') && ROLLOUT_FILTERS.some(([k]) => k === query.get('filtre'))) { s.filter = query.get('filtre'); s.page = 1; }
+    const admin = can('admin');
+    let data;
+
+    async function render() {
+      data = await api('/rollout');
+      const rings = data.rings;
+      const def = rings.find((r) => r.isDefault);
+      view.innerHTML = `
+        <div class="page-head"><div><h1>Déploiement</h1>
+          <p class="muted">Diffusion progressive des nouvelles versions de pilotes par <b>anneaux</b> : chaque anneau (lié à des groupes de postes)
+            reçoit une version un nombre de jours après sa première détection sur le parc, éventuellement après validation dans l'anneau
+            précédent. Le <b>disjoncteur</b> suspend automatiquement sur tout le parc une version qui échoue trop.</p></div>
+          <div class="actions">
+            ${admin ? '<button id="ro-settings" class="btn" type="button">Réglages</button><button id="ro-new" class="btn btn-primary" type="button">Nouvel anneau</button>' : ''}
+          </div>
+        </div>
+        ${data.attention > 0 ? `<div class="notice notice-bad"><b>${esc(plural(data.attention, 'pilote suspendu', 'pilotes suspendus'))} automatiquement</b>
+          à examiner : bloqué${data.attention > 1 ? 's' : ''} sur tout le parc par le disjoncteur. Ouvrez la fiche pour voir les échecs, puis
+          <b>reprenez</b> la diffusion ou <b>maintenez le blocage</b>.
+          ${s.filter !== 'attention' ? '<a href="#/deploiement?filtre=attention">Afficher uniquement ces pilotes</a>' : ''}</div>` : ''}
+        ${!data.active ? `<div class="notice notice-warn">La diffusion par anneaux est <b>désactivée</b>${rings.length === 0 ? ' (aucun anneau)' : ''} :
+          les postes reçoivent la politique de pilotes telle quelle ; seules les suspensions s'appliquent. Les versions proposées sont déjà suivies
+          (première détection), pour que les délais soient justes dès l'activation.
+          ${admin && rings.length === 0 ? '<div class="actions section-tight"><button id="ro-suggest" class="btn btn-primary" type="button">Créer les anneaux suggérés (Pilote 0 j, Précoce 3 j, Général 10 j)</button></div>' : ''}
+          ${admin && rings.length > 0 ? '<div class="actions section-tight"><button id="ro-enable" class="btn btn-primary" type="button">Activer la diffusion par anneaux</button></div>' : ''}</div>` : ''}
+        <div class="kpis">
+          ${kpi('Anneaux', rings.length, { sub: data.active ? 'diffusion active' : 'diffusion désactivée', kind: data.active ? 'ok' : '' })}
+          ${kpi('En cours de diffusion', data.inRollout, { sub: 'versions pas encore autorisées partout' })}
+          ${kpi('Suspendus', data.suspended, { kind: data.suspended ? 'bad' : '', sub: data.attention ? `${data.attention} à examiner` : 'sur tout le parc' })}
+          ${kpi('Postes', data.machines, { sub: def ? `sans groupe d'anneau → « ${def.name} »` : 'aucun anneau' })}
+          ${data.conflicts > 0 ? kpi('Dans plusieurs anneaux', data.conflicts, { kind: 'warn', sub: 'l\'anneau le plus tardif s\'applique' }) : ''}
+          ${kpi('Disjoncteur', data.settings.breaker.enabled ? 'Actif' : 'Inactif', { kind: data.settings.breaker.enabled ? 'ok' : 'warn',
+            sub: data.settings.breaker.enabled ? `${data.settings.breaker.minFailures} échecs et ${data.settings.breaker.minFailureRatePercent} % en ${data.settings.breaker.windowHours} h` : 'aucune suspension automatique' })}
+        </div>
+
+        <section class="section">
+          <div class="section-head"><h2>Anneaux</h2><span class="small muted">dans l'ordre de diffusion</span></div>
+          ${rings.length === 0 ? `<div class="card empty">Aucun anneau.${admin ? ' Créez les anneaux suggérés ou un premier anneau (« Nouvel anneau »).' : ''}</div>` : `
+          <div class="table-wrap"><table>
+            <thead><tr><th class="num">N°</th><th>Anneau</th><th>Délai</th><th>Validation</th><th>Groupes</th><th class="num">Postes</th>
+              ${admin ? '<th><span class="visually-hidden">Actions</span></th>' : ''}</tr></thead>
+            <tbody>${rings.map((r, i) => `
+              <tr>
+                <td class="num">${esc(r.position)}</td>
+                <td class="wrap"><div class="cell-title">${esc(r.name)} ${r.isDefault ? badge('par défaut', 'accent') : ''}</div>${r.description ? `<div class="cell-sub">${esc(r.description)}</div>` : ''}</td>
+                <td class="nowrap">${r.delayDays === 0 ? 'aucun' : esc(plural(r.delayDays, 'jour', 'jours'))}</td>
+                <td class="wrap small">${r.requireValidation && r.validationRing ? `${esc(r.minSuccesses)} réussite(s) dans « ${esc(r.validationRing)} », ${esc(r.maxFailures)} échec(s) toléré(s)` : '<span class="muted">non exigée</span>'}</td>
+                <td class="wrap small">${r.groups.length ? r.groups.map((g) => groupLink(g)).join(', ') : '<span class="muted">aucun</span>'}</td>
+                <td class="num">${esc(r.machineCount)}</td>
+                ${admin ? `<td class="nowrap">
+                  <button class="btn btn-sm btn-ghost" type="button" data-ring-move="${esc(r.id)}" data-dir="-1"${i === 0 ? ' disabled' : ''} aria-label="Monter l'anneau ${esc(r.name)}">↑</button>
+                  <button class="btn btn-sm btn-ghost" type="button" data-ring-move="${esc(r.id)}" data-dir="1"${i === rings.length - 1 ? ' disabled' : ''} aria-label="Descendre l'anneau ${esc(r.name)}">↓</button>
+                  <button class="btn btn-sm" type="button" data-ring-edit="${esc(r.id)}">Modifier</button>
+                  <button class="btn btn-sm btn-danger" type="button" data-ring-delete="${esc(r.id)}">Supprimer</button></td>` : ''}
+              </tr>`).join('')}</tbody></table></div>
+          <p class="hint">Un poste membre de groupes de plusieurs anneaux reçoit l'anneau le plus tardif (règle prudente). Les postes 3.x, qui ne
+            s'identifient pas en demandant leur politique, reçoivent celle de l'anneau le plus prudent : une version ne leur est autorisée que
+            lorsqu'elle l'est pour tous les anneaux.</p>`}
+        </section>
+
+        <section class="section">
+          <div class="section-head"><h2>Pilotes en cours de diffusion</h2><span id="rv-count" class="small muted"></span></div>
+          <div class="toolbar">
+            <input id="rv-search" type="search" placeholder="Rechercher un pilote, une version, une source" value="${esc(s.search)}" aria-label="Rechercher un pilote">
+            <select id="rv-filter" aria-label="Filtre">${ROLLOUT_FILTERS.map(([k, l]) => `<option value="${k}"${k === s.filter ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select>
+          </div>
+          <div id="rv-table"></div>
+          <div id="rv-pager" class="pager"></div>
+        </section>
+
+        <section class="section">
+          <div class="section-head"><h2>Historique</h2></div>
+          <div id="rh-table"></div>
+          <div id="rh-pager" class="pager"></div>
+        </section>`;
+
+      $('#ro-settings')?.addEventListener('click', async () => { if (await editRolloutSettings(data)) await render(); });
+      $('#ro-new')?.addEventListener('click', async () => { if (await editRing(null, rings.length ? rings[rings.length - 1].name : null)) await render(); });
+      $('#ro-suggest')?.addEventListener('click', async () => {
+        try { await api('/rollout/rings/suggested', { method: 'POST' }); toast('Anneaux suggérés créés : associez-leur des groupes, puis activez la diffusion.'); await render(); } catch (e) { fail(e); }
+      });
+      $('#ro-enable')?.addEventListener('click', async () => {
+        try {
+          await api('/rollout/settings', { method: 'PUT', body: JSON.stringify({ ...data.settings, enabled: true }) });
+          toast('Diffusion par anneaux activée.');
+          await render();
+        } catch (e) { fail(e); }
+      });
+      $$('[data-ring-edit]', view).forEach((b) => b.addEventListener('click', async () => {
+        const i = rings.findIndex((r) => String(r.id) === b.dataset.ringEdit);
+        if (await editRing(rings[i], i > 0 ? rings[i - 1].name : null)) await render();
+      }));
+      $$('[data-ring-delete]', view).forEach((b) => b.addEventListener('click', async () => {
+        const r = rings.find((x) => String(x.id) === b.dataset.ringDelete);
+        const form = await openModal({
+          title: `Supprimer l'anneau « ${r.name} » ?`,
+          body: `<p>Ses ${esc(plural(r.machineCount, 'poste', 'postes'))} passeront dans l'anneau par défaut. Les groupes ne sont pas supprimés ;
+            l'historique des installations est conservé.</p>`,
+          confirmLabel: 'Supprimer l\'anneau', danger: true,
+        });
+        if (!form) return;
+        try { await api(`/rollout/rings/${enc(r.id)}`, { method: 'DELETE' }); toast('Anneau supprimé.'); await render(); } catch (e) { fail(e); }
+      }));
+      $$('[data-ring-move]', view).forEach((b) => b.addEventListener('click', async () => {
+        const ids = rings.map((r) => r.id);
+        const i = ids.findIndex((x) => String(x) === b.dataset.ringMove);
+        const j = i + Number(b.dataset.dir);
+        [ids[i], ids[j]] = [ids[j], ids[i]];
+        try { await api('/rollout/rings/order', { method: 'PUT', body: JSON.stringify({ ids }) }); await render(); } catch (e) { fail(e); }
+      }));
+      $('#rv-search').addEventListener('input', debounce((e) => { s.search = e.target.value.trim(); s.page = 1; loadVersions(); }));
+      $('#rv-filter').addEventListener('change', (e) => { s.filter = e.target.value; s.page = 1; loadVersions(); });
+      await Promise.all([loadVersions(), loadHistory()]);
+    }
+
+    let ticket = 0;
+    async function loadVersions() {
+      const mine = ++ticket;
+      const params = new URLSearchParams({ status: s.filter, offset: String((s.page - 1) * ROLLOUT_PAGE), limit: String(ROLLOUT_PAGE) });
+      if (s.search) params.set('q', s.search);
+      const res = await api(`/rollout/versions?${params}`);
+      if (mine !== ticket || !$('#rv-table')) return;
+      const pages = Math.max(1, Math.ceil(res.total / ROLLOUT_PAGE));
+      $('#rv-count').textContent = plural(res.total, 'pilote', 'pilotes');
+      $('#rv-table').innerHTML = res.items.length === 0
+        ? `<div class="card empty">${s.filter === 'active' ? 'Aucun pilote en cours de diffusion ni suspendu.' : 'Aucun pilote pour ce filtre.'}</div>`
+        : `<div class="table-wrap"><table class="table-compact">
+          <thead><tr><th>Pilote</th><th>Première détection</th>${res.rings.map((r) => `<th>${esc(r.name)}</th>`).join('')}
+            <th class="num">Réussies</th><th class="num">Échecs</th><th><span class="visually-hidden">Actions</span></th></tr></thead>
+          <tbody>${res.items.map((v) => `
+            <tr${v.attention ? ' class="is-attention"' : ''}>
+              <td class="wrap"><div class="cell-title"><a href="#/deploiement" data-rv-detail="${esc(v.id)}">${esc(v.driver)}</a></div>
+                <div class="cell-sub">${esc(v.sourceLabel)}${v.kind ? ` · ${esc(v.kind)}` : ''} ${v.status !== 'rollout' ? versionStatusBadge(v) : ''}
+                  ${v.approval ? badge('diffusion forcée', 'warn') : ''}</div>
+                ${v.suspension ? `<div class="cell-sub bad">${esc(v.suspension.reason || '')}</div>` : ''}</td>
+              <td class="nowrap small">${esc(fmtDate(v.firstSeen))}<div class="cell-sub">${esc(fmtAgo(v.firstSeen))}</div></td>
+              ${res.rings.map((r) => { const x = v.rings.find((y) => y.ringId === r.id); return x
+                ? `<td class="wrap small">${ringStateBadge(x)}<div class="cell-sub">${esc(x.label)}</div>${x.successes + x.failures > 0
+                  ? `<div class="cell-sub">${esc(x.successes)} ✓ · ${esc(x.failures)} ✗</div>` : ''}</td>` : '<td></td>'; }).join('')}
+              ${num(v.totals.successes, 'ok')}${num(v.totals.failures, 'bad')}
+              <td class="nowrap">${versionButtons(v)}</td>
+            </tr>`).join('')}</tbody></table></div>`;
+      $('#rv-pager').innerHTML = pages <= 1 ? '' : `
+        <button class="btn btn-sm" type="button" data-page="${s.page - 1}"${s.page <= 1 ? ' disabled' : ''}>← Précédente</button>
+        <span class="small">Page ${esc(s.page)} / ${esc(pages)}</span>
+        <button class="btn btn-sm" type="button" data-page="${s.page + 1}"${s.page >= pages ? ' disabled' : ''}>Suivante →</button>`;
+      $$('[data-page]', $('#rv-pager')).forEach((b) => b.addEventListener('click', () => { s.page = Number(b.dataset.page); loadVersions(); }));
+      $$('[data-rv-detail]', $('#rv-table')).forEach((a) => a.addEventListener('click', async (e) => {
+        e.preventDefault();
+        try { await showRolloutVersion(a.dataset.rvDetail, render); } catch (err) { fail(err); }
+      }));
+      $$('[data-rv-action]', $('#rv-table')).forEach((b) => b.addEventListener('click', async () => {
+        const v = res.items.find((x) => String(x.id) === b.dataset.rv);
+        if (await rolloutAction(v, b.dataset.rvAction)) await render();
+      }));
+    }
+
+    async function loadHistory() {
+      const res = await api(`/rollout/history?offset=${(s.history - 1) * 20}&limit=20`);
+      if (!$('#rh-table')) return;
+      const pages = Math.max(1, Math.ceil(res.total / 20));
+      $('#rh-table').innerHTML = res.items.length === 0 ? '<div class="card empty">Aucune suspension, reprise ni diffusion forcée pour l\'instant.</div>' : `
+        <div class="table-wrap"><table class="table-compact">
+          <thead><tr><th>Date</th><th>Événement</th><th>Pilote</th><th>Par</th><th>Détail</th></tr></thead>
+          <tbody>${res.items.map((e) => `<tr><td class="nowrap small">${esc(fmtDate(e.at))}</td>
+            <td class="nowrap">${badge(e.actionLabel, /suspendu/i.test(e.actionLabel) ? 'bad' : e.action === 'resume' ? 'ok' : '')}</td>
+            <td class="wrap">${esc(e.driver || '—')}</td><td class="small">${esc(e.actor)}</td><td class="wrap small">${esc(e.detail || '')}</td></tr>`).join('')}</tbody>
+        </table></div>`;
+      $('#rh-pager').innerHTML = pages <= 1 ? '' : `
+        <button class="btn btn-sm" type="button" data-hpage="${s.history - 1}"${s.history <= 1 ? ' disabled' : ''}>← Plus récents</button>
+        <span class="small">Page ${esc(s.history)} / ${esc(pages)}</span>
+        <button class="btn btn-sm" type="button" data-hpage="${s.history + 1}"${s.history >= pages ? ' disabled' : ''}>Plus anciens →</button>`;
+      $$('[data-hpage]', $('#rh-pager')).forEach((b) => b.addEventListener('click', () => { s.history = Number(b.dataset.hpage); loadHistory(); }));
+    }
+
+    await render();
+    refreshRolloutBadge();
+    return { refresh: () => Promise.all([loadVersions(), loadHistory(), refreshRolloutBadge()]) };
+  }
+
+  // ------------------------------------------------------------------ fin du bloc « déploiement »
 
   // ------------------------------------------------------------------ comptes (3.1, Administrateur)
 

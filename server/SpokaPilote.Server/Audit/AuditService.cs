@@ -37,6 +37,17 @@ public static class AuditActions
     public const string SettingsCache = "settings.cache";
     public const string CachePurge = "cache.purge";
     public const string CachePrefetch = "cache.prefetch";
+    public const string RolloutSettings = "rollout.settings";
+    public const string RolloutRingCreate = "rollout.ring-create";
+    public const string RolloutRingUpdate = "rollout.ring-update";
+    public const string RolloutRingDelete = "rollout.ring-delete";
+    public const string RolloutRingOrder = "rollout.ring-order";
+    public const string RolloutSuspend = "rollout.suspend";
+    public const string RolloutAutoSuspend = "rollout.auto-suspend";
+    public const string RolloutResume = "rollout.resume";
+    public const string RolloutAcknowledge = "rollout.acknowledge";
+    public const string RolloutApprove = "rollout.approve";
+    public const string RolloutUnapprove = "rollout.unapprove";
 
     public static readonly IReadOnlyDictionary<string, string> Labels = new Dictionary<string, string>
     {
@@ -71,6 +82,17 @@ public static class AuditActions
         [SettingsCache] = "Paramètres du cache de pilotes modifiés",
         [CachePurge] = "Cache de pilotes vidé",
         [CachePrefetch] = "Préchargement du cache de pilotes",
+        [RolloutSettings] = "Réglages de la diffusion modifiés",
+        [RolloutRingCreate] = "Anneau de déploiement créé",
+        [RolloutRingUpdate] = "Anneau de déploiement modifié",
+        [RolloutRingDelete] = "Anneau de déploiement supprimé",
+        [RolloutRingOrder] = "Ordre des anneaux modifié",
+        [RolloutSuspend] = "Pilote suspendu",
+        [RolloutAutoSuspend] = "Pilote suspendu automatiquement",
+        [RolloutResume] = "Diffusion d'un pilote reprise",
+        [RolloutAcknowledge] = "Blocage d'un pilote maintenu",
+        [RolloutApprove] = "Pilote diffusé partout",
+        [RolloutUnapprove] = "Diffusion forcée annulée",
     };
 
     /// <summary>Catégories du filtre de la console (préfixe du code).</summary>
@@ -88,6 +110,7 @@ public static class AuditActions
         ["audit"] = "Journal d'audit",
         ["maintenance"] = "Sauvegarde et entretien",
         ["cache"] = "Cache de pilotes",
+        ["rollout"] = "Déploiement (anneaux)",
     };
 
     public static string Label(string action) => Labels.GetValueOrDefault(action, action);

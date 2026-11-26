@@ -43,6 +43,8 @@ public sealed class AlertTriggers
     public bool JobFailed { get; set; } = true;
     public bool MachineStale { get; set; } = true;
     public bool DangerousDriver { get; set; } = true;
+    /// <summary>Version de pilote suspendue automatiquement par le disjoncteur de la diffusion par anneaux (4.0).</summary>
+    public bool RolloutSuspended { get; set; } = true;
 }
 
 /// <summary>Réglages des alertes : enregistrés dans la base (page Paramètres) ; une variable d'environnement définie est prioritaire.</summary>

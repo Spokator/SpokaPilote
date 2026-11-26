@@ -401,3 +401,11 @@ tr.is-failure td { background: var(--bad-soft); }
   .login-card { padding: 20px; }
   .user-chip { display: none; }
 }
+
+/* ------------------------------------------------------------------ déploiement (4.0 : anneaux et suspension automatique) */
+.nav-badge { display: inline-block; min-width: 18px; padding: 0 6px; margin-left: 6px; border-radius: 9px; background: var(--bad); color: #fff;
+  font-size: 11px; font-weight: 700; line-height: 18px; text-align: center; vertical-align: 1px; }
+.nav-badge[hidden] { display: none; }
+tr.is-attention td { background: var(--bad-soft); }
+tr.is-attention td:first-child { box-shadow: inset 3px 0 0 var(--bad); }
+/* ------------------------------------------------------------------ fin du bloc « déploiement » */

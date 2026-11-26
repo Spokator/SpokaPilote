@@ -277,6 +277,10 @@ Le poste appelle `GET {ServerUrl}/api/policy` avec l'en-tête `Authorization: Be
 
 Le jeton n'est envoyé qu'à l'hôte de `ServerUrl` (jamais à une autre URL indiquée dans `PolicySource`).
 
+Console 4.0 : la politique servie peut contenir en tête les retenues de la **diffusion par anneaux** (voir
+[Anneaux de déploiement et suspension automatique](#anneaux-de-déploiement-et-suspension-automatique)) ; le poste
+envoie alors aussi son identifiant (`X-SpokaPilote-Machine-Id`, `X-SpokaPilote-Machine`) à la console, et à elle seule.
+
 ### Hors ligne et robustesse
 
 - Chaque politique valide reçue est copiée dans `%ProgramData%\SpokaPilote\policy-cache.json` (contenu brut, origine
@@ -303,6 +307,128 @@ Chaque rapport de poste (`--output-dir \\srv\rapports`, rapport JSON) contient :
 
 et, pour chaque pilote, `blockedReason` s'il est bloqué. Le rapport HTML affiche la politique appliquée et le motif
 de chaque blocage. `fromCache: true` ou des `messages` signalent un poste qui n'a pas pu lire la politique à jour.
+
+## Anneaux de déploiement et suspension automatique
+
+Avec la console centrale (4.0), une nouvelle version de pilote n'arrive plus sur tout le parc le jour où Windows Update
+ou le constructeur la publie : elle est **diffusée par anneaux**, comme les mises à jour de Windows Update for Business
+ou d'Intune. Les postes pilotes la reçoivent d'abord ; les autres attendent quelques jours, et éventuellement qu'elle ait
+fait ses preuves dans l'anneau précédent. Si elle échoue trop, le **disjoncteur** la suspend sur tout le parc.
+
+Tout se règle dans la console, page **Déploiement** (voir [CONSOLE-CENTRALE.md](CONSOLE-CENTRALE.md), § 5) ; il n'y a
+rien à écrire dans `driver-policy.json`. Les postes reçoivent les retenues avec leur politique, par `{ServerUrl}/api/policy`.
+
+### Anneaux
+
+Un anneau a un **nom**, un **délai** (jours), des **groupes de postes** et, facultativement, une **validation** exigée
+dans l'anneau précédent. Suggestion de départ (modifiable) :
+
+| Anneau | Délai | Groupes | Validation |
+|---|---|---|---|
+| Pilote | 0 jour | « Informatique », volontaires | — |
+| Précoce | 3 jours | un échantillon de chaque modèle | (facultatif) 3 installations réussies dans « Pilote », aucun échec |
+| Général | 10 jours | le reste (anneau par défaut) | (facultatif) 5 installations réussies dans « Précoce », aucun échec |
+
+- **Première détection** d'une version : date de **réception par la console** du premier rapport (de n'importe quel poste)
+  qui la **propose** — même si elle y est bloquée ou retenue. Une version est identifiée par sa source, son titre et son
+  numéro de version (« Windows Update · Intel - Display - 31.0.101.5590 · 31.0.101.5590 »). La date est enregistrée à
+  la réception du rapport (aucun recalcul sur l'historique) et ne change plus ensuite ; l'horloge du poste n'est pas
+  utilisée (un ancien rapport renvoyé plus tard ne peut pas l'avancer). Les propositions sans numéro de version lisible
+  ne sont pas soumises aux anneaux.
+- Une version est **disponible pour un anneau** à l'instant *première détection + délai* (délai × 24 h, calculé en temps
+  universel : ni le fuseau de la console, ni celui du poste, ni le changement d'heure ne le décalent ; les dates sont
+  affichées à l'heure locale). Si l'anneau exige une **validation**, il faut en plus, dans l'anneau précédent, au moins
+  *N* postes où la version est installée avec succès et au plus *M* postes en échec (*N* et *M* réglés sur l'anneau qui
+  l'exige ; un poste compte une fois, avec son dernier résultat). La validation est réévaluée en permanence : un échec qui
+  apparaît dans l'anneau précédent retire l'autorisation aux anneaux suivants (les postes déjà installés ne sont pas touchés).
+- **Anneau d'un poste** : celui de ses groupes (ajouts à la main et règles automatiques). Un poste membre de groupes de
+  **plusieurs anneaux reçoit le plus tardif** — règle prudente : un poste ajouté par erreur au groupe pilote ne reçoit rien
+  plus tôt s'il appartient aussi à un groupe d'un anneau plus tardif (pour qu'un poste soit pilote, il ne doit être dans
+  aucun groupe d'un anneau suivant). Un poste **sans groupe d'anneau** reçoit l'**anneau par défaut** (le dernier, sauf
+  réglage contraire) ; un poste encore inconnu de la console aussi.
+- Les **pilotes manquants** (périphérique sans pilote) ne sont pas soumis aux délais par défaut (réglage « Soumettre aussi
+  les pilotes manquants »), comme pour `minimumDriverAgeDays`.
+- **Diffuser partout maintenant** (Administrateur) autorise une version dans tous les anneaux sans attendre (correctif
+  urgent) ; une suspension reste prioritaire. Une règle `allow` de la politique de l'organisation **ne lève pas** une
+  retenue d'anneau : les règles de diffusion sont évaluées avant celles de l'organisation.
+
+### Ce que reçoit le poste
+
+La console ajoute **en tête** des règles de la politique de l'organisation des règles ordinaires du format 1 (identifiants
+`anneau-…`), recalculées pour l'anneau du poste :
+
+1. `anneau-suspendu-N` : `block` d'une version suspendue (tous les anneaux, tous les types de proposition) ;
+2. `anneau-retenue-N` : `block` d'une version **en cours de diffusion** pas encore autorisée pour l'anneau, avec un motif
+   lisible : « Pilote Intel - Display - 31.0.101.5600 : disponible pour votre anneau « Général » le 08/12/2026 à 09:00 » ;
+3. `anneau-famille-N` : une règle par **famille** de pilotes (titre dont les numéros de version sont remplacés par `*`,
+   par ex. « Intel - Display - * », par plage de version majeure) : `pin` à la version la plus récente autorisée pour
+   l'anneau, ou `block` si aucune ne l'est encore. Une version **plus récente que toutes celles que la console connaît**
+   est donc retenue elle aussi : c'est ce qui protège le parc quand des milliers de postes analysent à la même heure le
+   jour d'une publication, avant que le premier rapport ne l'ait signalée à la console.
+
+Seules les versions en cours de diffusion sont listées (une version autorisée partout disparaît des règles ; une famille
+est une règle quel que soit le nombre de ses versions ; une famille plus vue depuis un an n'est plus listée). Mesure :
+300 versions en cours de diffusion et 60 familles = 146 Ko (7 Ko compressés) pour l'anneau le plus tardif, 0,5 Ko pour
+l'anneau pilote.
+
+**Postes 4.0** : en demandant leur politique, ils s'identifient (en-têtes `X-SpokaPilote-Machine-Id`, identifiant Windows,
+et `X-SpokaPilote-Machine`, nom) et demandent la section `rollout` (`X-SpokaPilote-Rollout: 1`) : anneau, délai,
+validation exigée, dates de disponibilité (affichées à l'heure locale du poste) et consigne de retenir aussi une version
+d'une **famille jamais vue** par la console (nouveau matériel), tant qu'un rapport ne l'a pas signalée. La section est lue
+avec tolérance (une console plus récente peut y ajouter des informations).
+
+**Postes 3.x (compatibilité)** : ils refusent toute propriété inconnue d'une politique — c'est pourquoi la section
+`rollout` ne leur est **jamais** envoyée (elle ne l'est que sur demande) : ils reçoivent uniquement des règles `block` /
+`pin` qu'ils comprennent déjà, et les appliquent à l'identique (prouvé par un test qui lit la politique servie avec
+l'analyseur exact de la 3.1.0). Ils ne s'identifient pas en lisant leur politique : la console leur sert celle de
+l'**anneau le plus prudent** (une version ne leur est autorisée que lorsqu'elle l'est pour tous les anneaux). Mettez les
+postes pilotes à jour en 4.0 pour qu'ils reçoivent leur propre anneau. Limite : un poste 3.x ne retient pas une version
+d'une famille jamais vue par la console (nouveau matériel) avant le premier rapport qui la signale.
+
+**Hors ligne** : un poste qui ne joint pas la console applique la dernière politique reçue (cache), retenues comprises ;
+les retenues datées n'expirent pas d'elles-mêmes (la console peut avoir suspendu la version entre-temps) : elles sont
+levées au retour de la console. Un poste sans console (fichier, partage, URL) ne connaît pas les anneaux : rien ne change
+pour lui.
+
+`spokapilote policy show` affiche l'anneau du poste, son délai, la validation exigée, les versions suspendues et les
+versions retenues avec leur date (« Pilote X 31.0.101.5590 : disponible pour votre anneau « Général » le 08/12/2026 à
+09:00 »). `policy test`, `scan` et l'interface séparent les pilotes **retenus** (⏳, non sélectionnables, jamais installés)
+des pilotes bloqués par la politique ; le rapport JSON indique `policy.rolloutRing` et `policy.rolloutHeldCandidates`.
+
+### Suspension automatique (disjoncteur)
+
+À chaque rapport qui signale un échec d'installation d'une version, la console compte, **anneau par anneau**, sur une
+fenêtre glissante, les postes qui ont tenté de l'installer et ceux en échec. Si un anneau atteint **les deux seuils** —
+par défaut **au moins 3 postes en échec et au moins 20 % des tentatives en 48 heures** (réglables) — la version est
+**suspendue sur tout le parc** : règle `block` servie à tous les postes (motif « suspendu automatiquement : 3 échecs sur
+7 installations dans l'anneau « Pilote » en 48 h »), alerte « Pilote suspendu automatiquement » sur les canaux configurés
+(une par version et par 24 h), entrée du journal d'audit (auteur « Disjoncteur automatique »), pastille rouge dans le menu
+de la console et encart sur la vue d'ensemble.
+
+- **Reprendre** (Technicien) : la version redevient installable selon les anneaux ; seuls les échecs **postérieurs** à
+  la reprise comptent ensuite pour le disjoncteur.
+- **Maintenir le blocage** (Technicien) : la suspension reste, elle n'est plus signalée comme à examiner.
+- **Suspendre ce pilote** (Technicien) : suspension manuelle d'une version, avec un motif.
+- Chaque poste compte une fois par version et par anneau (son dernier résultat) : un poste qui échoue à chaque passage ne
+  déclenche pas seul le disjoncteur ; le même rapport reçu deux fois n'est compté qu'une fois.
+
+**Régressions** (réglage « compter comme un échec ») : un périphérique en erreur dans le rapport qui suit une installation
+réussie (dans les 7 jours), avec **comme pilote installé la version installée**, compte comme un échec de cette version
+(« Régression : « NVIDIA RTX A2000 » en erreur après l'installation (code 43) »), une fois par installation. Ce que les
+rapports ne permettent pas de voir : écrans bleus et redémarrages en boucle (le poste n'envoie plus de rapport), lenteurs,
+périphérique qui fonctionne mal sans être en erreur, périphérique en erreur avec un autre pilote que celui installé.
+
+### Limites
+
+- Le regroupement en **familles** repose sur le titre publié par la source : deux pilotes différents au titre identique
+  (hors numéros) sont dans la même famille, plafonnée à la plus récente version autorisée — une nouvelle version d'un
+  pilote **inférieure** au plafond de sa famille n'est alors pas retenue avant le premier rapport qui la signale.
+- Une version encore jamais proposée à un poste de l'anneau pilote n'y est jamais validée : si l'anneau suivant exige une
+  validation, elle y reste retenue (« en attente de validation ») jusqu'à une décision (« Diffuser partout »).
+- L'identité envoyée par un poste n'est pas prouvée (le jeton d'enrôlement est commun) : un poste peut se déclarer membre
+  de l'anneau pilote. Les anneaux sont une protection contre les accidents, pas contre un poste malveillant.
+- Les installations comptent dans l'anneau du poste **au moment du rapport** ; un poste qui change d'anneau garde ses
+  résultats dans l'ancien.
 
 ## Liste de référence SpokaPilote
 

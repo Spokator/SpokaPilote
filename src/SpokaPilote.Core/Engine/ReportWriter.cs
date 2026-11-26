@@ -126,7 +126,7 @@ public static class ReportWriter
         {
             sb.Append("<div class=\"scroll\"><table><tr><th>Type</th><th>Pilote</th><th>Version</th><th>Source</th><th>Périphérique(s)</th></tr>");
             foreach (var c in scan.Candidates)
-                sb.Append($"<tr><td>{E(c.KindLabel)}</td><td>{E(c.Title)}{(c.BlockedReason is null ? "" : $"<br><span class=\"bad\">⛔ Bloqué par la politique : {E(c.BlockedReason)}</span>")}</td><td>{E(c.Version)}</td><td>{E(c.SourceLabel)}</td><td>{E(string.Join(", ", c.TargetDeviceNames.Distinct()))}</td></tr>");
+                sb.Append($"<tr><td>{E(c.KindLabel)}</td><td>{E(c.Title)}{(c.BlockedReason is null ? "" : $"<br><span class=\"bad\">{(c.HeldByRollout ? "⏳ Retenu par la diffusion par anneaux" : "⛔ Bloqué par la politique")} : {E(c.BlockedReason)}</span>")}</td><td>{E(c.Version)}</td><td>{E(c.SourceLabel)}</td><td>{E(string.Join(", ", c.TargetDeviceNames.Distinct()))}</td></tr>");
             sb.Append("</table></div>");
         }
 

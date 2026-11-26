@@ -73,7 +73,8 @@ internal static partial class Program
             if (policy.FromCache) WriteLine($"  Origine    : cache local du {policy.CachedAt:dd/MM/yyyy HH:mm} ({loader.CacheFile})", ConsoleColor.Yellow);
             if (org.Description is not null) WriteLine($"  {org.Description}", ConsoleColor.Gray);
             PrintSettings(org.Settings);
-            PrintRules(org.Rules);
+            PrintRules(org.Rules.Where(r => !r.IsRollout).ToList());
+            PrintRollout(org);
         }
         else if (source is not null)
         {
@@ -95,10 +96,66 @@ internal static partial class Program
             WriteLine("  Indisponible.", ConsoleColor.Yellow);
         }
 
-        WriteLine("\nOrdre d'évaluation : sources autorisées → règles de l'organisation → liste de référence → réglages généraux.", ConsoleColor.DarkGray);
+        WriteLine(policy.Organization?.Rollout is not null
+            ? "\nOrdre d'évaluation : sources autorisées → diffusion par anneaux → règles de l'organisation → liste de référence → réglages généraux."
+            : "\nOrdre d'évaluation : sources autorisées → règles de l'organisation → liste de référence → réglages généraux.", ConsoleColor.DarkGray);
         WriteLine("La première règle « block » ou « allow » qui correspond décide ; « pin » bloque si la version dépasse la version figée.", ConsoleColor.DarkGray);
         return ExitOk;
     }
+
+    /// <summary>
+    /// Diffusion par anneaux de la console (4.0) : anneau du poste, versions retenues avec leur date de disponibilité (à
+    /// l'heure locale), versions suspendues, familles surveillées.
+    /// </summary>
+    private static void PrintRollout(DriverPolicy org)
+    {
+        if (org.Rollout is not { } r) return;
+        WriteLine("\nDiffusion par anneaux (console centrale)", ConsoleColor.Cyan);
+        if (r.Enabled)
+        {
+            if (r.Ring is null)
+                WriteLine("  Anneau     : le plus prudent — ce poste ne s'est pas identifié auprès de la console : une version ne lui est " +
+                          "autorisée que lorsqu'elle l'est pour tous les anneaux.", ConsoleColor.Yellow);
+            else
+                WriteLine($"  Anneau     : « {r.Ring} »{(r.RingPosition is { } pos ? $" ({pos}/{r.RingCount})" : "")}" +
+                          $"{(r.MachineKnown ? "" : " — anneau par défaut (poste encore inconnu de la console)")}", ConsoleColor.White);
+            WriteLine($"  Délai      : {(r.DelayDays == 0 ? "aucun (les nouvelles versions sont disponibles dès leur première détection)" : $"{r.DelayDays} jour(s) après la première détection d'une version sur le parc")}",
+                ConsoleColor.Gray);
+            if (r.ValidationRing is not null)
+                WriteLine($"  Validation : exigée dans l'anneau « {r.ValidationRing} » ({r.MinSuccesses} installation(s) réussie(s) au moins, " +
+                          $"{r.MaxFailures} échec(s) toléré(s))", ConsoleColor.Gray);
+            if (r.HoldUnknown)
+                WriteLine("  Nouveautés : une version jamais vue par la console est retenue jusqu'à ce qu'un rapport la lui signale.", ConsoleColor.Gray);
+        }
+        else
+        {
+            WriteLine("  Anneaux désactivés sur la console : seules les suspensions s'appliquent.", ConsoleColor.Gray);
+        }
+
+        var rules = org.Rules.Where(x => x.IsRollout).ToList();
+        var suspended = rules.Where(x => x.Id!.StartsWith(PolicyRollout.SuspendedPrefix, StringComparison.Ordinal)).ToList();
+        var holds = rules.Where(x => x.Id!.StartsWith(PolicyRollout.HoldPrefix, StringComparison.Ordinal)).ToList();
+        var families = rules.Count(x => x.IsRolloutFamily);
+        WriteLine($"  Versions suspendues sur tout le parc ({suspended.Count}) :", ConsoleColor.White);
+        foreach (var s in suspended) WriteLine($"    ⛔ {s.Reason}", ConsoleColor.Red);
+        WriteLine($"  Versions en cours de diffusion, pas encore disponibles pour ce poste ({holds.Count}) :", ConsoleColor.White);
+        foreach (var h in holds)
+        {
+            // Motif recalculé à l'heure locale quand la date de disponibilité est connue.
+            var text = r.AvailableAt(h.Id) is { } at && h.Title is { Count: > 0 } title
+                ? (r.Ring is null
+                    ? $"Pilote {RolloutName(title[0], h.Versions?.FirstOrDefault())} : disponible pour ce poste le {PolicyRollout.FormatLocal(at)}"
+                    : $"Pilote {RolloutName(title[0], h.Versions?.FirstOrDefault())} : disponible pour votre anneau « {r.Ring} » le {PolicyRollout.FormatLocal(at)}")
+                : h.Reason;
+            WriteLine($"    ⏳ {text}", ConsoleColor.DarkYellow);
+        }
+        if (families > 0)
+            WriteLine($"  Familles de pilotes surveillées : {families} (une version plus récente que la dernière autorisée pour l'anneau est retenue).",
+                ConsoleColor.DarkGray);
+    }
+
+    private static string RolloutName(string title, string? version) =>
+        string.IsNullOrEmpty(version) || title.Contains(version, StringComparison.OrdinalIgnoreCase) ? title : $"{title} {version}";
 
     private static void PrintSettings(PolicySettings s)
     {
@@ -229,9 +286,21 @@ internal static partial class Program
             return $"{c.Title} {c.Version} [{c.SourceLabel}, {c.KindLabel}]{devices}";
         }
 
-        var blocked = decisions.Where(d => d.Decision.IsBlocked).ToList();
+        var held = decisions.Where(d => d.Decision.IsRolloutHold).ToList();
+        var blocked = decisions.Where(d => d.Decision.IsBlocked && !d.Decision.IsRolloutHold).ToList();
         var explicitAllow = decisions.Where(d => d.Decision.IsExplicitAllow).ToList();
         var allowed = decisions.Where(d => !d.Decision.IsBlocked && !d.Decision.IsExplicitAllow).ToList();
+
+        if (held.Count > 0 || scan.Policy?.Organization?.Rollout is { Enabled: true })
+        {
+            var ring = scan.Policy?.Organization?.Rollout?.RingLabel;
+            WriteLine($"\nRetenus par la diffusion par anneaux{(ring is null ? "" : $" (anneau {ring})")} ({held.Count}) :", ConsoleColor.White);
+            foreach (var d in held)
+            {
+                WriteLine($"  ⏳ {Line(d)}", ConsoleColor.DarkYellow);
+                WriteLine($"      {d.Decision.Reason}", ConsoleColor.DarkYellow);
+            }
+        }
 
         WriteLine($"\nBloqués ({blocked.Count}) :", ConsoleColor.White);
         foreach (var d in blocked)
@@ -248,7 +317,8 @@ internal static partial class Program
         WriteLine($"\nAutorisés, aucune règle ne s'applique ({allowed.Count}) :", ConsoleColor.White);
         foreach (var d in allowed) WriteLine($"  · {Line(d)}", ConsoleColor.Gray);
 
-        WriteLine($"\nBilan : {blocked.Count} bloqué(s), {explicitAllow.Count + allowed.Count} installable(s).", ConsoleColor.Cyan);
+        WriteLine($"\nBilan : {(held.Count > 0 ? $"{held.Count} retenu(s) par la diffusion par anneaux, " : "")}{blocked.Count} bloqué(s), " +
+                  $"{explicitAllow.Count + allowed.Count} installable(s).", ConsoleColor.Cyan);
         return ExitOk;
     }
 
