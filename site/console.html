@@ -19,8 +19,9 @@
     <p class="eyebrow">Pour le parc</p>
     <h1>Console centrale SpokaPilote Server</h1>
     <p class="lead">Chaque poste envoie le rapport de ses analyses et de ses installations ; l'équipe informatique voit
-      d'un coup d'œil les postes à traiter et le matériel qui n'a pas encore de pilote, sur tout le parc. La console
-      est <strong>auto-hébergée</strong> : un seul conteneur Docker, aucune base de données externe, aucun service tiers.</p>
+      d'un coup d'œil les postes à traiter et le matériel qui n'a pas encore de pilote, pilote la diffusion des nouvelles
+      versions et agit à distance, sur tout le parc. La console est <strong>auto-hébergée</strong> : un seul conteneur
+      Docker, aucune base de données externe, aucun service tiers — mesurée sur <strong>20 000 postes</strong>.</p>
     <div class="btn-row">
       <a class="btn btn-primary" href="{{ROOT}}docs/console-centrale.html">Guide d'installation</a>
       <a class="btn btn-secondary" href="https://github.com/Spokator/SpokaPilote/pkgs/container/spokapilote-server" rel="noopener">Image Docker</a>
@@ -33,7 +34,7 @@
     <figure class="window">
       <div class="window-bar">SpokaPilote Server — Vue d'ensemble</div>
       <img src="{{ROOT}}assets/captures/console-vue-ensemble.png" width="1300" height="900"
-        alt="Vue d'ensemble de la console : 7 postes, 4 sains, 3 à traiter, matériel sans pilote, pannes matérielles, pilotes proposés, liste des postes à traiter et des modèles du parc.">
+        alt="Vue d'ensemble de la console sur un parc de démonstration de plusieurs milliers de postes : postes sains et à traiter, matériel sans pilote, pannes matérielles, pilotes proposés, santé moyenne, pilotes dangereux, liste des postes à traiter.">
     </figure>
     <p class="section-intro" style="margin-top:12px">Parc de démonstration (noms de postes fictifs).</p>
   </div>
@@ -49,8 +50,13 @@
         résultats d'installation, historique des derniers rapports, rapport complet téléchargeable.</p></div>
       <div class="card"><h3>Matériel sans pilote</h3><p>Regroupé par identifiant matériel sur tout le parc, avec les postes
         et modèles concernés ; export CSV.</p></div>
-      <div class="card"><h3>Politique et imprimantes</h3><p>La politique de pilotes et le profil d'imprimantes se modifient
-        en ligne ; les postes les récupèrent automatiquement avec leur jeton.</p></div>
+      <div class="card"><h3>Anneaux de déploiement</h3><p>Groupe pilote d'abord, puis précoce, puis général : chaque
+        nouvelle version de pilote attend son tour. Trop d'échecs dans un anneau, et le disjoncteur la suspend sur tout le
+        parc, avec une alerte.</p></div>
+      <div class="card"><h3>Cache de pilotes</h3><p>La console télécharge chaque pilote et chaque catalogue une seule fois
+        chez l'éditeur officiel et les sert aux postes du réseau local ; chaque poste revérifie empreinte et signature.</p></div>
+      <div class="card"><h3>Politique</h3><p>La politique de pilotes (et le profil d'imprimantes utilisé par SpokaPrint)
+        se modifient en ligne ; les postes les récupèrent automatiquement avec leur jeton.</p></div>
       <div class="card"><h3>Actions à distance</h3><p>Depuis la fiche d'un poste ou une sélection : analyser, installer les
         pilotes manquants ou les mises à jour, déployer les imprimantes, annuler la dernière intervention, mettre à jour
         SpokaPilote. L'agent du poste exécute l'action et renvoie le résultat.</p></div>
@@ -75,6 +81,16 @@
         <a class="window" href="{{ROOT}}assets/captures/console-materiel.png"><img src="{{ROOT}}assets/captures/console-materiel.png" width="1300" height="900" loading="lazy"
           alt="Matériel sans pilote regroupé par identifiant matériel, avec les postes et modèles concernés et l'export CSV."></a>
         <figcaption>Matériel sans pilote sur tout le parc.</figcaption>
+      </figure>
+      <figure>
+        <a class="window" href="{{ROOT}}assets/captures/console-deploiement.png"><img src="{{ROOT}}assets/captures/console-deploiement.png" width="1300" height="900" loading="lazy"
+          alt="Page Déploiement : anneaux Pilote, Précoce et Général avec leur délai, leurs groupes et leurs postes, disjoncteur actif, pilotes en cours de diffusion."></a>
+        <figcaption>Anneaux de déploiement et disjoncteur.</figcaption>
+      </figure>
+      <figure>
+        <a class="window" href="{{ROOT}}assets/captures/console-groupes.png"><img src="{{ROOT}}assets/captures/console-groupes.png" width="1300" height="900" loading="lazy"
+          alt="Groupes de postes avec leurs règles automatiques (constructeur, modèle, nom de poste) et leur nombre de postes."></a>
+        <figcaption>Groupes de postes, remplis par des règles.</figcaption>
       </figure>
     </div>
   </div>
