@@ -81,15 +81,17 @@ $cliVersion = & (Join-Path $out "spokapilote.exe") version
 if ($LASTEXITCODE -ne 0) { throw "spokapilote.exe ne démarre pas." }
 $gui = [System.Diagnostics.FileVersionInfo]::GetVersionInfo((Join-Path $out "SpokaPilote.App.exe"))
 if ($gui.InternalName -notlike "SpokaPilote.App*") { throw "SpokaPilote.App.exe n'est pas l'interface graphique ($($gui.InternalName))." }
-# Contrôle de l'interface : elle doit s'ouvrir, afficher chaque onglet et se fermer sans erreur.
+# Contrôle de l'interface : elle doit s'ouvrir, afficher chaque page (navigation à 6 pages : Accueil, Pilotes,
+# Périphériques, Historique, Outils, Paramètres) et se fermer sans erreur.
 $shots = Join-Path $env:TEMP "spokapilote-smoke"
 Remove-Item $shots -Recurse -Force -ErrorAction SilentlyContinue
 $ui = Start-Process (Join-Path $out "SpokaPilote.App.exe") -ArgumentList "--screenshot `"$shots`"" -PassThru
 if (-not $ui.WaitForExit(120000)) { $ui.Kill(); throw "L'interface ne s'est pas fermée (fenêtre d'erreur ?)." }
 if ($ui.ExitCode -ne 0) { throw "L'interface a rencontré une erreur (code $($ui.ExitCode)) : voir %ProgramData%\SpokaPilote\Logs." }
-$tabs = (Get-ChildItem $shots -Filter *.png).Count
-if ($tabs -lt 8) { throw "L'interface n'a affiché que $tabs onglet(s) sur 8." }
-Write-Host "OK -> $out (CLI $cliVersion, interface : $tabs onglets)" -ForegroundColor Green
+$pages = (Get-ChildItem $shots -Filter "page-*.png").Count
+if ($pages -lt 6) { throw "L'interface n'a affiché que $pages page(s) sur 6." }
+if ((Get-ChildItem $shots -Filter "assistant-*.png").Count -lt 3) { throw "L'assistant de premier lancement n'a pas été affiché." }
+Write-Host "OK -> $out (CLI $cliVersion, interface : $pages pages)" -ForegroundColor Green
 
 # Contrôle de l'archive portable extraite : mode portable reconnu, données rangées à côté de l'exécutable.
 if ($portableZip) {

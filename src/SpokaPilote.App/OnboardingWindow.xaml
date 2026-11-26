@@ -19,7 +19,7 @@
             <StackPanel>
                 <TextBlock FontSize="26" FontWeight="SemiBold" Text="Bienvenue dans SpokaPilote" TextWrapping="Wrap" />
                 <TextBlock Margin="0,8,0,16" FontSize="14" TextWrapping="Wrap" Opacity="0.85"
-                           Text="SpokaPilote trouve, vérifie et installe les bons pilotes pour tout le poste et pour les imprimantes d'entreprise, sans passer par les sites de pilotes douteux." />
+                           Text="SpokaPilote analyse le poste, puis installe les bons pilotes depuis les sources officielles uniquement, sans passer par les sites de pilotes douteux." />
                 <Border Style="{StaticResource Card}" Margin="0,0,0,10">
                     <StackPanel>
                         <TextBlock FontWeight="SemiBold" Text="✔  Sources officielles uniquement" />
@@ -35,7 +35,7 @@
                 <Border Style="{StaticResource Card}">
                     <StackPanel>
                         <TextBlock FontWeight="SemiBold" Text="✔  Retour arrière à tout moment" />
-                        <TextBlock Opacity="0.8" TextWrapping="Wrap" Text="Point de restauration, sauvegarde des pilotes et annulation d'une intervention en un clic (onglet Historique)." />
+                        <TextBlock Opacity="0.8" TextWrapping="Wrap" Text="Point de restauration, sauvegarde des pilotes et annulation d'une intervention en un clic (page Historique)." />
                     </StackPanel>
                 </Border>
             </StackPanel>
@@ -70,7 +70,7 @@
                     <TextBlock Text="Jeton d'enrôlement (fourni par la console, page Enrôlement)" Margin="0,12,0,4" />
                     <TextBox x:Name="TokenBox" AutomationProperties.Name="Jeton d'enrôlement" />
                     <TextBlock Margin="0,12,0,0" Opacity="0.75" TextWrapping="Wrap"
-                               Text="L'entretien automatique et les imprimantes se règlent ensuite dans Paramètres et Imprimantes. Tout reste modifiable plus tard." />
+                               Text="L'entretien automatique et le dépôt de pilotes se règlent ensuite dans Outils, la console dans Paramètres. Tout reste modifiable plus tard." />
                 </StackPanel>
             </StackPanel>
         </ScrollViewer>
@@ -80,10 +80,10 @@
             <StackPanel>
                 <TextBlock FontSize="22" FontWeight="SemiBold" Text="C'est prêt" />
                 <TextBlock Margin="0,8,0,16" FontSize="14" TextWrapping="Wrap" Opacity="0.85"
-                           Text="Lancez une première analyse : SpokaPilote inventorie le matériel et vous montre ce qui manque, sans rien installer. L'installation se fait ensuite d'un clic, après votre accord." />
+                           Text="Lancez une première analyse : SpokaPilote inventorie le matériel et vous montre ce qui manque, sans rien installer. Ensuite, un clic sur « Installer » depuis l'Accueil, après votre accord." />
                 <CheckBox x:Name="ScanNow" IsChecked="True" Content="Analyser ce poste maintenant" />
                 <TextBlock Margin="0,20,0,0" Opacity="0.75" TextWrapping="Wrap"
-                           Text="Raccourcis : F5 analyser · Ctrl+1 à Ctrl+8 changer d'onglet · F1 aide en ligne." />
+                           Text="Raccourcis : F5 analyser · Ctrl+1 à Ctrl+6 changer de page · F1 aide en ligne." />
             </StackPanel>
         </ScrollViewer>
 

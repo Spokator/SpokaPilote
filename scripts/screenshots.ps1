@@ -1,13 +1,15 @@
-﻿# Captures d'écran de SpokaPilote, générées par l'application elle-même (une image par onglet, après une analyse) :
+﻿# Captures d'écran de SpokaPilote, générées par l'application elle-même (une image par page, après une analyse) :
 #   .\scripts\screenshots.ps1                 -> dist-store\captures\ : captures brutes + versions « Store » (1600 × 900)
 #   .\scripts\screenshots.ps1 -Site           -> met aussi à jour les captures du site web (site\assets\captures)
 #   .\scripts\screenshots.ps1 -NoScan         -> sans analyse du poste (plus rapide, écrans vides)
-# Le nom de l'ordinateur affiché en tête de l'écran « Ce poste » est remplacé par -Alias (« PC-DEMO ») :
-# aucune information personnelle dans des images destinées à être publiées.
+#   .\scripts\screenshots.ps1 -Lang en        -> interface en anglais
+# Le nom de l'ordinateur est remplacé par -Alias (« PC-DEMO ») et le numéro de série masqué, par l'application
+# elle-même (--alias) : aucune information personnelle dans des images destinées à être publiées.
 param(
     [ValidateSet("x64", "arm64")] [string]$Arch = $(if ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq 'Arm64') { "arm64" } else { "x64" }),
     [string]$Output,
     [string]$Alias = "PC-DEMO",
+    [ValidateSet("fr", "en")] [string]$Lang = "fr",
     [switch]$NoScan,
     [switch]$Site
 )
@@ -25,42 +27,28 @@ if (-not (Test-Path $exe)) {
 # 1. Captures brutes par l'application (--screenshot), après une analyse réelle du poste.
 $raw = Join-Path $env:TEMP "spokapilote-captures"
 Remove-Item $raw -Recurse -Force -ErrorAction SilentlyContinue
-$appArgs = "--screenshot `"$raw`""
+$appArgs = "--screenshot `"$raw`" --alias `"$Alias`" --lang $Lang"
 if (-not $NoScan) { $appArgs += " --scan" }
-Write-Host "Capture des onglets$(if (-not $NoScan) { ' (après analyse du poste, environ 1 minute)' })…"
+Write-Host "Capture des pages$(if (-not $NoScan) { ' (après analyse du poste, environ 1 minute)' })…"
 $ui = Start-Process $exe -ArgumentList $appArgs -PassThru
 if (-not $ui.WaitForExit(600000)) { $ui.Kill(); throw "L'application ne s'est pas fermée." }
 if ($ui.ExitCode -ne 0) { throw "L'application a rencontré une erreur (code $($ui.ExitCode))." }
 
-# Ordre des onglets de l'interface -> noms de fichiers lisibles.
-$names = "poste", "pilotes", "peripheriques", "imprimantes", "depot", "historique", "journal", "parametres"
+# Pages de la navigation, dans l'ordre (l'application écrit page-N-nom.png) -> noms de fichiers lisibles.
+$names = "accueil", "pilotes", "peripheriques", "historique", "outils", "parametres"
 New-Item -ItemType Directory -Force $Output | Out-Null
 Get-ChildItem $Output -Filter *.png -ErrorAction SilentlyContinue | Remove-Item
 
-function Get-Pixel([System.Drawing.Bitmap]$bmp, [int]$x, [int]$y) { $bmp.GetPixel([Math]::Min($x, $bmp.Width - 1), [Math]::Min($y, $bmp.Height - 1)) }
-
 for ($i = 0; $i -lt $names.Count; $i++) {
-    $src = Join-Path $raw "onglet-$($i + 1).png"
+    $src = Join-Path $raw "page-$($i + 1)-$($names[$i]).png"
     if (-not (Test-Path $src)) { throw "Capture manquante : $src" }
-    # La fenêtre utilise l'effet Mica (fond transparent dans la capture) : on l'aplatit sur le fond clair de Windows 11.
+    # Fond opaque (couleur de base du thème) déjà posé par l'application ; on aplatit par sécurité sur le fond clair de Windows 11.
     $shot = [System.Drawing.Image]::FromFile($src)
     $bmp = New-Object System.Drawing.Bitmap($shot.Width, $shot.Height)
     $g = [System.Drawing.Graphics]::FromImage($bmp)
     $g.Clear([System.Drawing.Color]::FromArgb(255, 243, 243, 243))
     $g.DrawImage($shot, 0, 0, $shot.Width, $shot.Height)
     $shot.Dispose()
-    if ($i -eq 0) {
-        # Titre de l'écran « Ce poste » : « NOM-DU-PC — Fabricant Modèle » -> « PC-DEMO — Fabricant Modèle ».
-        $scale = $bmp.Width / 1224.0 # largeur de la fenêtre à 100 %
-        $g.TextRenderingHint = [System.Drawing.Text.TextRenderingHint]::AntiAliasGridFit
-        $bg = Get-Pixel $bmp ([int](205 * $scale)) ([int](45 * $scale))
-        $fg = if ($bg.GetBrightness() -gt 0.5) { [System.Drawing.Color]::FromArgb(255, 27, 27, 27) } else { [System.Drawing.Color]::White }
-        $g.FillRectangle((New-Object System.Drawing.SolidBrush($bg)), [int](212 * $scale), [int](24 * $scale), [int]($bmp.Width - 240 * $scale), [int](40 * $scale))
-        $cs = Get-CimInstance Win32_ComputerSystem
-        $title = "$Alias — $($cs.Manufacturer) $($cs.Model)".Trim()
-        $font = New-Object System.Drawing.Font("Segoe UI Semibold", [float](28 * $scale), [System.Drawing.FontStyle]::Regular, [System.Drawing.GraphicsUnit]::Pixel)
-        $g.DrawString($title, $font, (New-Object System.Drawing.SolidBrush($fg)), [float](213 * $scale), [float](25 * $scale))
-    }
     $g.Dispose()
     $bmp.Save((Join-Path $Output "$($names[$i]).png"), [System.Drawing.Imaging.ImageFormat]::Png)
     $bmp.Dispose()
