@@ -11,7 +11,7 @@ internal static partial class Program
         "export-profile" => Task.FromResult(ExportPrinterProfile(a)),
         "deploy" => DeployPrinterProfileAsync(a, settings, ct),
         "remove" => RemovePrinterAsync(a, ct),
-        _ => Task.FromResult(Help()),
+        _ => Task.FromResult(Usage("printers")),
     };
 
     private static int ExportPrinterProfile(Args a)

@@ -12,7 +12,7 @@ internal static partial class Program
     private static async Task<int> ImageAsync(Args a, CancellationToken ct)
     {
         var sub = a.Positional(0);
-        if (sub is not ("info" or "inject" or "cleanup")) return Help();
+        if (sub is not ("info" or "inject" or "cleanup")) return Usage("image");
         Banner();
         if (!Elevation.IsAdministrator())
         {

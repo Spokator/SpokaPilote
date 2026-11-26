@@ -15,7 +15,7 @@ internal static partial class Program
     private static async Task<int> DriverPackAsync(Args a, CancellationToken ct)
     {
         var sub = a.Positional(0) ?? "list";
-        if (sub is not ("list" or "download")) return Help();
+        if (sub is not ("list" or "download")) return Usage("driverpack");
         var settings = LoadSettings(a);
         Banner();
 

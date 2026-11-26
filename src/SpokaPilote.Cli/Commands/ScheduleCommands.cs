@@ -75,7 +75,7 @@ internal static partial class Program
                 return ExitOk;
             }
             default:
-                return Help();
+                return Usage("schedule");
         }
     }
 

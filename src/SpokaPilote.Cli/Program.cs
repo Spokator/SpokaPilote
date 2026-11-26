@@ -37,6 +37,10 @@ internal static partial class Program
         using var cts = new CancellationTokenSource();
         Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); WriteLine("Annulation demandée...", ConsoleColor.Yellow); };
 
+        // « spokapilote scan --help » / « spokapilote help scan » : aide de la commande, sans l'exécuter.
+        if (a.Command is "help" or null) return a.Positional(0) is { } topic ? HelpFor(topic) : Help();
+        if (a.Flag("help")) return HelpFor(a.Command);
+
         try
         {
             return a.Command switch
@@ -64,7 +68,7 @@ internal static partial class Program
                 "driverstore" or "driver-store" or "magasin" => await DriverStoreAsync(a, cts.Token),
                 "agent" => await AgentAsync(a, cts.Token),
                 "version" or "--version" => Version(),
-                _ => Help(),
+                _ => Help(a.Command),
             };
         }
         catch (OperationCanceledException)
@@ -441,7 +445,7 @@ internal static partial class Program
         if (sub is "export-profile" or "deploy" or "remove")
             return await PrinterProfileAsync(sub, a, settings, ct);
 
-        return Help();
+        return Usage("printers");
     }
 
     // ------------------------------------------------------------------ pack hors ligne, historique, parc, mise à jour
@@ -664,9 +668,49 @@ internal static partial class Program
         }
     }
 
-    private static int Help()
+    /// <summary>Aide complète. Code 0 si demandée (« help », « --help »), 64 si la commande est inconnue.</summary>
+    private static int Help(string? unknownCommand = null)
     {
-        Console.WriteLine("""
+        if (unknownCommand is not null) WriteLine($"Commande inconnue : {unknownCommand}", ConsoleColor.Red);
+        Console.WriteLine(HelpText);
+        return unknownCommand is null ? ExitOk : ExitUsage;
+    }
+
+    // Alias français → nom de la commande tel qu'il apparaît dans l'aide.
+    private static readonly Dictionary<string, string> HelpAliases = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["update"] = "install", ["driver-pack"] = "driverpack", ["historique"] = "history", ["annuler"] = "rollback",
+        ["restaurer"] = "restore", ["parc"] = "fleet-report", ["mise-a-jour"] = "self-update", ["politique"] = "policy",
+        ["planification"] = "schedule", ["serveur"] = "server", ["sante"] = "health", ["santé"] = "health",
+        ["peripherique"] = "device", ["périphérique"] = "device", ["driver-store"] = "driverstore", ["magasin"] = "driverstore",
+    };
+
+    /// <summary>
+    /// Aide d'une seule commande (« spokapilote scan --help », « spokapilote help printers ») : les rubriques de l'aide
+    /// qui la décrivent, plutôt que de lancer la commande.
+    /// </summary>
+    private static int HelpFor(string command)
+    {
+        var name = HelpAliases.GetValueOrDefault(command, command).ToLowerInvariant();
+        var blocks = HelpText.Replace("\r\n", "\n").Split("\n\n");
+        var matches = blocks.Where(b => b.Split('\n').Any(l =>
+            l.TrimStart().StartsWith($"spokapilote {name} ", StringComparison.OrdinalIgnoreCase) ||
+            l.Trim().Equals($"spokapilote {name}", StringComparison.OrdinalIgnoreCase))).ToList();
+        if (matches.Count == 0) return Help(command);
+        Console.WriteLine(string.Join("\n\n", matches));
+        Console.WriteLine();
+        Console.WriteLine("Codes de sortie : 0 OK · 1 erreur · 2 échec partiel · 3010 redémarrage requis   (aide complète : spokapilote help)");
+        return ExitOk;
+    }
+
+    /// <summary>Sous-commande invalide : aide de la commande, code 64 pour les scripts.</summary>
+    private static int Usage(string command)
+    {
+        HelpFor(command);
+        return ExitUsage;
+    }
+
+    private static string HelpText => """
             SpokaPilote — installation de pilotes depuis les sources officielles (Microsoft, Dell, HP, Lenovo, NVIDIA, dépôt interne)
 
             ANALYSE ET INSTALLATION
@@ -772,8 +816,6 @@ internal static partial class Program
 
             Codes de sortie : 0 OK · 1 erreur · 2 échec partiel · 3010 redémarrage requis
             Journaux : %ProgramData%\SpokaPilote\Logs
-            """);
-        return ExitUsage;
-    }
+            """;
 }
 

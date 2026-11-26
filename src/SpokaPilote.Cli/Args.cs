@@ -33,7 +33,7 @@ internal sealed class Args
                 else if (ValueOptions.Contains(key) && i + 1 < args.Length && !args[i + 1].StartsWith("--")) _values.Add((key, args[++i]));
                 else _flags.Add(key);
             }
-            else if (arg is "-h" or "/?") Command = "help";
+            else if (arg is "-h" or "/?") { if (Command is null) Command = "help"; else _flags.Add("help"); }
             else if (Command is null) Command = arg.ToLowerInvariant();
             else _positionals.Add(arg);
         }
