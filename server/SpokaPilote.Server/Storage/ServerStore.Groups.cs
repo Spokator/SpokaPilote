@@ -36,11 +36,16 @@ public sealed partial class ServerStore
     public long? CreateGroup(string name, string? description, GroupRules rules, DateTimeOffset now)
     {
         using var c = Open();
+        using var tx = BeginWrite(c);
         try
         {
-            return Convert.ToInt64(Scalar(c, """
+            var id = Convert.ToInt64(Scalar(c, """
                 INSERT INTO machine_groups(name, description, rules_json, created_at, updated_at) VALUES($n, $d, $r, $now, $now) RETURNING id;
                 """, ("$n", name), ("$d", description), ("$r", JsonSerializer.Serialize(rules, Json)), ("$now", Iso(now))), CultureInfo.InvariantCulture);
+            // Membres par règle calculés une fois pour tout le parc, puis tenus à jour à chaque rapport.
+            RebuildAutoMembers(c, id, rules);
+            tx.Commit();
+            return id;
         }
         catch (SqliteException ex) when (ex.SqliteErrorCode == 19) // contrainte UNIQUE
         {
@@ -52,10 +57,14 @@ public sealed partial class ServerStore
     public bool UpdateGroup(long id, string name, string? description, GroupRules rules, DateTimeOffset now)
     {
         using var c = Open();
+        using var tx = BeginWrite(c);
         try
         {
-            return Execute(c, "UPDATE machine_groups SET name = $n, description = $d, rules_json = $r, updated_at = $now WHERE id = $id;",
+            var updated = Execute(c, "UPDATE machine_groups SET name = $n, description = $d, rules_json = $r, updated_at = $now WHERE id = $id;",
                 ("$id", id), ("$n", name), ("$d", description), ("$r", JsonSerializer.Serialize(rules, Json)), ("$now", Iso(now))) > 0;
+            if (updated) RebuildAutoMembers(c, id, rules);
+            tx.Commit();
+            return updated;
         }
         catch (SqliteException ex) when (ex.SqliteErrorCode == 19)
         {
@@ -73,7 +82,7 @@ public sealed partial class ServerStore
     public int ChangeGroupMembers(long groupId, IEnumerable<long> add, IEnumerable<long> remove, DateTimeOffset now)
     {
         using var c = Open();
-        using var tx = c.BeginTransaction();
+        using var tx = BeginWrite(c);
         var changes = 0;
         foreach (var m in add.Distinct())
             changes += Execute(c, "INSERT OR IGNORE INTO group_members(group_id, machine_ref) SELECT $g, id FROM machines WHERE id = $m;", ("$g", groupId), ("$m", m));

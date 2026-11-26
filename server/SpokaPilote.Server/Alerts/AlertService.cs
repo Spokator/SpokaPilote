@@ -103,11 +103,12 @@ public sealed class AlertService(ServerStore store, AlertSettingsService setting
     {
         var s = settings.Current();
         if (!s.HasChannel || !s.Triggers.MachineStale || s.StaleDays <= 0) return 0;
-        var stale = store.GetMachines().Where(m => FleetAggregator.IsStale(m.LastSeen, now, s.StaleDays)).OrderBy(m => m.LastSeen).ToList();
+        // Indicateurs précalculés (aucun rapport relu), puis seulement les postes non vus.
+        var stale = store.GetMachineSummaries().Where(m => FleetAggregator.IsStale(m.LastSeen, now, s.StaleDays)).OrderBy(m => m.LastSeen).ToList();
         // Clé anti-spam = poste + date du dernier contact : une alerte par période d'absence, renouvelée au plus tous les 30 jours.
         var fresh = stale.Where(m => store.TryRegisterAlert(Subject(m.Id), $"{AlertReasons.MachineStale}:{ServerStore.Iso(m.LastSeen)}", now, TimeSpan.FromDays(30))).ToList();
         if (fresh.Count == 0) return 0;
-        var lines = fresh.Take(30).Select(m => $"{m.Name} ({m.Report.System.DisplayModel}) — dernier contact le {m.LastSeen.ToLocalTime():dd/MM/yyyy HH:mm}").ToList();
+        var lines = fresh.Take(30).Select(m => $"{m.Name} ({m.DisplayModel}) — dernier contact le {m.LastSeen.ToLocalTime():dd/MM/yyyy HH:mm}").ToList();
         if (fresh.Count > 30) lines.Add($"… et {fresh.Count - 30} autre(s).");
         Enqueue(new Alert(AlertReasons.MachineStale, "warning",
             fresh.Count == 1 ? $"{fresh[0].Name} n'a pas été vu depuis {s.StaleDays} jours" : $"{fresh.Count} postes non vus depuis {s.StaleDays} jours",
@@ -121,7 +122,7 @@ public sealed class AlertService(ServerStore store, AlertSettingsService setting
     public Alert BuildDailySummary(DateTimeOffset now)
     {
         var s = settings.Current();
-        var fleet = FleetAggregator.Summarize(store.GetMachines(), now, s.StaleDays);
+        var fleet = store.GetFleetSummary(null, now, s.StaleDays);
         var jobs = store.GetJobStats(now);
         var facts = new List<AlertFact>
         {

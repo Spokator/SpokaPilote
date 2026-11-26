@@ -27,6 +27,17 @@ builder.Services.AddSingleton<ScheduleRunner>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<ScheduleRunner>());
 // Alertes (e-mail, webhooks) et tâches périodiques : expiration des tâches à distance, postes non vus, résumé quotidien.
 builder.Services.AddSpokaPiloteAlerts();
+// Grands parcs (3.2) : contrôle d'admission des postes (503 + Retry-After en cas d'afflux), mesures de l'API,
+// sauvegardes à chaud et entretien de la base en arrière-plan (compression de l'historique hérité, rétention, ANALYZE).
+builder.Services.AddSingleton<AdmissionControl>();
+builder.Services.AddSingleton<RequestMetrics>();
+builder.Services.AddSingleton<BackupService>();
+builder.Services.AddSingleton<StorageMaintenance>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<StorageMaintenance>());
+// Les accès à SQLite sont synchrones : assez de fils prêts d'emblée pour absorber un afflux sans attendre la croissance
+// progressive du pool (les requêtes des postes restent bornées par le contrôle d'admission).
+ThreadPool.GetMinThreads(out var minWorkers, out var minIo);
+ThreadPool.SetMinThreads(Math.Max(minWorkers, 64), minIo);
 // Limite globale de Kestrel (la limite fine, après décompression, est appliquée par BodyReader).
 builder.Services.AddOptions<KestrelServerOptions>().Configure<ServerOptions>((k, o) => k.Limits.MaxRequestBodySize = o.MaxReportBytes + 64 * 1024);
 
@@ -34,10 +45,15 @@ var app = builder.Build();
 
 // Initialisation au démarrage : base, jetons (générés et journalisés si absents) — une erreur ici arrête le serveur.
 var options = app.Services.GetRequiredService<ServerOptions>();
-app.Services.GetRequiredService<ServerStore>();
+var store = app.Services.GetRequiredService<ServerStore>();
 app.Services.GetRequiredService<TokenService>();
 app.Logger.LogInformation("SpokaPilote Server {Version} — données : {DataDirectory}, historique : {History} rapports par poste.",
     ApiEndpoints.Version, options.DataDirectory, options.HistoryPerMachine);
+if (store.OpenedSchemaVersion is > 0 and < ServerStore.SchemaVersion)
+    app.Logger.LogInformation("Base migrée du schéma {From} au schéma {To} en {Seconds:0.0} s.", store.OpenedSchemaVersion, ServerStore.SchemaVersion,
+        store.MigrationDuration.TotalSeconds);
+
+app.Use(app.Services.GetRequiredService<RequestMetrics>().InvokeAsync);
 
 app.Use(async (context, next) =>
 {
