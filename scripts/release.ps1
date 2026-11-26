@@ -42,3 +42,23 @@ if ($Draft) { $ghArgs += "--draft" }
 gh @ghArgs
 if ($LASTEXITCODE -ne 0) { throw "La création de la Release a échoué." }
 Write-Host "OK -> https://github.com/Spokator/SpokaPilote/releases/tag/$tag" -ForegroundColor Green
+if ((Get-AuthenticodeSignature $setup).Status -eq "NotSigned") {
+    Write-Host "Installeurs non signés (SmartScreen peut avertir) : voir docs\SIGNATURE.md pour activer la signature." -ForegroundColor Yellow
+}
+
+# Manifestes winget de cette version (URL + SHA-256 des installeurs publiés), commités dans packaging\winget\<version>.
+# La soumission à Microsoft reste manuelle : docs\DISTRIBUTION.md.
+if (-not $Draft) {
+    try {
+        & "$PSScriptRoot\winget-manifest.ps1" -Version $version
+        $ErrorActionPreference = "Continue" # progression de git sur stderr : on lit les codes de sortie
+        git add "packaging/winget/$version"
+        git commit -q -m "winget : manifestes $version"
+        if ($LASTEXITCODE -eq 0) { git push origin HEAD }
+        $ErrorActionPreference = "Stop"
+        Write-Host "Soumission winget (quand vous le décidez) : voir docs\DISTRIBUTION.md" -ForegroundColor Cyan
+    }
+    catch {
+        Write-Host "Manifestes winget non générés : $($_.Exception.Message) (relancez .\scripts\winget-manifest.ps1)" -ForegroundColor Yellow
+    }
+}

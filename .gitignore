@@ -8,6 +8,8 @@ out/
 TestResults/
 dist/
 dist-store/
+dist-site/
+_site/
 packaging/deps/
 
 # Espace de travail des agents Claude Code (worktrees)

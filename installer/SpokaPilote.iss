@@ -55,6 +55,14 @@ CloseApplications=force
 RestartApplications=no
 ; Le dossier d'installation est ajouté au PATH : Windows doit en être informé.
 ChangesEnvironment=yes
+#ifdef Sign
+; Signature facultative (scripts\build-installer.ps1 la définit seulement si un certificat est configuré,
+; voir docs\SIGNATURE.md) : ISCC signe l'installeur ET le désinstalleur avec la commande « /Sspokasign=... ».
+SignTool=spokasign
+SignedUninstaller=yes
+SignToolRetryCount=3
+SignToolRetryDelay=2000
+#endif
 
 [Languages]
 Name: "fr"; MessagesFile: "compiler:Languages\French.isl"

@@ -29,6 +29,16 @@ foreach ($project in "src\SpokaPilote.App\SpokaPilote.App.csproj", "src\SpokaPil
 foreach ($required in "SpokaPilote.App.exe", "SpokaPilote.App.dll", "spokapilote.exe", "spokapilote.dll", "SpokaPilote.Core.dll") {
     if (-not (Test-Path (Join-Path $out $required))) { throw "Fichier attendu absent après publication : $required" }
 }
+# Signature FACULTATIVE (uniquement si configurée, voir docs\SIGNATURE.md) des seuls fichiers de SpokaPilote :
+# le runtime .NET et les bibliothèques Microsoft sont déjà signés par Microsoft.
+. "$PSScriptRoot\signing.ps1"
+$signing = Get-SigningConfig
+if ($signing) {
+    Write-Host "Signature : $($signing.Description)" -ForegroundColor Cyan
+    $own = @(Get-ChildItem $out -Recurse -File -Include *.exe, *.dll | Where-Object Name -like "SpokaPilote*" | ForEach-Object FullName)
+    Invoke-CodeSign $signing $own
+    foreach ($f in $own) { Test-CodeSignature $signing $f }
+}
 # Les contrôles d'exécution ne sont possibles que pour l'architecture de ce poste (un PC x64 n'exécute pas l'ARM64).
 $hostArch = if ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq 'Arm64') { "arm64" } else { "x64" }
 if ($Arch -ne $hostArch) {

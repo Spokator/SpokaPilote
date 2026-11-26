@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Signaler une vulnérabilité (privé)
+    url: https://github.com/Spokator/SpokaPilote/security/advisories/new
+    about: Les failles de sécurité se signalent en privé, jamais dans un ticket public.
+  - name: Documentation
+    url: https://spokator.github.io/SpokaPilote/documentation.html
+    about: Guides d'installation et d'utilisation (console centrale, politique, imprimantes, packs…).

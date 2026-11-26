@@ -1,0 +1,42 @@
+# Généré par scripts/winget-manifest.ps1 — ne pas modifier à la main.
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.10.0.schema.json
+
+PackageIdentifier: Spoka.SpokaPilote
+PackageVersion: 2.0.1
+PackageLocale: fr-FR
+Publisher: Spoka
+PublisherUrl: https://github.com/Spokator
+PublisherSupportUrl: https://github.com/Spokator/SpokaPilote/issues
+Author: Spokator
+PackageName: SpokaPilote
+PackageUrl: https://spokator.github.io/SpokaPilote/
+License: MIT
+LicenseUrl: https://github.com/Spokator/SpokaPilote/blob/main/LICENSE
+Copyright: Copyright (c) 2026 Spokator
+ShortDescription: Les bons pilotes pour tout le poste et les imprimantes d'entreprise, depuis les sources officielles uniquement.
+Description: |-
+  SpokaPilote inventorie le poste, identifie chaque composant par son identifiant matériel exact et va chercher le pilote
+  chez Microsoft (Windows Update, Microsoft Update Catalog), chez le constructeur du PC (Dell, HP, Lenovo) ou chez NVIDIA.
+  Chaque pilote est vérifié (domaine officiel en HTTPS, empreinte, signature numérique, compatibilité réelle) avant
+  installation, avec point de restauration, sauvegarde et annulation en un clic. SpokaPilote configure aussi les
+  imprimantes et copieurs réseau et remonte l'état du parc dans une console centrale auto-hébergée.
+  Interface graphique et commande « spokapilote » pour les scripts de déploiement.
+Moniker: spokapilote
+Tags:
+- pilotes
+- drivers
+- imprimantes
+- printers
+- windows-update
+- parc-informatique
+- deploiement
+- administration
+ReleaseNotes: |-
+  - Mise à jour automatique : l'installeur ARM64 s'appelle désormais `SpokaPilote-Installer-<version>-arm64.exe`, pour
+    que les postes x64 encore en 1.0.x récupèrent bien l'installeur x64 (`SpokaPilote-Setup-<version>.exe`).
+ReleaseNotesUrl: https://github.com/Spokator/SpokaPilote/releases/tag/v2.0.1
+Documentations:
+- DocumentLabel: Documentation
+  DocumentUrl: https://spokator.github.io/SpokaPilote/documentation.html
+ManifestType: defaultLocale
+ManifestVersion: 1.10.0

@@ -1,0 +1,58 @@
+name: Matériel non reconnu
+description: Un périphérique reste sans pilote, ou SpokaPilote ne propose pas le bon pilote
+title: "[Matériel] "
+labels: ["matériel"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Ces informations nous permettent d'ajouter la bonne source **officielle** pour ce matériel.
+  - type: input
+    id: version
+    attributes:
+      label: Version de SpokaPilote
+      placeholder: "2.0.1"
+    validations:
+      required: true
+  - type: input
+    id: pc
+    attributes:
+      label: Marque et modèle du PC
+      description: "Exemple : Dell Latitude 7420, HP EliteBook 840 G8, Lenovo ThinkPad T14 Gen 3, PC assemblé…"
+    validations:
+      required: true
+  - type: input
+    id: peripherique
+    attributes:
+      label: Nom du périphérique
+      description: Tel qu'affiché dans SpokaPilote ou dans le Gestionnaire de périphériques.
+    validations:
+      required: true
+  - type: textarea
+    id: ids
+    attributes:
+      label: ID du matériel
+      description: |
+        Gestionnaire de périphériques → clic droit sur le périphérique → Propriétés → Détails → « ID du matériel » :
+        copiez toutes les lignes. (Aussi visible dans l'onglet Périphériques de SpokaPilote.)
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: constat
+    attributes:
+      label: Ce que fait SpokaPilote
+      description: "Aucun pilote trouvé ? Pilote refusé (motif affiché) ? Mauvais pilote proposé ?"
+    validations:
+      required: true
+  - type: input
+    id: officiel
+    attributes:
+      label: Page officielle du pilote (si vous la connaissez)
+      description: Lien vers le site du constructeur ou du fabricant (pas de site de téléchargement tiers).
+  - type: textarea
+    id: rapport
+    attributes:
+      label: Rapport JSON du poste
+      description: |
+        `spokapilote scan --json rapport.json`, puis glissez le fichier ici (vous pouvez remplacer le nom du poste).

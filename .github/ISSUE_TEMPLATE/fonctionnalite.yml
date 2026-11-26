@@ -1,0 +1,28 @@
+name: Demande de fonctionnalité
+description: Proposer une amélioration ou une nouvelle fonction
+title: "[Idée] "
+labels: ["amélioration"]
+body:
+  - type: textarea
+    id: besoin
+    attributes:
+      label: Le besoin
+      description: Quel problème voulez-vous résoudre ? Dans quel contexte (un poste, un parc de N postes…) ?
+    validations:
+      required: true
+  - type: textarea
+    id: proposition
+    attributes:
+      label: La solution imaginée
+      description: Comment SpokaPilote pourrait-il vous aider ? (interface, ligne de commande, console…)
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Comment faites-vous aujourd'hui ?
+  - type: checkboxes
+    id: sources
+    attributes:
+      label: Rappel
+      options:
+        - label: Ma demande respecte le principe « sources officielles uniquement » (aucun site de pilotes tiers).
+          required: true

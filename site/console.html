@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Console centrale — SpokaPilote</title>
+<meta name="description" content="SpokaPilote Server : console web auto-hébergée (Docker) pour suivre l'état des pilotes de tout un parc Windows, diffuser une politique de pilotes et des profils d'imprimantes.">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="{{ROOT}}favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="{{ROOT}}assets/style.css">
+<script src="{{ROOT}}assets/site.js" defer></script>
+</head>
+<body data-page="console">
+<!--#header-->
+<main id="contenu">
+
+<section class="page-hero">
+  <div class="container">
+    <p class="eyebrow">Pour le parc</p>
+    <h1>Console centrale SpokaPilote Server</h1>
+    <p class="lead">Chaque poste envoie le rapport de ses analyses et de ses installations ; l'équipe informatique voit
+      d'un coup d'œil les postes à traiter et le matériel qui n'a pas encore de pilote, sur tout le parc. La console
+      est <strong>auto-hébergée</strong> : un seul conteneur Docker, aucune base de données externe, aucun service tiers.</p>
+    <div class="btn-row">
+      <a class="btn btn-primary" href="{{ROOT}}docs/console-centrale.html">Guide d'installation</a>
+      <a class="btn btn-secondary" href="https://github.com/Spokator/SpokaPilote/pkgs/container/spokapilote-server" rel="noopener">Image Docker</a>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="container">
+    <figure class="window">
+      <div class="window-bar">SpokaPilote Server — Vue d'ensemble</div>
+      <img src="{{ROOT}}assets/captures/console-vue-ensemble.png" width="1300" height="900"
+        alt="Vue d'ensemble de la console : 7 postes, 4 sains, 3 à traiter, matériel sans pilote, pannes matérielles, pilotes proposés, liste des postes à traiter et des modèles du parc.">
+    </figure>
+    <p class="section-intro" style="margin-top:12px">Parc de démonstration (noms de postes fictifs).</p>
+  </div>
+</section>
+
+<section class="alt">
+  <div class="container">
+    <h2>Ce que vous suivez</h2>
+    <div class="grid">
+      <div class="card"><h3>Vue d'ensemble</h3><p>Postes sains et à traiter, postes non vus depuis 7 jours, matériel sans
+        pilote, pannes matérielles, pilotes bloqués par la politique, échecs d'installation.</p></div>
+      <div class="card"><h3>Fiche de chaque poste</h3><p>Système, périphériques en erreur, pilotes proposés ou bloqués,
+        résultats d'installation, historique des derniers rapports, rapport complet téléchargeable.</p></div>
+      <div class="card"><h3>Matériel sans pilote</h3><p>Regroupé par identifiant matériel sur tout le parc, avec les postes
+        et modèles concernés ; export CSV.</p></div>
+      <div class="card"><h3>Politique et imprimantes</h3><p>La politique de pilotes et le profil d'imprimantes se modifient
+        en ligne ; les postes les récupèrent automatiquement avec leur jeton.</p></div>
+    </div>
+    <div class="gallery" style="margin-top:28px">
+      <figure>
+        <a class="window" href="{{ROOT}}assets/captures/console-postes.png"><img src="{{ROOT}}assets/captures/console-postes.png" width="1300" height="900" loading="lazy"
+          alt="Liste des postes avec modèle, version de Windows, état, pilotes en erreur, pilotes proposés et date du dernier rapport."></a>
+        <figcaption>Liste des postes, filtrable et triable.</figcaption>
+      </figure>
+      <figure>
+        <a class="window" href="{{ROOT}}assets/captures/console-materiel.png"><img src="{{ROOT}}assets/captures/console-materiel.png" width="1300" height="900" loading="lazy"
+          alt="Matériel sans pilote regroupé par identifiant matériel, avec les postes et modèles concernés et l'export CSV."></a>
+        <figcaption>Matériel sans pilote sur tout le parc.</figcaption>
+      </figure>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="container grid-2">
+    <div>
+      <h2>Installation en deux commandes</h2>
+      <p>Sur un serveur Linux ou Windows avec Docker :</p>
+<pre><code>docker run -d --name spokapilote-server --restart unless-stopped \
+  -p 8080:8080 -v spokapilote-data:/data \
+  ghcr.io/spokator/spokapilote-server:latest
+docker logs spokapilote-server   # jetons générés au premier démarrage</code></pre>
+      <p>En production, placez la console derrière un reverse proxy HTTPS (Caddy, nginx, IIS) : exemples prêts à
+        l'emploi dans le <a href="{{ROOT}}docs/console-centrale.html">guide</a>.</p>
+    </div>
+    <div>
+      <h2>Enrôler les postes</h2>
+      <p>Sur chaque poste (ou une fois pour tout le parc via le fichier de configuration déployé par GPO / Intune) :</p>
+<pre><code>spokapilote config set ServerUrl https://spokapilote.exemple.fr
+spokapilote config set ServerToken &lt;jeton-d-enrolement&gt;
+spokapilote server status</code></pre>
+      <p>Les rapports partent ensuite automatiquement après chaque analyse ou installation, y compris depuis la
+        maintenance planifiée.</p>
+    </div>
+  </div>
+</section>
+
+<section class="alt">
+  <div class="container">
+    <h2>Conçue pour être sûre</h2>
+    <ul class="checklist">
+      <li><strong>Deux jetons distincts</strong> : administrateur (console, API d'administration) et enrôlement (les
+        postes ne peuvent qu'envoyer leurs rapports et lire la politique) ; comparaison en temps constant.</li>
+      <li><strong>Conteneur durci</strong> : utilisateur non root, système de fichiers en lecture seule, sonde de santé,
+        données isolées dans un volume.</li>
+      <li><strong>Vos données restent chez vous</strong> : base SQLite locale, aucune télémétrie, aucun service externe.</li>
+      <li><strong>Taille des rapports limitée</strong> et historique borné par poste (réglables).</li>
+    </ul>
+  </div>
+</section>
+
+</main>
+<!--#footer-->
+</body>
+</html>
