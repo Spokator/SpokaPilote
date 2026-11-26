@@ -101,6 +101,8 @@ public sealed class DriverPackQuery
             Vendor = supported ? system.Vendor : null,
             SystemId = !supported || string.IsNullOrWhiteSpace(id) ? null : id.Trim(),
             SystemModel = isSurface ? system.Model.Trim() : null,
+            // SKU illisible : le « System Model » SMBIOS (ex. « Surface Laptop Studio 2 ») est recherché tel quel.
+            Text = isSurface && string.IsNullOrWhiteSpace(id) ? system.Model.Trim() : null,
             Architecture = system.Architecture == "arm64" ? "arm64" : "amd64",
         };
     }

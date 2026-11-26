@@ -194,6 +194,16 @@ public class SurfaceTests
     }
 
     [Fact]
+    public void Missing_sku_searches_the_smbios_model_name()
+    {
+        var system = new SystemInfo { Manufacturer = "Microsoft Corporation", Model = "Surface Laptop Studio 2", SystemSku = null, Architecture = "amd64" };
+        var query = DriverPackQuery.ForSystem(system);
+        Assert.Null(query.SystemId);
+        Assert.Equal("Surface Laptop Studio 2", query.Text);
+        Assert.Equal(105610, Assert.Single(SurfaceDriverPacks.Candidates(query)).DownloadId);
+    }
+
+    [Fact]
     public void Hyper_v_virtual_machine_is_not_a_surface()
     {
         var vm = new SystemInfo { Manufacturer = "Microsoft Corporation", Model = "Virtual Machine", SystemSku = "None", Architecture = "amd64" };
