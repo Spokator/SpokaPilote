@@ -29,9 +29,10 @@
       <ol class="steps">
         <li><strong>Installez</strong> SpokaPilote depuis la <a href="{{ROOT}}index.html#telecharger">page de
           téléchargement</a> (x64 ou ARM64).</li>
-        <li><strong>Analyser ce poste</strong> : inventaire et recherche, sans droits administrateur.</li>
-        <li>Onglet <strong>Pilotes</strong> → <strong>Installer la sélection</strong> (SpokaPilote propose de se relancer
-          en administrateur).</li>
+        <li>Sur l'<strong>Accueil</strong>, <strong>Analyser ce poste</strong> (F5) : inventaire et recherche, sans
+          droits administrateur.</li>
+        <li><strong>Installer N pilotes</strong> (SpokaPilote propose de se relancer en administrateur). Le détail et le
+          choix pilote par pilote sont dans la page <strong>Pilotes</strong>.</li>
       </ol>
       <div>
 <pre><code>spokapilote scan --html rapport.html                    # inventaire + pilotes proposés
@@ -39,12 +40,13 @@ spokapilote install --yes                               # manquants + mises à j
 spokapilote install --missing --exclude NVIDIA --yes    # choisir finement
 spokapilote rollback last --yes                         # annuler la dernière intervention
 spokapilote driverpack download \\srv\pilotes --model "Latitude 7420"
-spokapilote printers export-profile imprimantes.json    # puis : printers deploy
+spokapilote health                                      # note de santé et état du BIOS
 spokapilote schedule enable --weekly lundi --time 12:30 --mode missing
 spokapilote policy test --policy driver-policy.json
 spokapilote help                                        # toutes les commandes</code></pre>
         <p>Codes de sortie : <code>0</code> OK · <code>1</code> erreur · <code>2</code> échec partiel ·
-          <code>3010</code> redémarrage requis.</p>
+          <code>64</code> commande invalide · <code>3010</code> redémarrage requis.
+          Imprimantes : <a href="https://github.com/Spokator/SpokaPrint">SpokaPrint</a>.</p>
       </div>
     </div>
 

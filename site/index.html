@@ -4,10 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>SpokaPilote — les bons pilotes, depuis les sources officielles uniquement</title>
-<meta name="description" content="SpokaPilote trouve, vérifie et installe les pilotes Windows depuis les sources officielles uniquement (Microsoft, Dell, HP, Lenovo, NVIDIA), gère les imprimantes d'entreprise et le suivi d'un parc. Gratuit et open source.">
+<meta name="description" content="SpokaPilote trouve, vérifie et installe les pilotes Windows depuis les sources officielles uniquement (Microsoft, Dell, HP, Lenovo, NVIDIA), d'un poste à des milliers de PC suivis depuis une console. Gratuit et open source.">
 <meta name="color-scheme" content="light dark">
 <meta property="og:title" content="SpokaPilote">
-<meta property="og:description" content="Les bons pilotes pour tout le poste et les imprimantes d'entreprise, depuis les sources officielles uniquement — et le suivi de tout le parc.">
+<meta property="og:description" content="Analyser le PC, installer les bons pilotes, depuis les sources officielles uniquement — d'un poste à tout un parc.">
 <meta property="og:type" content="website">
 <link rel="icon" href="{{ROOT}}favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="{{ROOT}}assets/style.css">
@@ -21,10 +21,10 @@
   <div class="container hero-grid">
     <div>
       <p class="eyebrow">Pilotes Windows de confiance</p>
-      <h1>Les bons pilotes, depuis les sources officielles uniquement.</h1>
-      <p class="lead">SpokaPilote inventorie le PC, trouve chaque pilote manquant ou à mettre à jour <strong>chez Microsoft,
-        chez le constructeur du PC ou chez le fabricant de la carte graphique</strong>, le vérifie, puis l'installe.
-        Il configure aussi les imprimantes et copieurs réseau, et suit tout un parc depuis une console web.</p>
+      <h1>Analyser le PC. Installer les bons pilotes.</h1>
+      <p class="lead">SpokaPilote identifie chaque composant, trouve le pilote manquant ou à jour <strong>chez Microsoft,
+        chez le constructeur du PC ou chez le fabricant de la carte graphique</strong>, le vérifie, puis l'installe — sur
+        un poste, depuis une clé USB, ou sur des milliers de PC suivis depuis une console web.</p>
       <div class="btn-row">
         <a class="btn btn-primary" data-download="x64" data-download-primary href="{{REPO}}/releases/latest">
           <span data-label>Télécharger pour Windows</span> <small>v<span data-version>{{VERSION}}</span></small></a>
@@ -33,9 +33,9 @@
       <p class="hero-meta">Windows 10 (1809 et suivants) et Windows 11 · x64 et ARM64 · gratuit et open source (licence MIT)</p>
     </div>
     <figure class="window">
-      <div class="window-bar">SpokaPilote — Ce poste</div>
-      <img src="{{ROOT}}assets/captures/poste.png" width="1224" height="761"
-        alt="Écran « Ce poste » de SpokaPilote après une analyse : nombre de périphériques détectés, pilotes proposés, périphérique en panne matérielle avec son explication, politique de pilotes appliquée.">
+      <div class="window-bar">SpokaPilote — Accueil</div>
+      <img src="{{ROOT}}assets/captures/accueil.png" width="1224" height="761"
+        alt="Accueil de SpokaPilote après une analyse : modèle du PC, note de santé des pilotes, bouton « Installer 2 pilotes » et points importants.">
     </figure>
   </div>
 </section>
@@ -48,12 +48,12 @@
       <div class="card">
         <h3>Techniciens et prestataires</h3>
         <p>Remettre en état un poste sans faire la tournée des sites constructeurs ni utiliser de « driver updater »
-          douteux. Une analyse, une liste claire, une installation contrôlée et réversible.</p>
+          douteux. Une analyse, un bouton, une installation contrôlée et réversible — y compris depuis une clé USB.</p>
       </div>
       <div class="card">
         <h3>Services informatiques</h3>
-        <p>Un parc de 10 à plusieurs centaines de postes : installation silencieuse, maintenance planifiée, politique de
-          pilotes commune, profils d'imprimantes et console centrale auto-hébergée.</p>
+        <p>Des dizaines à des dizaines de milliers de postes : installation silencieuse, politique de pilotes commune,
+          anneaux de déploiement, cache de pilotes sur le réseau local et console centrale auto-hébergée.</p>
       </div>
       <div class="card">
         <h3>Utilisateurs avertis</h3>
@@ -67,7 +67,7 @@
 <section class="alt">
   <div class="container">
     <p class="eyebrow">Fonctionnalités</p>
-    <h2>Tout le poste, toutes les imprimantes, tout le parc</h2>
+    <h2>Tout le poste, tout le parc</h2>
     <div class="grid">
       <div class="card">
         <div class="icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg></div>
@@ -89,22 +89,22 @@
       </div>
       <div class="card">
         <div class="icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9V3h12v6"/><rect x="3" y="9" width="18" height="8" rx="2"/><path d="M6 14h12v7H6z"/></svg></div>
-        <h3>Imprimantes et copieurs</h3>
-        <p>Découverte réseau (SNMP, IPP), modèle exact, pilote vérifié, file d'impression. Profils d'imprimantes à
-          déployer sur tout le parc, avec conditions par site ou par nom de poste.</p>
+        <h3>Anneaux de déploiement</h3>
+        <p>Un groupe pilote reçoit les nouveaux pilotes d'abord, le reste du parc après quelques jours ; trop d'échecs
+          dans le groupe pilote, et la version est suspendue automatiquement, avec une alerte.</p>
       </div>
       <div class="card">
         <div class="icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></div>
-        <h3>Maintenance automatique</h3>
-        <p>Une tâche planifiée entretient chaque poste (chaque semaine, chaque jour ou au démarrage) et dépose son
-          rapport pour le suivi du parc.</p>
+        <h3>Cache de pilotes sur le réseau</h3>
+        <p>La console télécharge chaque pilote une seule fois chez l'éditeur officiel et le sert à tous les postes ;
+          chaque poste revérifie la signature. Moins de bande passante, plus de blocage des catalogues.</p>
       </div>
       <div class="card">
         <div class="icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg></div>
         <h3>Console centrale</h3>
-        <p>Une console web auto-hébergée (Docker, HTTPS automatique) : état et santé du parc, postes à traiter, matériel
-          sans pilote, <strong>actions à distance</strong> et <strong>alertes</strong> par e-mail, Teams, Discord ou Slack,
-          comptes nominatifs, groupes de postes et actions planifiées.
+        <p>Une console web auto-hébergée (Docker, HTTPS automatique), mesurée sur 20 000 postes : santé du parc,
+          matériel sans pilote, groupes, <strong>actions à distance</strong> et planifiées, <strong>alertes</strong>
+          (e-mail, Teams, Slack, Discord), comptes nominatifs et journal d'audit.
           <a href="{{ROOT}}console.html">En savoir plus</a></p>
       </div>
       <div class="card">
@@ -140,7 +140,7 @@
       <div class="card">
         <div class="icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15 15 0 0 1 0 20M12 2a15 15 0 0 0 0 20"/></svg></div>
         <h3>Accessible, en français et en anglais</h3>
-        <p>Assistant de premier lancement, raccourcis clavier (F5, Ctrl+1 à 8), compatible lecteurs d'écran, thème clair
+        <p>Assistant de premier lancement, raccourcis clavier (F5, Ctrl+1 à 6), compatible lecteurs d'écran, thème clair
           ou sombre de Windows, interface en français ou en anglais.</p>
       </div>
       <div class="card">
@@ -181,20 +181,39 @@
         <figcaption>Historique : chaque intervention s'annule en un clic.</figcaption>
       </figure>
       <figure>
-        <a class="window" href="{{ROOT}}assets/captures/depot.png"><img src="{{ROOT}}assets/captures/depot.png" width="1224" height="761" loading="lazy"
-          alt="Onglet Dépôt de pilotes : dépôts d'entreprise, export d'un poste de référence, packs officiels des constructeurs."></a>
-        <figcaption>Dépôt d'entreprise et packs officiels des constructeurs.</figcaption>
-      </figure>
-      <figure>
-        <a class="window" href="{{ROOT}}assets/captures/imprimantes.png"><img src="{{ROOT}}assets/captures/imprimantes.png" width="1224" height="761" loading="lazy"
-          alt="Onglet Imprimantes : recherche des imprimantes réseau et installation avec choix du pilote."></a>
-        <figcaption>Imprimantes et copieurs réseau.</figcaption>
+        <a class="window" href="{{ROOT}}assets/captures/outils.png"><img src="{{ROOT}}assets/captures/outils.png" width="1224" height="761" loading="lazy"
+          alt="Page Outils : dépôt de pilotes, packs constructeur, pack hors ligne, rapport de parc, nettoyage du magasin, maintenance planifiée, console centrale."></a>
+        <figcaption>Outils avancés, rangés à part : dépôt, packs constructeur, maintenance, console.</figcaption>
       </figure>
       <figure>
         <a class="window" href="{{ROOT}}assets/captures/parametres.png"><img src="{{ROOT}}assets/captures/parametres.png" width="1224" height="761" loading="lazy"
-          alt="Onglet Paramètres : sources de pilotes, sécurité, maintenance automatique."></a>
-        <figcaption>Paramètres : sources autorisées, sécurité, maintenance automatique.</figcaption>
+          alt="Page Paramètres : langue, sources de pilotes, sécurité, connexion à la console, mises à jour."></a>
+        <figcaption>Paramètres : sources autorisées, sécurité, console, mises à jour.</figcaption>
       </figure>
+    </div>
+  </div>
+</section>
+
+<section class="alt">
+  <div class="container">
+    <p class="eyebrow">La famille Spoka</p>
+    <h2>Un outil par métier, un même moteur de confiance</h2>
+    <div class="grid">
+      <div class="card">
+        <h3>SpokaPilote</h3>
+        <p>Les pilotes de tout le poste : application Windows, ligne de commande, version portable sur clé USB.</p>
+      </div>
+      <div class="card">
+        <h3>SpokaPilote Server</h3>
+        <p>La console web facultative du parc : santé, groupes, anneaux de déploiement, cache de pilotes, actions à
+          distance, alertes, équipe. <a href="{{ROOT}}console.html">Découvrir la console</a></p>
+      </div>
+      <div class="card">
+        <h3>SpokaPrint</h3>
+        <p>Les imprimantes d'entreprise : découverte réseau avec consommables, pilotes officiels vérifiés, profils de
+          déploiement par site, sous-réseau ou Active Directory.
+          <a href="https://github.com/Spokator/SpokaPrint">Découvrir SpokaPrint</a></p>
+      </div>
     </div>
   </div>
 </section>
