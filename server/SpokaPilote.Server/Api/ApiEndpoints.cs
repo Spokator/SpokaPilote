@@ -7,6 +7,7 @@ using SpokaPilote.Server.Audit;
 using SpokaPilote.Server.Fleet;
 using SpokaPilote.Server.Groups;
 using SpokaPilote.Server.Jobs;
+using SpokaPilote.Server.Rollout;
 using SpokaPilote.Server.Security;
 using SpokaPilote.Server.Storage;
 
@@ -22,7 +23,8 @@ public static class ApiEndpoints
     /// Possibilités annoncées par /api/health : rapports compressés gzip (toutes les versions de la console),
     /// refus temporaire 503 + Retry-After en cas d'afflux, liste des postes paginée, supervision, sauvegarde à chaud.
     /// </summary>
-    public static readonly string[] Capabilities = ["gzip-reports", "retry-after", "machines-paging", "metrics", "backup"];
+    /// « rollout » (4.0) : diffusion par anneaux (politique effective par poste, section « rollout » sur demande).
+    public static readonly string[] Capabilities = ["gzip-reports", "retry-after", "machines-paging", "metrics", "backup", "rollout"];
 
     public static void MapSpokaPiloteApi(this WebApplication app)
     {
@@ -150,6 +152,7 @@ public static class ApiEndpoints
         api.MapAccountApi();
         api.MapAuditApi();
         api.MapOperationsApi();
+        api.MapRolloutApi();
 
         // ------------------------------------------------------------------ documents partagés avec les postes
 
@@ -159,7 +162,7 @@ public static class ApiEndpoints
     }
 
     private static async Task<IResult> ReceiveReportAsync(HttpRequest request, ServerStore store, ServerOptions options,
-        AlertService alerts, AdmissionControl admission, TimeProvider clock, ILogger<ServerStore> log, CancellationToken ct)
+        AlertService alerts, RolloutService rollout, AdmissionControl admission, TimeProvider clock, ILogger<ServerStore> log, CancellationToken ct)
     {
         // Afflux (démarrage simultané de milliers de postes) : file d'attente bornée, puis 503 + Retry-After étalé.
         using var lease = await admission.Uploads.EnterAsync(ct);
@@ -199,6 +202,15 @@ public static class ApiEndpoints
             // Une alerte ne doit jamais faire refuser un rapport.
             log.LogError(ex, "Évaluation des alertes impossible pour {Machine}.", report.Name);
         }
+        try
+        {
+            // Diffusion par anneaux : état à recalculer, disjoncteur pour les versions en échec.
+            rollout.OnReportSaved(report, saved);
+        }
+        catch (Exception ex)
+        {
+            log.LogError(ex, "Évaluation du disjoncteur impossible pour {Machine}.", report.Name);
+        }
         log.LogInformation("Rapport reçu : {Machine} ({Model}) — {Problems} pilote(s) en erreur, {Unresolved} sans solution, {Failed} échec(s).",
             report.Name, report.System.DisplayModel, report.DriverProblems, report.Unresolved, report.Failed);
         return Results.Ok(new
@@ -221,8 +233,12 @@ public static class ApiEndpoints
     /// </summary>
     private static void MapDocument(RouteGroupBuilder api, string route, string key, string label, string updateAction, string deleteAction)
     {
-        api.MapGet(route, (HttpContext http, ServerStore store) =>
+        api.MapGet(route, (HttpContext http, ServerStore store, RolloutService rollout) =>
         {
+            // Politique lue par un poste (jeton d'enrôlement) : politique effective de son anneau (4.0). La console et le jeton
+            // administrateur lisent toujours le document enregistré, tel quel (édition).
+            if (key == ServerStore.PolicyKey && Principal.Of(http)?.Access == Access.Agent && ServeEffectivePolicy(http, rollout) is { } effective)
+                return effective;
             var doc = store.GetDocument(key);
             if (doc is null) return Results.NoContent();
             http.Response.Headers.LastModified = doc.UpdatedAt.ToString("R", CultureInfo.InvariantCulture);
@@ -244,6 +260,7 @@ public static class ApiEndpoints
             }
             var now = clock.GetUtcNow();
             store.SetDocument(key, body.Text!, now);
+            if (key == ServerStore.PolicyKey) request.HttpContext.RequestServices.GetRequiredService<RolloutService>().Changed(urgent: true);
             log.LogInformation("{Label} mis(e) à jour ({Bytes} octets).", label, Encoding.UTF8.GetByteCount(body.Text!));
             audit.Record(request.HttpContext, updateAction, label, $"{Encoding.UTF8.GetByteCount(body.Text!)} octets");
             return Results.Ok(new { updatedAt = now, bytes = Encoding.UTF8.GetByteCount(body.Text!) });
@@ -252,10 +269,34 @@ public static class ApiEndpoints
         api.MapDelete(route, (HttpContext http, ServerStore store, AuditService audit) =>
             {
                 if (!store.DeleteDocument(key)) return Results.Json(new ApiError($"{label} : aucun document enregistré."), statusCode: 404);
+                if (key == ServerStore.PolicyKey) http.RequestServices.GetRequiredService<RolloutService>().Changed(urgent: true);
                 audit.Record(http, deleteAction, label);
                 return Results.NoContent();
             })
             .RequireAccess(Access.Admin);
+    }
+
+    /// <summary>
+    /// Politique effective d'un poste : identité facultative (en-têtes X-SpokaPilote-Machine-Id et X-SpokaPilote-Machine,
+    /// postes 4.0) ; section « rollout » seulement si le poste la demande (X-SpokaPilote-Rollout: 1). Réponse compressée si
+    /// le poste l'accepte (tous les postes SpokaPilote l'acceptent). 204 si rien à servir (comme en 3.x).
+    /// </summary>
+    private static IResult? ServeEffectivePolicy(HttpContext http, RolloutService rollout)
+    {
+        var headers = http.Request.Headers;
+        var served = rollout.Serve(headers["X-SpokaPilote-Machine-Id"].ToString(), headers["X-SpokaPilote-Machine"].ToString(),
+            headers[RolloutService.RolloutHeader].ToString().Trim() == "1");
+        if (served.Passthrough) return null; // rien d'ajouté : document enregistré servi tel quel (en-tête Last-Modified compris)
+        if (served.Utf8 is null) return Results.NoContent();
+        if (served.Target.Ring is { } ring) http.Response.Headers["X-SpokaPilote-Ring"] = Uri.EscapeDataString(ring.Name);
+        else if (served.Target.Conservative) http.Response.Headers["X-SpokaPilote-Ring"] = "conservative";
+        if (served.Gzip is not null && headers.AcceptEncoding.ToString().Contains("gzip", StringComparison.OrdinalIgnoreCase))
+        {
+            http.Response.Headers.ContentEncoding = "gzip";
+            http.Response.Headers.Vary = "Accept-Encoding";
+            return Results.Bytes(served.Gzip, "application/json; charset=utf-8");
+        }
+        return Results.Bytes(served.Utf8, "application/json; charset=utf-8");
     }
 
     internal static IResult NotFound(string name) =>

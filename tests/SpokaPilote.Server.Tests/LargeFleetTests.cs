@@ -674,7 +674,7 @@ public sealed class MigrationFrom31Tests : IDisposable
         Create31Database();
         var store = new ServerStore(new ServerOptions { DataDirectory = _dir });
         Assert.Equal(3, store.OpenedSchemaVersion);
-        Assert.Equal(4L, Scalar("PRAGMA user_version;"));
+        Assert.Equal((long)ServerStore.SchemaVersion, Scalar("PRAGMA user_version;"));
         var now = FleetSeed.Now;
 
         // Indicateurs précalculés dès l'ouverture : la synthèse et la liste sont celles de la 3.1.
@@ -714,7 +714,7 @@ public sealed class MigrationFrom31Tests : IDisposable
         // Réouverture : rien n'est rejoué, la base reste utilisable par les nouveaux rapports.
         SqliteConnection.ClearAllPools();
         var again = new ServerStore(new ServerOptions { DataDirectory = _dir, HistoryPerMachine = 3 });
-        Assert.Equal(4, again.OpenedSchemaVersion);
+        Assert.Equal(ServerStore.SchemaVersion, again.OpenedSchemaVersion);
         var json = ReportFixture.Typical("PC-MIG-00", timestamp: now).Json();
         again.SaveReport(ReportParser.Parse(json), json, now);
         Assert.Equal(3, again.GetMachine("PC-MIG-00")!.ReportCount);
@@ -737,7 +737,7 @@ public sealed class MigrationFrom31Tests : IDisposable
         Assert.Equal(3, detail.GetProperty("history").GetArrayLength());
         var metrics = await ReadJson(await admin.GetAsync("/api/metrics"));
         Assert.Equal(3, metrics.GetProperty("database").GetProperty("upgradedFrom").GetInt32());
-        Assert.Equal(4, metrics.GetProperty("database").GetProperty("schemaVersion").GetInt32());
+        Assert.Equal(ServerStore.SchemaVersion, metrics.GetProperty("database").GetProperty("schemaVersion").GetInt32());
     }
 }
 

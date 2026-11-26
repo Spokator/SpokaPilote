@@ -146,6 +146,29 @@ public sealed class AlertService(ServerStore store, AlertSettingsService setting
             null, facts, Link(s, null), now);
     }
 
+    /// <summary>
+    /// Version de pilote suspendue automatiquement par le disjoncteur de la diffusion par anneaux (une alerte par version et
+    /// par 24 h au plus).
+    /// </summary>
+    public bool OnRolloutSuspended(long versionId, string driver, string source, string ring, int failures, int attempts, int windowHours,
+        string reason, DateTimeOffset now)
+    {
+        var s = settings.Current();
+        if (!s.HasChannel || !s.Triggers.RolloutSuspended) return false;
+        return Raise("pilote:" + versionId.ToString(CultureInfo.InvariantCulture), new Alert(AlertReasons.RolloutSuspended, "critical",
+            $"Pilote suspendu automatiquement : {driver}",
+            $"{reason}.\nLa version est désormais bloquée sur tout le parc. Examinez-la dans la console (page Déploiement) : " +
+            "reprendre la diffusion ou maintenir le blocage.",
+            null,
+            [
+                new AlertFact("Pilote", driver),
+                new AlertFact("Source", source),
+                new AlertFact("Anneau", ring),
+                new AlertFact("Échecs", $"{failures} sur {attempts} installation(s) en {windowHours} h"),
+            ],
+            Link(s, null, "#/deploiement"), now));
+    }
+
     public Alert BuildTest(DateTimeOffset now) => new(AlertReasons.Test, "info", "Alerte de test SpokaPilote",
         "Si vous lisez ce message, les alertes de la console SpokaPilote arrivent bien sur ce canal.", null,
         [new AlertFact("Serveur", Environment.MachineName), new AlertFact("Envoyée le", now.ToLocalTime().ToString("dd/MM/yyyy HH:mm:ss", CultureInfo.InvariantCulture))],

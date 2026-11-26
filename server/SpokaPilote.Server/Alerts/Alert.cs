@@ -9,6 +9,7 @@ public static class AlertReasons
     public const string MachineStale = "stale";
     public const string DangerousDriver = "dangerous-driver";
     public const string DailySummary = "daily-summary";
+    public const string RolloutSuspended = "rollout-suspended";
     public const string Test = "test";
 
     public static string Label(string reason) => reason switch
@@ -19,6 +20,7 @@ public static class AlertReasons
         MachineStale => "Poste non vu",
         DangerousDriver => "Pilote dangereux détecté",
         DailySummary => "Résumé quotidien",
+        RolloutSuspended => "Pilote suspendu automatiquement",
         Test => "Alerte de test",
         _ => reason,
     };

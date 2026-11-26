@@ -23,7 +23,9 @@ public sealed record StoredDocument(string Json, DateTimeOffset UpdatedAt);
 /// <param name="IsLatest">Le rapport devient l'état actuel du poste (false : ancien rapport ajouté à l'historique).</param>
 /// <param name="Previous">État actuel du poste avant ce rapport (null pour un nouveau poste).</param>
 /// <param name="RenamedFrom">Ancien nom si le poste (reconnu par son identifiant) a changé de nom.</param>
-public sealed record SaveResult(long MachineRef, long ReportId, bool IsNewMachine, bool IsLatest, MachineReport? Previous, string? RenamedFrom);
+/// <param name="Rollout">Effets sur la diffusion par anneaux (versions vues pour la première fois, installations, échecs).</param>
+public sealed record SaveResult(long MachineRef, long ReportId, bool IsNewMachine, bool IsLatest, MachineReport? Previous, string? RenamedFrom,
+    RolloutTrack? Rollout = null);
 
 /// <summary>
 /// Stockage SQLite (un seul fichier dans le volume de données) : postes, historique des rapports, documents, tâches à
@@ -40,7 +42,7 @@ public sealed partial class ServerStore
 {
     public const string PolicyKey = "policy";
     public const string PrinterProfileKey = "printer-profile";
-    internal const int SchemaVersion = 4;
+    internal const int SchemaVersion = 5;
 
     private readonly string _connectionString;
     private readonly int _historyPerMachine;
@@ -432,13 +434,19 @@ public sealed partial class ServerStore
                 """);
             Execute(c, SchemaV3);
         }
-        // Version 4 (console 3.2) : colonnes et tables ajoutées, indicateurs des postes calculés tout de suite (listes et
-        // synthèse correctes dès le démarrage) ; l'historique des rapports est compressé ensuite, par lots, en arrière-plan.
-        Execute(c, SchemaV4Reports);
-        Execute(c, SchemaV4Tables);
-        RebuildMachinesTable(c);
-        Execute(c, SchemaV4Triggers);
-        BackfillMachines(c);
+        if (version < 4)
+        {
+            // Version 4 (console 3.2) : colonnes et tables ajoutées, indicateurs des postes calculés tout de suite (listes et
+            // synthèse correctes dès le démarrage) ; l'historique des rapports est compressé ensuite, par lots, en arrière-plan.
+            Execute(c, SchemaV4Reports);
+            Execute(c, SchemaV4Tables);
+            RebuildMachinesTable(c);
+            Execute(c, SchemaV4Triggers);
+            BackfillMachines(c);
+        }
+        // Version 5 (console 4.0) : diffusion par anneaux et suspension automatique. Tables ajoutées uniquement (aucune donnée
+        // existante n'est réécrite : migration instantanée) ; les versions sont suivies à partir des rapports suivants.
+        Execute(c, SchemaV5);
         Execute(c, $"PRAGMA user_version = {SchemaVersion};");
         tx.Commit();
         MigrationDuration = sw.Elapsed;
@@ -578,8 +586,11 @@ public sealed partial class ServerStore
             if (isLatest || renamedFrom is not null) RefreshAutoMembership(c, machineRef.Value, groups);
             if (displaced is { } other) RefreshAutoMembership(c, other, groups);
         }
+        // Diffusion par anneaux : première détection des versions proposées, installations, régressions (après les groupes :
+        // l'anneau du poste en dépend).
+        var rollout = TrackRollout(c, machineRef.Value, report, receivedAt, isLatest);
         tx.Commit();
-        return new SaveResult(machineRef.Value, reportId, isNew, isLatest, previous, renamedFrom);
+        return new SaveResult(machineRef.Value, reportId, isNew, isLatest, previous, renamedFrom, rollout);
     }
 
     /// <summary>Colonnes d'indicateurs d'un poste et son matériel sans pilote (dernier rapport).</summary>
