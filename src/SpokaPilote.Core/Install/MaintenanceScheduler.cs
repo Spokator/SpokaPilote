@@ -159,13 +159,23 @@ public static class MaintenanceScheduler
                           (o.PrinterProfile is null ? "" : ", déploiement du profil d'imprimantes") +
                           $". Journal : %ProgramData%\\SpokaPilote\\Logs.";
 
+        return BuildSystemTaskXml(TaskName, description, trigger, o.RunOnBattery, o.ExecutionLimit, executable, BuildArguments(o));
+    }
+
+    /// <summary>
+    /// Définition XML d'une tâche SpokaPilote exécutée en SYSTEM (privilèges maximum, instance unique) : socle commun
+    /// à la maintenance (\SpokaPilote\Maintenance) et à l'agent des tâches à distance (\SpokaPilote\Agent).
+    /// </summary>
+    internal static string BuildSystemTaskXml(string taskName, string description, XElement trigger, bool runOnBattery,
+        TimeSpan executionLimit, string executable, IEnumerable<string> arguments)
+    {
         var doc = new XDocument(
             new XDeclaration("1.0", "UTF-16", null),
             new XElement(Ns + "Task", new XAttribute("version", "1.2"),
                 new XElement(Ns + "RegistrationInfo",
                     new XElement(Ns + "Author", "SpokaPilote"),
                     new XElement(Ns + "Description", description),
-                    new XElement(Ns + "URI", TaskName)),
+                    new XElement(Ns + "URI", taskName)),
                 new XElement(Ns + "Triggers", trigger),
                 new XElement(Ns + "Principals",
                     new XElement(Ns + "Principal", new XAttribute("id", "Author"),
@@ -173,8 +183,8 @@ public static class MaintenanceScheduler
                         new XElement(Ns + "RunLevel", "HighestAvailable"))),
                 new XElement(Ns + "Settings",
                     new XElement(Ns + "MultipleInstancesPolicy", "IgnoreNew"),
-                    new XElement(Ns + "DisallowStartIfOnBatteries", o.RunOnBattery ? "false" : "true"),
-                    new XElement(Ns + "StopIfGoingOnBatteries", o.RunOnBattery ? "false" : "true"),
+                    new XElement(Ns + "DisallowStartIfOnBatteries", runOnBattery ? "false" : "true"),
+                    new XElement(Ns + "StopIfGoingOnBatteries", runOnBattery ? "false" : "true"),
                     new XElement(Ns + "AllowHardTerminate", "true"),
                     new XElement(Ns + "StartWhenAvailable", "true"),
                     new XElement(Ns + "RunOnlyIfNetworkAvailable", "false"),
@@ -186,12 +196,12 @@ public static class MaintenanceScheduler
                     new XElement(Ns + "Hidden", "false"),
                     new XElement(Ns + "RunOnlyIfIdle", "false"),
                     new XElement(Ns + "WakeToRun", "false"),
-                    new XElement(Ns + "ExecutionTimeLimit", Duration(o.ExecutionLimit)),
+                    new XElement(Ns + "ExecutionTimeLimit", Duration(executionLimit)),
                     new XElement(Ns + "Priority", "7")),
                 new XElement(Ns + "Actions", new XAttribute("Context", "Author"),
                     new XElement(Ns + "Exec",
                         new XElement(Ns + "Command", executable),
-                        new XElement(Ns + "Arguments", JoinArguments(BuildArguments(o))),
+                        new XElement(Ns + "Arguments", JoinArguments(arguments)),
                         new XElement(Ns + "WorkingDirectory", Path.GetDirectoryName(executable) ?? "")))));
 
         var sb = new StringBuilder();
@@ -260,23 +270,42 @@ public static class MaintenanceScheduler
         if (ValidateExecutable(executable) is { } error) return (false, error);
         if (!Elevation.IsAdministrator()) return (false, "La création de la tâche planifiée nécessite une console administrateur.");
 
-        var xml = BuildTaskXml(options, Path.GetFullPath(executable));
-        var file = Path.Combine(AppPaths.Ensure(AppPaths.Root), "maintenance-task.xml");
-        await File.WriteAllTextAsync(file, xml, Encoding.Unicode, ct).ConfigureAwait(false);
-        var r = await ProcessRunner.RunAsync(SchTasks, $"/Create /TN \"{TaskName}\" /XML \"{file}\" /F", timeout: TimeSpan.FromMinutes(1), ct: ct).ConfigureAwait(false);
-        if (r.ExitCode != 0) return (false, $"schtasks a refusé la tâche (code {r.ExitCode}) : {r.Combined.Trim()}");
+        var (ok, message, file) = await RegisterTaskAsync(TaskName, BuildTaskXml(options, Path.GetFullPath(executable)), "maintenance-task.xml", ct).ConfigureAwait(false);
+        if (!ok) return (false, message);
         Log.Info($"Tâche planifiée {TaskName} créée : {TriggerLabel(options)}, {ModeLabel(options.Mode)} ({JoinArguments(BuildArguments(options))}).");
         return (true, $"Tâche « {TaskName} » créée : {TriggerLabel(options)}, {ModeLabel(options.Mode)}. Définition : {file}");
     }
 
     /// <summary>Supprime la tâche, puis le dossier de tâches \SpokaPilote s'il est vide.</summary>
-    public static async Task<(bool Ok, string Message)> DisableAsync(CancellationToken ct = default)
+    public static Task<(bool Ok, string Message)> DisableAsync(CancellationToken ct = default) => DeleteTaskAsync(TaskName, ct);
+
+    public static Task<(bool Ok, string Message)> RunNowAsync(CancellationToken ct = default) => RunNowAsync(TaskName, ct);
+
+    /// <summary>Définition XML de la tâche (null si elle n'existe pas ou n'est pas lisible).</summary>
+    public static Task<string?> QueryXmlAsync(CancellationToken ct = default) => QueryXmlAsync(TaskName, ct);
+
+    /// <summary>État de la tâche de maintenance.</summary>
+    public static Task<MaintenanceStatus> StatusAsync(CancellationToken ct = default) => StatusAsync(TaskName, ct);
+
+    // ------------------------------------------------------------------ opérations communes à toutes les tâches \SpokaPilote\*
+
+    /// <summary>Enregistre (ou remplace) une tâche à partir de sa définition XML, conservée dans %ProgramData%\SpokaPilote.</summary>
+    internal static async Task<(bool Ok, string Message, string File)> RegisterTaskAsync(string taskName, string xml, string fileName, CancellationToken ct)
+    {
+        var file = Path.Combine(AppPaths.Ensure(AppPaths.Root), fileName);
+        await File.WriteAllTextAsync(file, xml, Encoding.Unicode, ct).ConfigureAwait(false);
+        var r = await ProcessRunner.RunAsync(SchTasks, $"/Create /TN \"{taskName}\" /XML \"{file}\" /F", timeout: TimeSpan.FromMinutes(1), ct: ct).ConfigureAwait(false);
+        return r.ExitCode == 0 ? (true, "", file) : (false, $"schtasks a refusé la tâche (code {r.ExitCode}) : {r.Combined.Trim()}", file);
+    }
+
+    /// <summary>Supprime une tâche, puis le dossier de tâches \SpokaPilote s'il est vide.</summary>
+    internal static async Task<(bool Ok, string Message)> DeleteTaskAsync(string taskName, CancellationToken ct)
     {
         if (!Elevation.IsAdministrator()) return (false, "La suppression de la tâche planifiée nécessite une console administrateur.");
-        var exists = (await QueryXmlAsync(ct).ConfigureAwait(false)) is not null;
+        var exists = (await QueryXmlAsync(taskName, ct).ConfigureAwait(false)) is not null;
         if (exists)
         {
-            var r = await ProcessRunner.RunAsync(SchTasks, $"/Delete /TN \"{TaskName}\" /F", timeout: TimeSpan.FromMinutes(1), ct: ct).ConfigureAwait(false);
+            var r = await ProcessRunner.RunAsync(SchTasks, $"/Delete /TN \"{taskName}\" /F", timeout: TimeSpan.FromMinutes(1), ct: ct).ConfigureAwait(false);
             if (r.ExitCode != 0) return (false, $"schtasks n'a pas supprimé la tâche (code {r.ExitCode}) : {r.Combined.Trim()}");
         }
         // schtasks ne sait pas supprimer un dossier : API COM du Planificateur.
@@ -286,36 +315,38 @@ public static class MaintenanceScheduler
                      "if ($f.GetTasks(1).Count -eq 0 -and $f.GetFolders(0).Count -eq 0) { $s.GetFolder('\\').DeleteFolder('SpokaPilote', 0); 'DELETED' } else { 'KEPT' }";
         var del = await ProcessRunner.RunPowerShellAsync(script, TimeSpan.FromMinutes(1), ct).ConfigureAwait(false);
         var folderNote = del.StdOut.Contains("KEPT") ? $" (dossier {TaskFolder} conservé : il contient d'autres tâches)" : "";
-        Log.Info($"Tâche planifiée {TaskName} supprimée.");
-        return (true, exists ? $"Tâche « {TaskName} » supprimée{folderNote}." : $"Aucune tâche « {TaskName} » sur ce poste{folderNote}.");
+        Log.Info($"Tâche planifiée {taskName} supprimée.");
+        return (true, exists ? $"Tâche « {taskName} » supprimée{folderNote}." : $"Aucune tâche « {taskName} » sur ce poste{folderNote}.");
     }
 
-    public static async Task<(bool Ok, string Message)> RunNowAsync(CancellationToken ct = default)
+    internal static async Task<(bool Ok, string Message)> RunNowAsync(string taskName, CancellationToken ct)
     {
-        var r = await ProcessRunner.RunAsync(SchTasks, $"/Run /TN \"{TaskName}\"", timeout: TimeSpan.FromMinutes(1), ct: ct).ConfigureAwait(false);
+        var r = await ProcessRunner.RunAsync(SchTasks, $"/Run /TN \"{taskName}\"", timeout: TimeSpan.FromMinutes(1), ct: ct).ConfigureAwait(false);
         return r.ExitCode == 0
-            ? (true, $"Tâche « {TaskName} » démarrée. Journal : {Path.Combine(AppPaths.Root, "Logs")}")
+            ? (true, $"Tâche « {taskName} » démarrée. Journal : {Path.Combine(AppPaths.Root, "Logs")}")
             : (false, $"Démarrage impossible (code {r.ExitCode}) : {r.Combined.Trim()}");
     }
 
-    /// <summary>Définition XML de la tâche (null si elle n'existe pas ou n'est pas lisible).</summary>
-    public static async Task<string?> QueryXmlAsync(CancellationToken ct = default)
+    internal static async Task<string?> QueryXmlAsync(string taskName, CancellationToken ct)
     {
-        var r = await ProcessRunner.RunAsync(SchTasks, $"/Query /TN \"{TaskName}\" /XML", timeout: TimeSpan.FromMinutes(1), ct: ct).ConfigureAwait(false);
+        var r = await ProcessRunner.RunAsync(SchTasks, $"/Query /TN \"{taskName}\" /XML", timeout: TimeSpan.FromMinutes(1), ct: ct).ConfigureAwait(false);
         return r.ExitCode == 0 && r.StdOut.Contains("<Task", StringComparison.Ordinal) ? r.StdOut : null;
     }
 
     /// <summary>
-    /// État de la tâche. La définition vient du XML (schtasks /Query /XML) et l'état d'exécution de
+    /// État d'une tâche. La définition vient du XML (schtasks /Query /XML) et l'état d'exécution de
     /// Get-ScheduledTaskInfo (valeurs numériques et dates ISO : indépendant de la langue de Windows).
     /// </summary>
-    public static async Task<MaintenanceStatus> StatusAsync(CancellationToken ct = default)
+    internal static async Task<MaintenanceStatus> StatusAsync(string taskName, CancellationToken ct)
     {
-        var xml = await QueryXmlAsync(ct).ConfigureAwait(false);
+        var xml = await QueryXmlAsync(taskName, ct).ConfigureAwait(false);
         if (xml is null) return new MaintenanceStatus(false, null, null, null, null, 0, null, null, null);
         var (command, arguments, trigger) = ParseDefinition(xml);
 
-        var script = "$t = Get-ScheduledTask -TaskPath '\\SpokaPilote\\' -TaskName 'Maintenance'; $i = $t | Get-ScheduledTaskInfo; " +
+        var cut = taskName.LastIndexOf('\\');
+        var path = ProcessRunner.PsQuote(taskName[..(cut + 1)]);
+        var leaf = ProcessRunner.PsQuote(taskName[(cut + 1)..]);
+        var script = $"$t = Get-ScheduledTask -TaskPath {path} -TaskName {leaf}; $i = $t | Get-ScheduledTaskInfo; " +
                      "function D($d) { if ($d -and $d.Year -gt 2000) { $d.ToString('o') } else { $null } }; " +
                      "[pscustomobject]@{ State = [string]$t.State; LastRun = D $i.LastRunTime; LastResult = [int64]$i.LastTaskResult; " +
                      "NextRun = D $i.NextRunTime; Missed = [int]$i.NumberOfMissedRuns } | ConvertTo-Json -Compress";
@@ -340,7 +371,6 @@ public static class MaintenanceScheduler
         }
         return new MaintenanceStatus(true, state, last, result, next, missed, command, arguments, trigger);
     }
-
     private static DateTime? ParseDate(JsonElement e) =>
         e.ValueKind == JsonValueKind.String && DateTime.TryParse(e.GetString(), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var d) ? d : null;
 
@@ -362,6 +392,8 @@ public static class MaintenanceScheduler
                     "CalendarTrigger" when t.Element(Ns + "ScheduleByWeek") is { } w =>
                         $"chaque {string.Join(", ", w.Element(Ns + "DaysOfWeek")?.Elements().Select(d => Enum.TryParse<DayOfWeek>(d.Name.LocalName, out var day) ? CultureInfo.GetCultureInfo("fr-FR").DateTimeFormat.GetDayName(day) : d.Name.LocalName) ?? Array.Empty<string>())} à {start:HH\\:mm}{randomText}",
                     "CalendarTrigger" => $"chaque jour à {start:HH\\:mm}{randomText}",
+                    "TimeTrigger" when t.Element(Ns + "Repetition")?.Element(Ns + "Interval")?.Value is { } every =>
+                        $"toutes les {XmlConvert.ToTimeSpan(every).TotalMinutes:0} min{randomText}",
                     var other => other,
                 };
             });

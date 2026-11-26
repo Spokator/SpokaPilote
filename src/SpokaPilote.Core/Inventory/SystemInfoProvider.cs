@@ -38,6 +38,7 @@ public static class SystemInfoProvider
 
         return new SystemInfo
         {
+            MachineId = ReadMachineId(),
             Manufacturer = manufacturer.Trim(),
             Model = model.Trim(),
             FriendlyModel = string.IsNullOrWhiteSpace(friendly) ? null : friendly.Trim(),
@@ -57,6 +58,30 @@ public static class SystemInfoProvider
             },
         };
     }
+
+    /// <summary>
+    /// MachineGuid de Windows (vue 64 bits du registre : la valeur n'existe pas dans la vue 32 bits), normalisé.
+    /// Lisible sans droits administrateur. Null si absent ou illisible.
+    /// </summary>
+    public static string? ReadMachineId()
+    {
+        try
+        {
+            using var hklm = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine,
+                Environment.Is64BitOperatingSystem ? RegistryView.Registry64 : RegistryView.Default);
+            using var key = hklm.OpenSubKey(@"SOFTWARE\Microsoft\Cryptography");
+            return NormalizeMachineId(key?.GetValue("MachineGuid") as string);
+        }
+        catch (Exception ex) when (ex is System.Security.SecurityException or UnauthorizedAccessException or IOException)
+        {
+            Log.Warn($"Identifiant machine (MachineGuid) illisible : {ex.Message}");
+            return null;
+        }
+    }
+
+    /// <summary>GUID en minuscules au format « d » ; toute autre valeur (vide, GUID nul, texte) donne null.</summary>
+    public static string? NormalizeMachineId(string? value) =>
+        Guid.TryParse(value?.Trim(), out var g) && g != Guid.Empty ? g.ToString("D") : null;
 
     private static string? NullIfJunk(string? value)
     {

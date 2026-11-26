@@ -3,6 +3,12 @@ namespace SpokaPilote.Core.Models;
 public sealed class SystemInfo
 {
     public string ComputerName { get; init; } = Environment.MachineName;
+    /// <summary>
+    /// Identifiant stable du poste : MachineGuid de Windows (HKLM\SOFTWARE\Microsoft\Cryptography), en minuscules.
+    /// Il ne change pas quand le poste est renommé (il change à une réinstallation de Windows) : la console centrale
+    /// s'en sert en priorité pour reconnaître le poste. Null si illisible.
+    /// </summary>
+    public string? MachineId { get; init; }
     public string Manufacturer { get; init; } = "";
     public string Model { get; init; } = "";
     /// <summary>Nom commercial (Lenovo : Win32_ComputerSystemProduct.Version, ex. « ThinkPad T14 Gen 2 »).</summary>
