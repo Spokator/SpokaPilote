@@ -21,7 +21,10 @@ internal sealed class Args
         for (var i = 0; i < args.Length; i++)
         {
             var arg = args[i];
-            if (arg.StartsWith("--"))
+            // Conventions usuelles : « spokapilote --version », « spokapilote --help », « -v ».
+            if (Command is null && arg is "--version" or "-v" or "--help")
+                Command = arg is "--help" ? "help" : "version";
+            else if (arg.StartsWith("--"))
             {
                 var key = arg[2..];
                 var eq = key.IndexOf('=');
