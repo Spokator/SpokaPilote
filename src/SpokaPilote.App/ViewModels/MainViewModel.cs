@@ -48,12 +48,14 @@ public sealed class MainViewModel : ObservableObject
         AddRepositoryCommand = new RelayCommand(AddRepository);
         RemoveRepositoryCommand = new RelayCommand(RemoveRepository, () => SelectedRepository is not null);
         ExportDriversCommand = new RelayCommand(ExportDriversAsync, () => !IsBusy);
-        ImportDriversCommand = new RelayCommand(ImportDriversAsync, () => !IsBusy && RepositoryPaths.Count > 0);
+        ImportDriversCommand = new RelayCommand(ImportDriversAsync, () => !IsBusy && (RepositoryPaths.Count > 0 || AppPaths.DefaultRepository is not null));
         SaveSettingsCommand = new RelayCommand(SaveSettings);
         OpenLogsCommand = new RelayCommand(() => OpenPath(AppPaths.Logs));
         OpenUrlCommand = new RelayCommand(p => { if (p is string url) OpenPath(url); return Task.CompletedTask; });
 
-        InstallUpdateCommand = new RelayCommand(InstallUpdateAsync, () => !IsBusy && AvailableUpdate is not null);
+        InstallUpdateCommand = new RelayCommand(InstallUpdateAsync, () => !IsBusy && AvailableUpdate is not null && !IsPortable);
+        DownloadPortableUpdateCommand = new RelayCommand(DownloadPortableUpdateAsync, () => !IsBusy && AvailableUpdate is not null && IsPortable);
+        OpenReleasePageCommand = new RelayCommand(() => { OpenPath(AvailableUpdate?.ReleaseUrl ?? Core.Online.UpdateChecker.ReleasesPage); return Task.CompletedTask; });
         RollbackCommand = new RelayCommand(RollbackAsync, () => !IsBusy && SelectedIntervention?.CanRollback == true);
         RestoreBackupCommand = new RelayCommand(RestoreBackupAsync, () => !IsBusy && SelectedBackup is not null);
         RefreshHistoryCommand = new RelayCommand(RefreshHistory);
@@ -121,7 +123,7 @@ public sealed class MainViewModel : ObservableObject
     {
         if (SelectedDriverPack is null) return;
         if (!IsAdmin) { AskRelaunch("Le téléchargement et l'extraction d'un pack constructeur"); return; }
-        var repo = SelectedRepository ?? RepositoryPaths.FirstOrDefault();
+        var repo = SelectedRepository ?? RepositoryPaths.FirstOrDefault() ?? AppPaths.DefaultRepository;
         if (repo is null)
         {
             var dialog = new OpenFolderDialog { Title = "Dépôt de pilotes où ranger le pack (ex. \\\\serveur\\pilotes)" };
@@ -376,11 +378,59 @@ public sealed class MainViewModel : ObservableObject
     public Core.Online.UpdateInfo? AvailableUpdate
     {
         get => _availableUpdate;
-        private set { Set(ref _availableUpdate, value); OnPropertyChanged(nameof(HasUpdate)); OnPropertyChanged(nameof(UpdateLabel)); }
+        private set
+        {
+            Set(ref _availableUpdate, value);
+            OnPropertyChanged(nameof(HasUpdate));
+            OnPropertyChanged(nameof(HasInstallerUpdate));
+            OnPropertyChanged(nameof(HasPortableUpdate));
+            OnPropertyChanged(nameof(UpdateLabel));
+        }
     }
     public bool HasUpdate => AvailableUpdate is not null;
-    public string UpdateLabel => AvailableUpdate is null ? "" : $"SpokaPilote {AvailableUpdate.Version.ToString(3)} est disponible.";
+    /// <summary>Version installée : mise à jour par l'installeur (bandeau « Mettre à jour »).</summary>
+    public bool HasInstallerUpdate => HasUpdate && !IsPortable;
+    /// <summary>Mode portable : jamais d'installeur, téléchargement vérifié de l'archive portable sur la clé.</summary>
+    public bool HasPortableUpdate => HasUpdate && IsPortable;
+    public string UpdateLabel => AvailableUpdate is null ? "" : Loc.F("SpokaPilote {0} est disponible.", AvailableUpdate.Version.ToString(3));
     public RelayCommand InstallUpdateCommand { get; }
+    public RelayCommand DownloadPortableUpdateCommand { get; }
+    public RelayCommand OpenReleasePageCommand { get; }
+
+    // ------------------------------------------------------------------ mode portable
+
+    /// <summary>Copie portable (clé USB) : fichier témoin SpokaPilote.portable à côté de l'exécutable.</summary>
+    public bool IsPortable { get; } = AppPaths.IsPortable;
+    public bool IsNotPortable => !IsPortable;
+    public string PortableSettingsNote => IsPortable
+        ? Loc.F("Mode portable : enregistrés sur la clé ({0}), communs à tous les postes où elle est branchée.", AppPaths.SettingsFile)
+        : "";
+    public string PortableLabel => IsPortable ? Loc.F("Mode portable — données sur {0}", AppPaths.Root) : "";
+    public string PortableDetails => !IsPortable ? "" :
+        Loc.F("Données de ce poste : {0}", AppPaths.MachineRoot) + "\n" +
+        (AppPaths.DefaultRepository is { } depot
+            ? Loc.F("Dépôt de la clé (utilisé automatiquement) : {0}", depot)
+            : Loc.T("Dépôt de la clé : absent"));
+
+    private async Task DownloadPortableUpdateAsync()
+    {
+        if (AvailableUpdate is not { } update) return;
+        await RunBusyAsync(Loc.F("Téléchargement de SpokaPilote {0} (archive portable)...", update.Version.ToString(3)), async ct =>
+        {
+            try
+            {
+                var file = await Core.Online.UpdateChecker.DownloadPortableAsync(update, AppPaths.Updates,
+                    new Progress<double>(p => { ProgressIndeterminate = false; Progress = p; }), ct);
+                Status = Loc.F("Archive vérifiée (SHA-256) : {0}. Fermez SpokaPilote puis extrayez-la à la racine de la clé, par-dessus l'ancienne version (Data et Depot sont conservés).", file);
+                Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{file}\"") { UseShellExecute = true });
+            }
+            catch (Core.Online.UpdateIntegrityException ex)
+            {
+                Status = ex.Message;
+                OpenPath(update.ReleaseUrl);
+            }
+        });
+    }
 
     public async Task CheckForUpdateAsync()
     {
@@ -1086,7 +1136,7 @@ public sealed class MainViewModel : ObservableObject
             return;
         }
         var dialog = new OpenFolderDialog { Title = "Dépôt de destination (ex. \\\\serveur\\pilotes)" };
-        if (SelectedRepository is not null) dialog.InitialDirectory = SelectedRepository;
+        if ((SelectedRepository ?? AppPaths.DefaultRepository) is { } initial) dialog.InitialDirectory = initial;
         if (dialog.ShowDialog() != true) return;
         await RunBusyAsync("Export des pilotes de ce poste...", async ct =>
         {
@@ -1105,7 +1155,7 @@ public sealed class MainViewModel : ObservableObject
         };
         if (dialog.ShowDialog() != true) return;
         var source = dialog.FileName.EndsWith(".inf", StringComparison.OrdinalIgnoreCase) ? Path.GetDirectoryName(dialog.FileName)! : dialog.FileName;
-        var repo = SelectedRepository ?? RepositoryPaths.First();
+        var repo = SelectedRepository ?? RepositoryPaths.FirstOrDefault() ?? AppPaths.DefaultRepository!;
         await RunBusyAsync("Import dans le dépôt...", async ct =>
         {
             var (_, message) = await DriverExporter.ImportAsync(source, repo, ct);

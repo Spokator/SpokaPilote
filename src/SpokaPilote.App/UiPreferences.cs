@@ -6,6 +6,7 @@ namespace SpokaPilote.App;
 /// <summary>
 /// Préférences d'interface propres à l'utilisateur Windows (premier lancement, langue...), stockées dans
 /// %LocalAppData%\SpokaPilote\ui.json — distinctes de la configuration du poste (%ProgramData%), partagée et déployable.
+/// En mode portable, elles sont rangées sur la clé (voir AppPaths.UiPreferencesFile).
 /// </summary>
 public sealed class UiPreferences
 {
@@ -14,8 +15,8 @@ public sealed class UiPreferences
     public string? Language { get; set; }
     public int LastTab { get; set; }
 
-    private static string FilePath => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SpokaPilote", "ui.json");
+    /// <summary>%LocalAppData%\SpokaPilote\ui.json ; en mode portable, Data\ui.json sur la clé (rien n'est écrit sur le poste).</summary>
+    private static string FilePath => Core.Infrastructure.AppPaths.UiPreferencesFile;
 
     public static UiPreferences Load()
     {

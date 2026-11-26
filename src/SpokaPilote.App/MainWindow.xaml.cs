@@ -25,6 +25,8 @@ public partial class MainWindow : Window
             Core.Infrastructure.Log.Error("Traduction de l'interface", ex);
             Core.Infrastructure.Log.Debug(ex.ToString());
         }
+        // Mode portable (clé USB) : visible dès la barre de titre (détail dans la barre d'état).
+        if (Core.Infrastructure.AppPaths.IsPortable) Title += " · " + Localization.Loc.T("mode portable");
         _vm = new MainViewModel();
         DataContext = _vm;
         ContentRendered += OnContentRendered;
