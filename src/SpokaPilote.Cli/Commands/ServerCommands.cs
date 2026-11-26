@@ -98,7 +98,40 @@ internal static partial class Program
                 WriteLine($"  ⚠ {label} : {ex.Message}", ConsoleColor.Yellow);
             }
         }
+        await CacheStatusAsync(settings, ct);
         return ExitOk;
+    }
+
+    /// <summary>Ligne « Cache de pilotes » de « server status » (consoles 4.0 et ultérieures).</summary>
+    private static async Task CacheStatusAsync(Settings settings, CancellationToken ct)
+    {
+        var fr = System.Globalization.CultureInfo.GetCultureInfo("fr-FR");
+        if (ConsoleCache.ParseMode(settings.UseConsoleCache) == ConsoleCacheMode.Off)
+        {
+            WriteLine("  · Cache de pilotes : non utilisé par ce poste (UseConsoleCache = off)", ConsoleColor.Gray);
+            return;
+        }
+        if (ConsoleCache.From(settings) is not { } cache) return;
+        var status = await cache.GetStatusAsync(ct);
+        if (status is null)
+        {
+            WriteLine($"  · Cache de pilotes : indisponible ({cache.UnavailableReason ?? "console injoignable"}) — téléchargements directs", ConsoleColor.Gray);
+            return;
+        }
+        if (!status.Enabled)
+        {
+            WriteLine("  · Cache de pilotes : désactivé sur la console — téléchargements directs", ConsoleColor.Gray);
+            return;
+        }
+        var size = (status.SizeBytes / 1073741824.0).ToString("0.0", fr);
+        var max = (status.MaxBytes / 1073741824.0).ToString("0.#", fr);
+        var ratio = status.HitRatio is { } r ? $", {Math.Round(r * 100).ToString("0", fr)} % de réussite" : ", aucune demande pour l'instant";
+        var saved = status.BytesSaved > 0 ? $", {(status.BytesSaved / 1073741824.0).ToString("0.0", fr)} Go évités" : "";
+        WriteLine($"  ✓ Cache de pilotes : actif, {size} Go sur {max}{ratio}{saved}" +
+                  (status.Catalogs && settings.ConsoleCacheCatalogs ? " ; catalogues relayés" : " ; catalogues en direct"),
+            ConsoleColor.Green);
+        if (status.DiskGuardActive)
+            WriteLine("  ⚠ Cache de pilotes : espace disque insuffisant sur la console, plus aucun nouveau fichier n'est mis en cache", ConsoleColor.Yellow);
     }
 
     /// <summary>« spokapilote server upload » : reprise de rapports JSON existants (fichier ou dossier, ex. un partage --output-dir).</summary>
