@@ -1,7 +1,7 @@
 using SpokaPilote.App.Localization;
+using SpokaPilote.Core.Health;
 using SpokaPilote.Core.Install;
 using SpokaPilote.Core.Models;
-using SpokaPilote.Core.Printers;
 
 namespace SpokaPilote.App.ViewModels;
 
@@ -37,13 +37,16 @@ public sealed class CandidateItem : ObservableObject
 
     public DriverCandidate Candidate { get; }
     public bool IsSelected { get => _isSelected; set => Set(ref _isSelected, value && IsSelectable); }
-    public string Kind => Candidate.KindLabel;
+    public CandidateKind KindValue => Candidate.Kind;
+    public string Kind => Loc.T(Candidate.KindLabel);
     public string Title => Candidate.Title;
     public string Version => Candidate.Version ?? "";
     public string Date => Candidate.Date?.ToString("dd/MM/yyyy") ?? "";
-    public string Source => Candidate.SourceLabel;
+    public string Source => Loc.T(Candidate.SourceLabel);
     public string Size => Candidate.SizeLabel;
     public string Devices => Candidate.TargetDeviceNames.Count == 0 ? "—" : string.Join(", ", Candidate.TargetDeviceNames.Distinct());
+    /// <summary>Seconde ligne de la liste : le motif de blocage, sinon les périphériques concernés.</summary>
+    public string Subtitle => Candidate.BlockedReason ?? (Candidate.TargetDeviceNames.Count == 0 ? "" : Loc.F("Pour : {0}", Devices));
     public bool IsMissing => Candidate.Kind == CandidateKind.MissingDriver;
     public bool IsFirmware => Candidate.Kind == CandidateKind.Firmware;
 
@@ -66,39 +69,66 @@ public sealed class CandidateItem : ObservableObject
 
 public sealed class DeviceItem
 {
-    public DeviceItem(DeviceInfo device) => Device = device;
+    public DeviceItem(DeviceInfo device, bool isUnresolved = false)
+    {
+        Device = device;
+        IsUnresolved = isUnresolved;
+    }
+
     public DeviceInfo Device { get; }
+    /// <summary>En erreur et aucune source n'a trouvé de pilote.</summary>
+    public bool IsUnresolved { get; }
     public string Name => Device.Name;
     public string Class => Device.ClassName ?? "";
-    public string Status => Device.StatusText;
+    public string Status => Loc.T(Device.StatusText);
     public string? Hint => Device.Hint;
+    public bool HasHint => !string.IsNullOrWhiteSpace(Device.Hint);
     public bool HasProblem => Device.HasProblem;
     public string DriverVersion => Device.DriverVersion ?? "";
     public string DriverDate => Device.DriverDate?.ToString("dd/MM/yyyy") ?? "";
     public string Provider => Device.DriverProvider ?? "";
+    public string DriverSummary => Device.DriverVersion is null ? Loc.T("Aucun pilote installé")
+        : string.Join("  ·  ", new[] { Device.DriverVersion, DriverDate, Device.DriverProvider }.Where(s => !string.IsNullOrWhiteSpace(s)));
     public string HardwareId => Device.HardwareIds.FirstOrDefault() ?? Device.InstanceId;
-    public string Icon => Device.HasProblem ? "⚠" : Device.Health == DeviceHealth.Disabled ? "⏸" : "✓";
+    /// <summary>Identifiants techniques (copiables) : identifiants matériels et identifiant d'instance.</summary>
+    public string TechnicalIds => string.Join("\n", Device.HardwareIds.Take(4).Append(Device.InstanceId).Distinct());
+    /// <summary>ok, problem, disabled (icône de la liste).</summary>
+    public string State => Device.HasProblem ? "problem" : Device.Health == DeviceHealth.Disabled ? "disabled" : "ok";
 }
 
-public sealed class PrinterItem : ObservableObject
+/// <summary>Constat de santé affiché à l'Accueil (titre simple, détail à la demande).</summary>
+public sealed class FindingItem
 {
-    private string _driverSummary = "";
+    /// <summary>Débuts de titre produits par le calcul de santé (traduits ; le nom du périphérique reste tel quel).</summary>
+    private static readonly string[] TitlePrefixes =
+    {
+        "Pilote dangereux installé :", "Panne matérielle probable :", "Périphérique désactivé :", "Pilote manquant :",
+        "Périphérique en erreur :", "Pilote non signé :", "Pilote ancien :", "Mise à jour BIOS / firmware disponible :",
+        "Mise à jour disponible :",
+    };
 
-    public PrinterItem(DiscoveredPrinter printer) => Printer = printer;
-    public DiscoveredPrinter Printer { get; }
-    public string Address => Printer.Address;
-    public string Name => Printer.DisplayName;
-    public string Details
+    public FindingItem(HealthFinding finding) => Finding = finding;
+    public HealthFinding Finding { get; }
+    public string Title
     {
         get
         {
-            var parts = new List<string> { Printer.Ports };
-            if (Printer.IdentifiedBy.Count > 0) parts.Add("via " + string.Join("+", Printer.IdentifiedBy));
-            if (Printer.SerialNumber is not null) parts.Add("S/N " + Printer.SerialNumber);
-            if (Printer.Location is not null) parts.Add(Printer.Location);
-            return string.Join(" · ", parts);
+            var prefix = Loc.IsEnglish ? TitlePrefixes.FirstOrDefault(p => Finding.Title.StartsWith(p, StringComparison.Ordinal)) : null;
+            return prefix is null ? Finding.Title : Loc.T(prefix) + Finding.Title[prefix.Length..];
         }
     }
-    public string InstalledAs => Printer.InstalledAs is null ? "" : $"Déjà installée : {Printer.InstalledAs}";
-    public string DriverSummary { get => _driverSummary; set => Set(ref _driverSummary, value); }
+    public string Detail => Finding.Detail;
+    /// <summary>error, warning, info (icône et couleur).</summary>
+    public string Kind => Finding.Severity switch
+    {
+        HealthSeverity.Critical => "error",
+        HealthSeverity.Warning => "warning",
+        _ => "info",
+    };
+    public string SeverityName => Finding.Severity switch
+    {
+        HealthSeverity.Critical => Loc.T("Critique"),
+        HealthSeverity.Warning => Loc.T("Attention"),
+        _ => Loc.T("Information"),
+    };
 }

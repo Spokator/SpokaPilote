@@ -8,11 +8,15 @@ public partial class App : Application
 {
     protected override void OnStartup(StartupEventArgs e)
     {
-        // Langue : préférence de l'utilisateur, « --lang en|fr » (captures), sinon langue de Windows.
+        // Langue : « --lang en|fr » (captures), sinon préférence de l'utilisateur, sinon langue de Windows.
         var args = Environment.GetCommandLineArgs();
         var langIndex = Array.IndexOf(args, "--lang");
         var language = langIndex >= 0 && langIndex + 1 < args.Length ? args[langIndex + 1] : UiPreferences.Load().Language;
         Localization.Loc.Initialize(language);
+        // Thème : celui de Windows ; « --theme dark|light » force l'un ou l'autre (captures d'écran).
+        var themeIndex = Array.IndexOf(args, "--theme");
+        if (themeIndex >= 0 && themeIndex + 1 < args.Length)
+            ThemeMode = args[themeIndex + 1].ToLowerInvariant() switch { "dark" => ThemeMode.Dark, "light" => ThemeMode.Light, _ => ThemeMode.System };
         DispatcherUnhandledException += OnUnhandled;
         base.OnStartup(e);
     }
