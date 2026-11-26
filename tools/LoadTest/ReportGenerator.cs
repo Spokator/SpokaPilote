@@ -49,9 +49,20 @@ public sealed class ReportGenerator
     private readonly double[] _systemCumulative;
     private readonly double[] _problemCumulative;
 
-    public ReportGenerator(int machines)
+    /// <summary>Parc réaliste (familles de pilotes partagées par les modèles), null = propositions synthétiques très diverses.</summary>
+    private readonly RealisticFleet? _realistic;
+
+    /// <param name="fleet">« synthetic » (défaut : propositions tirées au hasard, versions toutes différentes — cas extrême
+    /// pour la diffusion par anneaux) ou « realistic » (voir <see cref="RealisticFleet"/>).</param>
+    public ReportGenerator(int machines, string fleet = "synthetic")
     {
         _machines = machines;
+        _realistic = fleet switch
+        {
+            "realistic" => new RealisticFleet(),
+            "synthetic" => null,
+            _ => throw new ArgumentException($"Parc inconnu « {fleet} » (synthetic ou realistic)."),
+        };
         _modelCumulative = Cumulative(Models.Select(m => (double)m.Weight));
         _systemCumulative = Cumulative(Systems.Select(s => (double)s.Weight));
         _problemCumulative = Cumulative(Problems.Select((_, i) => 1.0 / Math.Pow(i + 1, 1.1)));
@@ -73,24 +84,8 @@ public sealed class ReportGenerator
     /// <summary>Rapport JSON (UTF-8) du poste <paramref name="index"/>, numéro <paramref name="round"/>.</summary>
     public byte[] Generate(int index, int round, DateTimeOffset timestamp)
     {
-        var machineRng = new Random(index * 7919 + 17);
-        var model = Models[Pick(_modelCumulative, machineRng)];
-        var os = Systems[Pick(_systemCumulative, machineRng)];
-        var deviceCount = 205 + machineRng.Next(30);
-        var rng = new Random(index * 7919 + round * 104729 + 3);
-
-        // Périphériques en erreur de ce rapport : 65 % des postes n'en ont aucun.
-        var problems = new List<ProblemTemplate>();
-        if (rng.NextDouble() >= 0.65)
-        {
-            var count = 1 + rng.Next(3);
-            for (var i = 0; i < count; i++)
-            {
-                var p = Problems[Pick(_problemCumulative, rng)];
-                if (!problems.Contains(p)) problems.Add(p);
-            }
-        }
-        var install = rng.NextDouble() < 0.10;
+        var plan = PlanReport(index, round, timestamp);
+        var (model, os, deviceCount, rng, problems, install) = (plan.Model, plan.Os, plan.DeviceCount, plan.Rng, plan.Problems, plan.Install);
         var dangerous = index % 97 == 0;
 
         var buffer = new ArrayBufferWriter<byte>(256 * 1024);
@@ -101,7 +96,7 @@ public sealed class ReportGenerator
             w.WriteString("generatedBy", "SpokaPilote");
             w.WriteString("appVersion", index % 10 == 0 ? "3.0.2" : "3.1.0");
             w.WriteString("timestamp", timestamp.ToString("yyyy-MM-dd'T'HH:mm:ss.fffffffzzz"));
-            w.WriteNumber("durationSeconds", 20 + rng.Next(60));
+            w.WriteNumber("durationSeconds", plan.Duration);
 
             w.WriteStartObject("system");
             w.WriteString("computerName", MachineName(index));
@@ -123,21 +118,14 @@ public sealed class ReportGenerator
             w.WriteStringValue("Dépôt interne");
             w.WriteEndArray();
             w.WriteStartObject("sourceErrors");
-            if (rng.NextDouble() < 0.03) w.WriteString("Dépôt interne", "Partage \\\\srv\\pilotes injoignable (délai dépassé).");
+            if (plan.SourceError) w.WriteString("Dépôt interne", "Partage \\\\srv\\pilotes injoignable (délai dépassé).");
             w.WriteEndObject();
 
-            // Pilotes proposés : une solution pour environ la moitié des matériels en erreur, plus quelques mises à jour.
+            // Pilotes proposés (calculés par PlanReport : les mêmes que ceux que le banc « rollout » soumet à la console).
             w.WriteStartArray("candidates");
-            var candidates = 0;
-            foreach (var p in problems.Where(p => p.HasDriver))
-            {
-                WriteCandidate(w, $"{p.Vendor} {p.Name}", "Pilote manquant", p.Name, InstanceId(p, index), p.BlockedByPolicy ? "Source non approuvée par la politique" : null, rng);
-                candidates++;
-            }
-            for (var i = rng.Next(6); i > 0; i--, candidates++)
-                WriteCandidate(w, $"{Vendors[rng.Next(Vendors.Length)]} pilote {Classes[rng.Next(Classes.Length)]}", "Mise à jour",
-                    $"Périphérique {rng.Next(200)}", $"PCI\\VEN_{rng.Next(0x10000):X4}&DEV_{rng.Next(0x10000):X4}\\{rng.Next():X8}", null, rng);
+            foreach (var c in plan.Candidates) WriteCandidate(w, c);
             w.WriteEndArray();
+            var candidates = plan.Candidates.Count;
 
             w.WriteStartObject("policy");
             w.WriteString("name", "Politique du parc");
@@ -169,9 +157,11 @@ public sealed class ReportGenerator
                 for (var i = 0; i < Math.Max(1, candidates); i++)
                 {
                     w.WriteStartObject();
-                    w.WriteString("title", $"Pilote {i}");
-                    w.WriteString("version", "1.2.3.4");
-                    var failed = rng.NextDouble() < 0.15;
+                    // Parc réaliste : installation des pilotes proposés (alimente la validation des anneaux et le disjoncteur).
+                    var installed = _realistic is not null && i < plan.Candidates.Count ? plan.Candidates[i] : null;
+                    w.WriteString("title", installed?.Title ?? $"Pilote {i}");
+                    w.WriteString("version", installed?.Version ?? "1.2.3.4");
+                    var failed = rng.NextDouble() < (installed is null ? 0.15 : 0.03);
                     w.WriteString("status", failed ? "Failed" : "Installed");
                     w.WriteString("message", failed ? "Code de sortie 1603" : "Installé");
                     w.WriteBoolean("rebootRequired", !failed && rng.NextDouble() < 0.3);
@@ -207,28 +197,101 @@ public sealed class ReportGenerator
 
     // ------------------------------------------------------------------ éléments
 
-    private static void WriteCandidate(Utf8JsonWriter w, string title, string kind, string device, string deviceId, string? blocked, Random rng)
+    /// <summary>Proposition synthétique (tirages dans le même ordre que les versions précédentes de l'outil).</summary>
+    private static GenCandidate Synthetic(string title, string kind, string device, string deviceId, string? blocked, Random rng)
+    {
+        var version = $"{rng.Next(1, 40)}.{rng.Next(100)}.{rng.Next(1000)}.{rng.Next(10000)}";
+        var source = rng.Next(2) == 0 ? "Windows Update" : "Catalogue constructeur";
+        var size = rng.Next(200_000, 900_000_000);
+        var url = $"https://catalog.update.microsoft.com/download/{rng.Next():x8}/{rng.Next():x8}.cab";
+        return new GenCandidate(title, version, source, kind, "Périphérique système", device, deviceId, blocked, size, url);
+    }
+
+    private static void WriteCandidate(Utf8JsonWriter w, GenCandidate c)
     {
         w.WriteStartObject();
-        w.WriteString("title", title);
-        w.WriteString("version", $"{rng.Next(1, 40)}.{rng.Next(100)}.{rng.Next(1000)}.{rng.Next(10000)}");
+        w.WriteString("title", c.Title);
+        w.WriteString("version", c.Version);
         w.WriteString("date", "2026-10-14T00:00:00");
-        w.WriteString("source", rng.Next(2) == 0 ? "Windows Update" : "Catalogue constructeur");
-        w.WriteString("kind", kind);
-        w.WriteString("category", "Périphérique système");
-        w.WriteNumber("sizeBytes", rng.Next(200_000, 900_000_000));
+        w.WriteString("source", c.Source);
+        w.WriteString("kind", c.Kind);
+        w.WriteString("category", c.Category);
+        w.WriteNumber("sizeBytes", c.SizeBytes);
         w.WriteStartArray("devices");
-        w.WriteStringValue(device);
+        w.WriteStringValue(c.Device);
         w.WriteEndArray();
         w.WriteStartArray("deviceIds");
-        w.WriteStringValue(deviceId);
+        w.WriteStringValue(c.DeviceId);
         w.WriteEndArray();
-        w.WriteString("matchedHardwareId", deviceId.Split('\\')[0] + "\\" + deviceId.Split('\\')[1]);
-        w.WriteString("downloadUrl", $"https://catalog.update.microsoft.com/download/{rng.Next():x8}/{rng.Next():x8}.cab");
+        w.WriteString("matchedHardwareId", c.DeviceId.Split('\\')[0] + "\\" + c.DeviceId.Split('\\')[1]);
+        w.WriteString("downloadUrl", c.DownloadUrl);
         w.WriteString("infoUrl", "https://www.catalog.update.microsoft.com/");
-        if (blocked is not null) w.WriteString("blockedReason", blocked);
+        if (c.BlockedReason is not null) w.WriteString("blockedReason", c.BlockedReason);
         w.WriteEndObject();
     }
+
+    /// <summary>Ce qu'un rapport contient, tiré au sort (déterministe) : modèle, périphériques en erreur, propositions.</summary>
+    private sealed record ReportPlan((string Manufacturer, string Model, string? Friendly, int Weight) Model,
+        (string Caption, string Display, string Version, int Weight) Os, int DeviceCount, Random Rng, List<ProblemTemplate> Problems, bool Install,
+        int Duration, bool SourceError, List<GenCandidate> Candidates);
+
+    private ReportPlan PlanReport(int index, int round, DateTimeOffset timestamp)
+    {
+        var machineRng = new Random(index * 7919 + 17);
+        var model = Models[Pick(_modelCumulative, machineRng)];
+        var os = Systems[Pick(_systemCumulative, machineRng)];
+        var deviceCount = 205 + machineRng.Next(30);
+        var rng = new Random(index * 7919 + round * 104729 + 3);
+        var realisticModel = _realistic is null ? -1 : _realistic.ModelOf(index);
+        if (_realistic is not null)
+        {
+            var m = _realistic.Models[realisticModel];
+            model = (m.Manufacturer, m.Name, m.Friendly, m.Weight);
+        }
+
+        // Périphériques en erreur de ce rapport : 65 % des postes n'en ont aucun.
+        var problems = new List<ProblemTemplate>();
+        if (rng.NextDouble() >= 0.65)
+        {
+            var count = 1 + rng.Next(3);
+            for (var i = 0; i < count; i++)
+            {
+                var p = Problems[Pick(_problemCumulative, rng)];
+                if (!problems.Contains(p)) problems.Add(p);
+            }
+        }
+        var install = rng.NextDouble() < 0.10;
+        var duration = 20 + rng.Next(60);
+        var sourceError = rng.NextDouble() < 0.03;
+
+        // Pilotes proposés : une solution pour environ la moitié des matériels en erreur, plus des mises à jour.
+        var candidates = new List<GenCandidate>();
+        foreach (var p in problems.Where(p => p.HasDriver))
+        {
+            var blocked = p.BlockedByPolicy ? "Source non approuvée par la politique" : null;
+            var c = Synthetic($"{p.Vendor} {p.Name}", "Pilote manquant", p.Name, InstanceId(p, index), blocked, rng);
+            if (_realistic is not null)
+            {
+                // Pilote manquant d'un matériel connu : version stable (nouvelle version tous les 90 jours).
+                var release = (int)((timestamp - new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero)).TotalDays / 90);
+                var number = Array.IndexOf(Problems, p);
+                c = c with { Version = $"1.{number}.0.{100 + release}", Source = "Windows Update", Category = p.Class };
+            }
+            candidates.Add(c);
+        }
+        if (_realistic is null)
+        {
+            for (var i = rng.Next(6); i > 0; i--)
+                candidates.Add(Synthetic($"{Vendors[rng.Next(Vendors.Length)]} pilote {Classes[rng.Next(Classes.Length)]}", "Mise à jour",
+                    $"Périphérique {rng.Next(200)}", $"PCI\\VEN_{rng.Next(0x10000):X4}&DEV_{rng.Next(0x10000):X4}\\{rng.Next():X8}", null, rng));
+        }
+        else candidates.AddRange(_realistic.Candidates(index, realisticModel, timestamp));
+        return new ReportPlan(model, os, deviceCount, rng, problems, install, duration, sourceError, candidates);
+    }
+
+    /// <summary>Propositions qu'un rapport du poste contient (celles qu'un poste 4.0 soumet à la console avant d'installer).</summary>
+    public IReadOnlyList<GenCandidate> Candidates(int index, int round, DateTimeOffset timestamp) => PlanReport(index, round, timestamp).Candidates;
+
 
     private static void WriteFinding(Utf8JsonWriter w, string severity, string code, string title, string deviceId)
     {

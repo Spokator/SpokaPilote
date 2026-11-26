@@ -11,6 +11,9 @@ using SpokaPilote.LoadTest;
 //   SpokaPilote.LoadTest groups --url http://localhost:18080 --admin <jeton> --machines 20000
 //   SpokaPilote.LoadTest bench  --url http://localhost:18080 --admin <jeton> --agent <jeton> --machines 20000 --api paged --duration 120 --container sp-lt
 //   SpokaPilote.LoadTest burst  --url http://localhost:18080 --agent <jeton> --machines 20000 --concurrency 200 --duration 60
+//   SpokaPilote.LoadTest rollout --url http://localhost:18080 --admin <jeton> --agent <jeton> --machines 20000 --fleet realistic --setup --samples 200
+// --fleet realistic (seed, bench, burst, sample, rollout) : parc réaliste (50 modèles, 1 500 familles de pilotes partagées,
+// une centaine de nouvelles versions par semaine) au lieu des propositions synthétiques très diverses (cas extrême).
 // Toutes les données sont fictives (noms PC-Sxx-nnnnn, identifiants dérivés du numéro du poste).
 
 var mode = args.FirstOrDefault() ?? "help";
@@ -25,6 +28,7 @@ try
         "bench" => await Scenarios.BenchAsync(opts),
         "burst" => await Scenarios.BurstAsync(opts),
         "sample" => Scenarios.Sample(opts),
+        "rollout" => await RolloutBench.RunAsync(opts),
         _ => Help(),
     };
 }
@@ -36,7 +40,7 @@ catch (Exception ex)
 
 static int Help()
 {
-    Console.WriteLine("Modes : seed | groups | bench | burst | sample (voir l'en-tête de Program.cs).");
+    Console.WriteLine("Modes : seed | groups | bench | burst | sample | rollout (voir l'en-tête de Program.cs). Option --fleet realistic : parc réaliste.");
     return 2;
 }
 
@@ -114,7 +118,7 @@ internal static class Scenarios
         var concurrency = o.Int("concurrency", 64);
         var fromRound = o.Int("from-round", 0);
         var agent = o.Str("agent") ?? throw new ArgumentException("--agent requis");
-        var generator = new ReportGenerator(machines);
+        var generator = new ReportGenerator(machines, o.Str("fleet", "synthetic"));
         using var http = Client(o, concurrency);
         var recorder = new Recorder();
         var end = DateTimeOffset.UtcNow.AddHours(-1);
@@ -213,7 +217,7 @@ internal static class Scenarios
         var api = o.Str("api", "legacy");
         var admin = o.Str("admin") ?? throw new ArgumentException("--admin requis");
         var agent = o.Str("agent") ?? throw new ArgumentException("--agent requis");
-        var generator = new ReportGenerator(machines);
+        var generator = new ReportGenerator(machines, o.Str("fleet", "synthetic"));
         using var http = Client(o, 2000);
         var recorder = new Recorder();
         await using var sampler = new DockerSampler(o.Str("container"));
@@ -366,7 +370,7 @@ internal static class Scenarios
         var duration = TimeSpan.FromSeconds(o.Int("duration", 60));
         var agent = o.Str("agent") ?? throw new ArgumentException("--agent requis");
         var honorRetry = o.Flag("honor-retry");
-        var generator = new ReportGenerator(machines);
+        var generator = new ReportGenerator(machines, o.Str("fleet", "synthetic"));
         using var http = Client(o, concurrency + 10);
         var recorder = new Recorder();
         await using var sampler = new DockerSampler(o.Str("container"));
@@ -401,7 +405,7 @@ internal static class Scenarios
     /// <summary>Écrit un rapport d'exemple (vérification de la forme et de la taille).</summary>
     public static int Sample(Options o)
     {
-        var g = new ReportGenerator(o.Int("machines", 20000));
+        var g = new ReportGenerator(o.Int("machines", 20000), o.Str("fleet", "synthetic"));
         var json = g.Generate(o.Int("index", 7), o.Int("round", 0), DateTimeOffset.UtcNow);
         var path = o.Str("out", "sample-report.json");
         File.WriteAllBytes(path, json);
