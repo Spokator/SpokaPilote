@@ -5,7 +5,13 @@ namespace SpokaPilote.Core.Infrastructure;
 
 public static class Http
 {
-    public static readonly HttpClient Client = Create();
+    private static readonly Lazy<HttpClient> SharedClient = new(Create);
+
+    /// <summary>
+    /// Client partagé (proxy système, décompression). Créé au premier usage : le User-Agent porte le nom du produit
+    /// en vigueur (<see cref="AppIdentity.Current"/>).
+    /// </summary>
+    public static HttpClient Client => SharedClient.Value;
 
     private static HttpClient Create()
     {
@@ -19,7 +25,7 @@ public static class Http
             MaxConnectionsPerServer = 8,
         };
         var client = new HttpClient(handler) { Timeout = Timeout.InfiniteTimeSpan };
-        client.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("SpokaPilote", "0.1"));
+        client.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue(AppIdentity.Current.ProductName, "0.1"));
         client.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("(Windows NT 10.0; Win64; x64)"));
         return client;
     }

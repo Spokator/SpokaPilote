@@ -36,9 +36,12 @@ public sealed record AppLayout(DataLocationMode Mode, string Root, string Machin
 /// 1. SPOKAPILOTE_HOME (variable d'environnement) ;
 /// 2. mode portable : fichier « SpokaPilote.portable » à côté de l'exécutable → &lt;dossier de l'exe&gt;\Data ;
 /// 3. version installée : %ProgramData%\SpokaPilote.
+/// Un autre produit construit sur ce moteur déclare son identité (<see cref="AppIdentity.Use"/>) : sa variable, son
+/// fichier témoin et son dossier de données remplacent alors ceux de SpokaPilote.
 /// </summary>
 public static class AppPaths
 {
+    /// <summary>Variable de redirection de SpokaPilote (celle du produit en vigueur : <see cref="AppIdentity.HomeVariable"/>).</summary>
     public const string HomeVariable = "SPOKAPILOTE_HOME";
     /// <summary>Fichier témoin du mode portable, à côté de SpokaPilote.App.exe et spokapilote.exe.</summary>
     public const string PortableMarkerFileName = "SpokaPilote.portable";
@@ -57,6 +60,9 @@ public static class AppPaths
         get => _layout ??= ResolveCurrent();
         set => _layout = value;
     }
+
+    /// <summary>Oublie les emplacements calculés (changement d'identité du produit) : recalculés au prochain accès.</summary>
+    internal static void ResetLayout() => _layout = null;
 
     /// <summary>Données partagées (configuration, cache, téléchargements, rapports).</summary>
     public static string Root
@@ -89,7 +95,7 @@ public static class AppPaths
     /// FAT32/exFAT), dossier temporaire du poste, vidé après chaque injection.
     /// </summary>
     public static string Mount => Ensure(Layout.Mode == DataLocationMode.Portable
-        ? Path.Combine(Path.GetTempPath(), "SpokaPilote", "Mount")
+        ? Path.Combine(Path.GetTempPath(), AppIdentity.Current.DataFolderName, "Mount")
         : Path.Combine(Root, "Mount"));
 
     /// <summary>Dépôt de pilotes de la clé (&lt;dossier de l'exe&gt;\Depot) s'il existe, sinon null.</summary>
@@ -120,7 +126,7 @@ public static class AppPaths
     public static string Describe(AppLayout layout) => layout.Mode switch
     {
         DataLocationMode.Portable => $"Mode portable — données sur {layout.Root}",
-        DataLocationMode.Override => $"Données : {layout.Root} ({HomeVariable})" + (layout.IsPortable ? " — copie portable" : ""),
+        DataLocationMode.Override => $"Données : {layout.Root} ({AppIdentity.Current.HomeVariable})" + (layout.IsPortable ? " — copie portable" : ""),
         _ => $"Données : {layout.Root}",
     };
 
@@ -132,12 +138,20 @@ public static class AppPaths
     /// sinon %ProgramData%\SpokaPilote.
     /// </summary>
     public static AppLayout Resolve(string? homeOverride, string executableDirectory, string programData, string localAppData,
-        string machineName, string? machineId, Func<string, bool>? fileExists = null)
+        string machineName, string? machineId, Func<string, bool>? fileExists = null) =>
+        Resolve(AppIdentity.Current, homeOverride, executableDirectory, programData, localAppData, machineName, machineId, fileExists);
+
+    /// <summary>
+    /// Résolution pour un produit donné : dossier %ProgramData%\&lt;<see cref="AppIdentity.DataFolderName"/>&gt; et
+    /// fichier témoin <see cref="AppIdentity.PortableMarkerFileName"/> (aucun mode portable s'il est null).
+    /// </summary>
+    public static AppLayout Resolve(AppIdentity identity, string? homeOverride, string executableDirectory, string programData,
+        string localAppData, string machineName, string? machineId, Func<string, bool>? fileExists = null)
     {
         fileExists ??= File.Exists;
         var exeDir = Path.TrimEndingDirectorySeparator(executableDirectory);
-        var portableHome = fileExists(Path.Combine(exeDir, PortableMarkerFileName)) ? exeDir : null;
-        var installedUi = Path.Combine(localAppData, "SpokaPilote", "ui.json");
+        var portableHome = identity.PortableMarkerFileName is { } marker && fileExists(Path.Combine(exeDir, marker)) ? exeDir : null;
+        var installedUi = Path.Combine(localAppData, identity.DataFolderName, "ui.json");
 
         if (!string.IsNullOrWhiteSpace(homeOverride))
         {
@@ -152,7 +166,7 @@ public static class AppPaths
                 Path.Combine(root, MachinesFolderName, MachineFolderName(machineName, machineId)),
                 portableHome, Path.Combine(root, "ui.json"));
         }
-        var installed = Path.Combine(programData, "SpokaPilote");
+        var installed = Path.Combine(programData, identity.DataFolderName);
         return new AppLayout(DataLocationMode.Installed, installed, installed, null, installedUi);
     }
 
@@ -168,13 +182,16 @@ public static class AppPaths
     }
 
     /// <summary>Le dossier contient-il une copie portable (fichier témoin) ?</summary>
-    public static bool IsPortableDirectory(string directory) => File.Exists(Path.Combine(directory, PortableMarkerFileName));
+    public static bool IsPortableDirectory(string directory) =>
+        AppIdentity.Current.PortableMarkerFileName is { } marker && File.Exists(Path.Combine(directory, marker));
 
     private static AppLayout ResolveCurrent()
     {
         var exeDir = AppContext.BaseDirectory;
+        var identity = AppIdentity.Current;
         return Resolve(
-            Environment.GetEnvironmentVariable(HomeVariable),
+            identity,
+            Environment.GetEnvironmentVariable(identity.HomeVariable),
             exeDir,
             Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),

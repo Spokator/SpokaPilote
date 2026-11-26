@@ -28,7 +28,7 @@ public static class Log
         {
             lock (FileLock)
             {
-                var file = Path.Combine(AppPaths.Logs, $"spokapilote-{DateTime.Now:yyyyMMdd}.log");
+                var file = Path.Combine(AppPaths.Logs, $"{AppIdentity.Current.LogFilePrefix}-{DateTime.Now:yyyyMMdd}.log");
                 File.AppendAllText(file, $"{entry.Timestamp:yyyy-MM-dd HH:mm:ss} [{level.ToString().ToUpperInvariant()}] {message}{Environment.NewLine}");
             }
         }

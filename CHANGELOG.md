@@ -1,5 +1,14 @@
 # Journal des versions
 
+## Non publié
+
+- **Profils d'imprimantes** : conditions par **site Active Directory** (`adSites`) et par **unité d'organisation**
+  (`organizationalUnits`), lues dans le registre du poste (sans requête réseau). Un profil qui les utilise porte
+  `"version": 2` ; les profils existants (version 1) sont inchangés.
+- Moteur partagé avec **SpokaPrint** (déploiement d'imprimantes) : identité de produit (dossier de données, journal,
+  mises à jour, tâches planifiées propres à chaque produit), lecture SNMP des compteurs et consommables (Printer-MIB),
+  réglages du balayage réseau (parallélisme, délai, communauté SNMP). Aucun changement de comportement pour SpokaPilote.
+
 ## 3.1.0 — 26/11/2026
 
 **Console centrale : travail en équipe**
