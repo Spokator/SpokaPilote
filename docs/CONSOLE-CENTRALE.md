@@ -11,6 +11,13 @@ installations, et l'équipe IT suit le parc en temps réel depuis un navigateur.
 - **Actions à distance** (3.0) : lancer une analyse, une installation, le déploiement des imprimantes, une annulation
   ou une mise à jour sur un poste, une sélection de postes ou tous les postes à traiter ; vue **Tâches** (§ 5).
 - **Alertes** (3.0) : e-mail et webhooks Microsoft Teams, Discord, Slack ou JSON, page **Paramètres** (§ 6).
+- **Groupes de postes** (3.1) : par site, service ou matériel, à la main et/ou par règles automatiques ; vue d'ensemble
+  et liste des postes filtrées par groupe ; action sur tout un groupe (§ 5).
+- **Actions planifiées** (3.1) : une action de la liste fermée, chaque jour ou certains jours, sur un groupe ou tout
+  le parc, avec fenêtre de maintenance facultative (§ 5).
+- **Comptes nominatifs et rôles** (3.1) : Administrateur, Technicien, Lecture seule ; connexion par identifiant et mot
+  de passe (§ 2).
+- **Journal d'audit** (3.1) : qui a fait quoi et quand, exportable en CSV (§ 7).
 - **Matériel sans pilote** : agrégé par ID matériel sur tout le parc, exportable en CSV.
 - **Politique de pilotes** et **profil d'imprimantes** : éditeurs JSON (validation, enregistrement) ; les postes les
   récupèrent avec leur jeton.
@@ -62,7 +69,10 @@ La console répond sur `http://<serveur>:8080`. L'image :
 | `SPOKAPILOTE_MAX_REPORT_MB` | `5` | Taille maximale d'un rapport, après décompression |
 | `SPOKAPILOTE_JOB_EXPIRY_DAYS` | `7` | Une tâche à distance jamais récupérée par son poste expire après ce délai |
 | `SPOKAPILOTE_JOB_TIMEOUT_HOURS` | `6` | Une tâche « en cours » sans résultat après ce délai est déclarée expirée |
-| `SPOKAPILOTE_AUTH_FAILURES_PER_MINUTE` | `10` | Jetons refusés tolérés par adresse IP et par minute, ensuite réponse 429 (`0` = pas de limite) |
+| `SPOKAPILOTE_AUTH_FAILURES_PER_MINUTE` | `10` | Jetons ou connexions refusés tolérés par adresse IP et par minute, ensuite réponse 429 (`0` = pas de limite) |
+| `SPOKAPILOTE_SESSION_HOURS` | `8` | (3.1) Session de la console fermée après ce nombre d'heures d'inactivité (1 à 168) ; 7 jours au plus dans tous les cas |
+| `SPOKAPILOTE_AUDIT_MAX_ENTRIES` | `5000` | (3.1) Journal d'audit : nombre maximal d'entrées conservées (100 à 1 000 000) |
+| `SPOKAPILOTE_AUDIT_DAYS` | `180` | (3.1) Journal d'audit : ancienneté maximale des entrées, en jours |
 | `SPOKAPILOTE_PORT` | `8080` | (Compose) port publié sur l'hôte ; `127.0.0.1:8080` derrière un reverse proxy |
 | `SPOKAPILOTE_BEHIND_PROXY` | `false` | (Compose) `true` derrière un reverse proxy : adresse réelle des postes (§ 4) |
 | `SPOKAPILOTE_DOMAIN` | — | (Compose, profil `https`) nom DNS public de la console pour le certificat automatique (§ 4) |
@@ -77,9 +87,10 @@ SPOKAPILOTE_AGENT_TOKEN=...
 SPOKAPILOTE_STALE_DAYS=14
 ```
 
-## 2. Jetons
+## 2. Jetons, comptes et rôles
 
-La console utilise deux jetons, transmis dans l'en-tête `Authorization: Bearer <jeton>` et comparés en temps constant :
+La console utilise deux jetons, transmis dans l'en-tête `Authorization: Bearer <jeton>` et comparés en temps constant,
+et — depuis la 3.1 — des **comptes nominatifs** pour l'équipe (§ 2.1) :
 
 | Jeton | Qui l'utilise | Ce qu'il permet |
 |---|---|---|
@@ -108,6 +119,44 @@ d'enrôlement, mettez à jour `ServerToken` sur les postes.
 
 Dans la console web, le jeton administrateur n'est conservé que dans l'onglet du navigateur (`sessionStorage`) : il
 disparaît à sa fermeture.
+
+### 2.1 Comptes nominatifs et rôles (3.1)
+
+Chaque membre de l'équipe se connecte avec **son** compte (identifiant et mot de passe) : l'historique des tâches et le
+journal d'audit indiquent alors qui a fait quoi. Trois rôles :
+
+| Rôle | Peut |
+|---|---|
+| **Administrateur** | Tout : comptes, paramètres et alertes, jeton d'enrôlement (page Enrôlement), politique de pilotes et profil d'imprimantes, suppression de postes, journal d'audit — plus tout ce que peut un technicien |
+| **Technicien** | Consulter le parc ; lancer et annuler des actions à distance ; créer, modifier et supprimer des planifications et des groupes (membres compris) |
+| **Lecture seule** | Consulter : vue d'ensemble, postes, groupes, tâches, planifications, matériel sans pilote, politique et profil d'imprimantes (sans les modifier) |
+
+Le **jeton administrateur** garde tous les droits (rôle Administrateur) : scripts et API comme en 3.0, et secours si
+plus aucun administrateur ne peut se connecter. Ses actions sont consignées sous le nom « Jeton administrateur ».
+
+**Premier compte** : sur la page de connexion, choisissez **Jeton administrateur**, collez le jeton, puis ouvrez
+**Comptes** › **Nouveau compte** et créez votre compte avec le rôle **Administrateur**. Déconnectez-vous, reconnectez-vous
+avec ce compte (onglet **Compte**) et créez ceux de l'équipe. Tant qu'aucun compte n'existe, la vue d'ensemble le
+rappelle.
+
+- **Identifiant** : 2 à 64 caractères (lettres minuscules, chiffres, `.` `_` `-` `@`), insensible à la casse.
+- **Mot de passe** : 10 caractères au moins, sans l'identifiant. Il n'est jamais conservé en clair : empreinte
+  **PBKDF2-HMAC-SHA-256**, 310 000 itérations, sel aléatoire propre à chaque compte, comparaison en temps constant.
+  Le bouton **Générer** propose un mot de passe aléatoire à transmettre par un canal sûr ; chacun change le sien dans
+  **Mon compte** (ses autres sessions sont alors fermées).
+- Un administrateur peut **désactiver** un compte, changer son rôle ou **réinitialiser** son mot de passe (les
+  sessions ouvertes du compte sont fermées). Au moins un compte Administrateur actif doit rester tant qu'il existe des
+  comptes ; personne ne peut supprimer, désactiver ou rétrograder son propre compte.
+- **Session** : cookie `SpokaPilote.Session` aléatoire (256 bits) `HttpOnly`, `SameSite=Strict`, `Secure` en HTTPS,
+  effacé à la fermeture du navigateur ; seule son empreinte est conservée en base. Fermée après 8 heures sans activité
+  (`SPOKAPILOTE_SESSION_HOURS`, expiration glissante) et au plus tard 7 jours après la connexion.
+- **Protection CSRF** : en plus de `SameSite=Strict`, toute requête qui modifie quelque chose (POST, PUT, DELETE) avec
+  une session doit porter l'en-tête `X-SpokaPilote-CSRF` contenant le jeton anti-CSRF de la session (fourni par
+  `POST /api/session` et `GET /api/session`) ; la console le fait d'elle-même. Les appels avec un jeton
+  (`Authorization: Bearer`) ne sont pas concernés.
+- **Tentatives de connexion** : limitées par adresse IP comme les jetons refusés (§ 7) ; la réponse ne dit jamais si
+  le compte existe. Derrière un reverse proxy HTTPS, activez `SPOKAPILOTE_BEHIND_PROXY` (§ 4) : la console voit alors
+  la requête en HTTPS (cookie `Secure`) et l'adresse réelle du navigateur.
 
 ## 3. Enrôlement des postes
 
@@ -279,6 +328,67 @@ spokapilote agent disable               # supprimer la tâche
 - Chaque action demande une confirmation qui explique ce qui va se passer. Le champ « Demandée par » (facultatif)
   apparaît dans l'historique.
 - Une action identique déjà en attente pour un poste n'est pas dupliquée.
+- Avec un compte nominatif, « Demandée par » est l'identité du compte ; le champ libre n'est proposé qu'avec le jeton
+  administrateur.
+- Rôles : un compte **Lecture seule** voit les tâches mais ne peut ni en lancer ni en annuler.
+
+### Groupes de postes (3.1)
+
+La page **Groupes** range les postes par site, service ou matériel. Un poste fait partie d'un groupe s'il y a été
+**ajouté à la main** ou s'il remplit les **règles automatiques** du groupe (ou les deux).
+
+- **À la main** : dans **Postes**, cochez des postes puis **Ajouter au groupe** / **Retirer du groupe** ; ou, dans la
+  fiche du groupe, saisissez un nom de poste. Un poste renommé reste dans ses groupes (il est suivi par son identifiant).
+- **Règles** : une ou plusieurs conditions, toutes requises ou au moins une. L'aperçu affiche aussitôt les postes
+  concernés.
+
+| Champ | Comparé à | Opérateurs |
+|---|---|---|
+| Nom du poste | nom actuel | commence par, contient, est égal à, correspond au motif (`*` = n'importe quelle suite, `?` = un caractère ; ex. `PC-*-SIEGE`) |
+| Constructeur | constructeur déclaré (ex. `Dell Inc.`, `LENOVO`) | idem |
+| Modèle | modèle, nom commercial et « Constructeur Modèle » | idem |
+| Windows | « Microsoft Windows 11 Professionnel 24H2 » et version (`10.0.26100`) | idem |
+| Sous-réseau | adresse IP d'envoi du **dernier rapport**, vue par la console | est dans : `10.1.20.0/24`, une adresse, IPv6 `fd00::/64` ; plusieurs séparés par des virgules |
+
+Les comparaisons ignorent les majuscules. Le sous-réseau n'est pas transmis par le poste : c'est l'adresse vue par la
+console. Derrière un reverse proxy, activez `SPOKAPILOTE_BEHIND_PROXY` (§ 4), sinon tous les postes semblent venir du
+proxy ; derrière un NAT ou un VPN, c'est l'adresse traduite qui compte. Un poste dont aucun rapport n'a été reçu depuis la
+mise à jour en 3.1 n'a pas encore d'adresse connue.
+
+Ensuite :
+
+- **Vue d'ensemble** et **Postes** : sélecteur **Groupe** (les indicateurs, les tâches et les liens suivent le groupe ;
+  « Sans groupe » dans la liste des postes) ;
+- **Action sur tout le groupe** : depuis la fiche du groupe, ou **Lancer sur le groupe** dans la liste des postes filtrée
+  par groupe ; sont visés les membres au moment du lancement ;
+- **Planifier…** : planification préremplie pour le groupe (ci-dessous).
+
+Supprimer un groupe ne supprime aucun poste ; un groupe utilisé par une planification ne peut pas être supprimé.
+
+### Actions planifiées (3.1)
+
+La page **Planifications** lance automatiquement une action de la liste fermée (aucun nouveau type de tâche) :
+
+- **Postes visés** : un groupe ou tous les postes ; les membres du groupe sont évalués à chaque exécution.
+- **Fréquence** : chaque jour, ou certains jours de la semaine, à une heure donnée — **heure du serveur** (fuseau du
+  conteneur, `TZ`, `Europe/Paris` par défaut dans le fichier Compose).
+- **Simulation** : comme pour une action lancée à la main.
+- **Fenêtre de maintenance** (facultative, 30 minutes à 12 heures) : une tâche que le poste n'a pas récupérée avant la
+  fin de la fenêtre **expire** au lieu de s'exécuter plus tard (en pleine journée). Sans fenêtre, elle attend le poste
+  jusqu'à 7 jours, comme une tâche manuelle. Choisissez une fenêtre au moins égale à l'intervalle de l'agent
+  (`agent enable --every`, 15 minutes par défaut).
+- **Pas de doublon** : un poste qui a déjà une tâche **du même type en attente** (planifiée ou manuelle, simulation ou
+  non) n'en reçoit pas une seconde.
+
+Le planificateur vérifie les échéances toutes les 30 secondes et crée les tâches dans la file habituelle (vue **Tâches**,
+badge « planifiée »). La liste affiche la dernière exécution (nombre de tâches créées, postes ignorés) et la prochaine.
+Une planification peut être désactivée sans être supprimée.
+
+- **Changement d'heure** : une heure qui n'existe pas (passage à l'heure d'été, ex. 02:30 le dernier dimanche de mars)
+  est reportée à la première minute qui existe (03:00) ; une heure qui existe deux fois (retour à l'heure d'hiver) ne
+  déclenche qu'une exécution, à la première occurrence.
+- **Console arrêtée** à l'échéance : l'exécution manquée est rattrapée une fois au redémarrage, sauf si sa fenêtre de
+  maintenance est déjà terminée (le résultat indique alors « manquée »).
 
 ### Suivre les tâches
 
@@ -359,13 +469,37 @@ Les déclencheurs s'activent ou se désactivent un par un dans la page **Paramè
 
 ## 7. Sécurité
 
-- **Tentatives refusées** : après 10 jetons refusés en une minute depuis une même adresse IP, la console répond
-  `429 Too Many Requests` à cette adresse jusqu'à la fin de la minute, même avec un bon jeton (réglage
-  `SPOKAPILOTE_AUTH_FAILURES_PER_MINUTE`). Une requête sans jeton ne compte pas ; la sonde `/api/health` reste libre.
+- **Tentatives refusées** : après 10 jetons ou connexions (identifiant ou mot de passe) refusés en une minute depuis une
+  même adresse IP, la console répond `429 Too Many Requests` à cette adresse jusqu'à la fin de la minute, même avec un
+  bon jeton ou le bon mot de passe (réglage `SPOKAPILOTE_AUTH_FAILURES_PER_MINUTE`). Une requête sans jeton ne compte
+  pas ; la sonde `/api/health` reste libre. Chaque connexion refusée est inscrite au journal d'audit.
   Derrière un reverse proxy, activez `SPOKAPILOTE_BEHIND_PROXY` (§ 4) : sinon toutes les requêtes semblent venir du proxy.
 - **Actions à distance** : liste fermée côté console et côté poste ; le jeton d'enrôlement ne permet pas de créer de
   tâche ; un poste ne voit et ne complète que ses tâches.
 - Le jeton administrateur ne doit jamais être déployé sur les postes.
+- **Comptes et sessions** : voir § 2.1 (empreintes PBKDF2, cookie `HttpOnly` / `SameSite=Strict`, jeton anti-CSRF).
+
+### Journal d'audit (3.1)
+
+La page **Journal d'audit** (rôle Administrateur) consigne qui a fait quoi, quand et depuis quelle adresse :
+
+| Catégorie | Actions consignées |
+|---|---|
+| Connexions | connexion réussie, connexion refusée (identifiant saisi, motif), déconnexion |
+| Comptes | création, modification (rôle, activation, nom), réinitialisation et changement de mot de passe, suppression |
+| Actions à distance | action lancée (type, cible, nombre de tâches), tâche annulée |
+| Planifications | création, modification, suppression, chaque exécution (acteur « Planificateur ») |
+| Groupes | création, modification (nom, règles), membres ajoutés ou retirés, suppression |
+| Paramètres et alertes | réglages des alertes, alerte de test |
+| Politique et profil d'imprimantes | enregistrement, suppression |
+| Postes | suppression d'un poste |
+| Journal d'audit | export CSV |
+
+Les actions faites avec le jeton administrateur apparaissent sous « Jeton administrateur ». Filtres par catégorie et
+recherche libre ; **Exporter (CSV)** produit un fichier UTF-8 séparé par des `;` (ouverture directe dans Excel ; une
+valeur commençant par `=`, `+`, `-` ou `@` est neutralisée). Rétention : 5 000 entrées et 180 jours au plus
+(`SPOKAPILOTE_AUDIT_MAX_ENTRIES`, `SPOKAPILOTE_AUDIT_DAYS`) ; les plus anciennes sont supprimées automatiquement. Les
+mots de passe, jetons et adresses de webhook n'y figurent jamais.
 
 ## 8. Sauvegarde et restauration
 
@@ -398,35 +532,73 @@ Avec le profil `https`, sauvegardez aussi le volume `server_caddy-data` (certifi
 de la base est migré automatiquement au démarrage (passage en 3.0 : postes, historique, politique et profil sont
 conservés). Sauvegardez le volume avant une mise à jour majeure.
 
+### Passage de la 3.0 à la 3.1
+
+- **Automatique** : au premier démarrage, la base passe au schéma 3.1 (nouvelles tables : groupes, planifications,
+  comptes, sessions, journal d'audit ; adresse du dernier rapport et fenêtre de maintenance des tâches). Rien n'est
+  supprimé ni modifié : postes, historique, tâches, politique, profil d'imprimantes, alertes et jetons sont conservés.
+  Un serveur 3.0 ne sait pas relire une base 3.1 : pour revenir en arrière, restaurez la sauvegarde.
+- **Postes** : rien à faire. Les postes 3.0 (et 2.x) continuent d'envoyer leurs rapports, de lire la politique et le
+  profil et d'exécuter les actions à distance avec le même jeton d'enrôlement ; l'API des postes est inchangée.
+- **Jeton administrateur** : inchangé, toujours valable pour la console et les scripts.
+- **À faire** : connectez-vous avec le jeton, créez votre compte Administrateur puis ceux de l'équipe (§ 2.1). Derrière
+  un reverse proxy HTTPS, vérifiez que `SPOKAPILOTE_BEHIND_PROXY=true` (cookie `Secure`, adresses réelles pour le
+  journal et les règles de sous-réseau). Fixez `TZ` si les planifications doivent suivre un autre fuseau que
+  `Europe/Paris`.
+- Les groupes « sous-réseau » ne contiennent un poste qu'après son premier rapport reçu par la 3.1.
+
 ## 9. API
 
 Toutes les routes sont sous `/api` ; réponses JSON (camelCase).
 
-| Méthode et route | Jeton | Rôle |
+Colonne **Accès** : « admin » = jeton administrateur ou compte Administrateur ; « tech » = Technicien et au-delà ;
+« lecture » = tout compte (et le jeton administrateur) ; « poste » = jeton d'enrôlement. Avec une session (cookie), les
+requêtes POST, PUT et DELETE exigent l'en-tête `X-SpokaPilote-CSRF` (§ 2.1).
+
+| Méthode et route | Accès | Rôle |
 |---|---|---|
 | `GET /api/health` | aucun | Sonde de vie (`{"status":"ok","version":"…"}`) |
-| `GET /api/whoami` | poste ou admin | Vérifie un jeton (`{"access":"agent"\|"admin"}`) |
+| `GET /api/whoami` | poste ou lecture | Vérifie un jeton (`{"access":"agent"\|"admin"}` ; `"user"` pour une session) |
+| `POST /api/session` | aucun | Connexion d'un compte : `{ "login", "password" }`, en-tête `X-SpokaPilote-CSRF` (valeur libre) ; dépose le cookie et renvoie l'appelant et son jeton anti-CSRF (`csrf`) |
+| `GET /api/session` | lecture | Appelant courant (compte ou jeton), rôle, droits (`permissions`), jeton anti-CSRF |
+| `DELETE /api/session` | lecture | Déconnexion |
+| `PUT /api/session/password` | lecture (compte) | Changer son mot de passe : `{ "currentPassword", "newPassword" }` |
 | `POST /api/reports` | poste | Rapport `spokapilote scan --json` (JSON, éventuellement `Content-Encoding: gzip`) |
-| `GET /api/fleet` | admin | Synthèse du parc (indicateurs, postes à traiter, matériel sans pilote, modèles, postes non vus) |
-| `GET /api/machines` | admin | Liste des postes (indicateurs du dernier rapport) |
-| `GET /api/machines/{nom}` | admin | Fiche du poste, dernier rapport normalisé, historique |
-| `GET /api/machines/{nom}/reports/{id}` | admin | Un rapport de l'historique |
-| `GET /api/machines/{nom}/raw` | admin | Dernier rapport complet tel qu'envoyé (pour `spokapilote pack`) |
+| `GET /api/fleet?group=` | lecture | Synthèse du parc ou d'un groupe (indicateurs, postes à traiter, matériel sans pilote, modèles, postes non vus) |
+| `GET /api/machines?group=` | lecture | Liste des postes (indicateurs du dernier rapport, `groups` : identifiants des groupes, `lastIp`) |
+| `GET /api/machines/{nom}` | lecture | Fiche du poste, dernier rapport normalisé, historique, groupes |
+| `GET /api/machines/{nom}/reports/{id}` | lecture | Un rapport de l'historique |
+| `GET /api/machines/{nom}/raw` | lecture | Dernier rapport complet tel qu'envoyé (pour `spokapilote pack`) |
 | `DELETE /api/machines/{nom}` | admin | Retire le poste et son historique |
 | `GET /api/enrollment` | admin | Jeton d'enrôlement et réglages de rétention |
-| `GET /api/policy` | poste ou admin | Politique de pilotes (JSON brut ; `204` si aucune) |
+| `GET /api/policy` | poste ou lecture | Politique de pilotes (JSON brut ; `204` si aucune) |
 | `PUT /api/policy` / `DELETE /api/policy` | admin | Enregistre (JSON valide exigé, 1 Mo max) / supprime la politique |
 | `GET`, `PUT`, `DELETE /api/printer-profile` | idem | Profil d'imprimantes (même fonctionnement) |
-| `GET /api/job-types` | admin | Actions à distance autorisées (liste fermée) |
-| `GET /api/jobs?state=&machine=&limit=` | admin | Tâches (état : `pending`, `running`, `succeeded`, `failed`, `expired`, `cancelled`, ou `active` / `finished`) |
-| `POST /api/jobs` | admin | Crée des tâches : `{ "type": "scan", "machines": ["PC-01"], "dryRun": false, "requestedBy": "..." }` ou `"target": "to-process"` / `"all"` |
-| `GET /api/jobs/{id}` | admin | Détail d'une tâche, avec le journal d'exécution |
-| `POST /api/jobs/{id}/cancel` | admin | Annule une tâche en attente (`409` si déjà en cours) |
+| `GET /api/job-types` | lecture | Actions à distance autorisées (liste fermée) |
+| `GET /api/jobs?state=&machine=&limit=` | lecture | Tâches (état : `pending`, `running`, `succeeded`, `failed`, `expired`, `cancelled`, ou `active` / `finished`) |
+| `POST /api/jobs` | tech | Crée des tâches : `{ "type": "scan", "machines": ["PC-01"], "dryRun": false, "requestedBy": "..." }` ou `"target": "to-process"` / `"all"`, ou `"target": "group", "group": 3` |
+| `GET /api/jobs/{id}` | lecture | Détail d'une tâche, avec le journal d'exécution (`notAfter` : fin de la fenêtre de maintenance, `scheduleId`) |
+| `POST /api/jobs/{id}/cancel` | tech | Annule une tâche en attente (`409` si déjà en cours) |
 | `GET /api/agent/jobs` | poste | Tâches en attente du poste, passées « en cours » ; en-têtes `X-SpokaPilote-Machine-Id` (MachineGuid, obligatoire) et `X-SpokaPilote-Machine` (nom) |
 | `POST /api/agent/jobs/{id}/result` | poste | Résultat : `{ "success", "exitCode", "message", "reportId", "log" }` (mêmes en-têtes) |
 | `GET`, `PUT /api/settings/alerts` | admin | Réglages des alertes (secrets jamais renvoyés ; `null` = inchangé, `""` = effacé) |
 | `POST /api/alerts/test` | admin | Envoie une alerte de test sur chaque canal et renvoie le résultat de chacun |
 | `GET /api/alerts/events` | admin | Dernières alertes envoyées |
+| `GET /api/groups` | lecture | Groupes (règles, nombre de membres, membres manuels, planifications) |
+| `GET /api/groups/{id}` | lecture | Groupe, membres (`manual`, `byRule`), planifications qui l'utilisent |
+| `GET /api/group-fields` | lecture | Champs et opérateurs des règles |
+| `POST /api/groups/preview` | lecture | Postes désignés par des règles : `{ "rules": { ... } }` |
+| `POST /api/groups` / `PUT /api/groups/{id}` | tech | `{ "name", "description", "rules": { "match": "all"\|"any", "conditions": [ { "field": "name", "operator": "startsWith", "value": "PC-COMPTA" } ] } }` |
+| `DELETE /api/groups/{id}` | tech | Supprime le groupe (`409` s'il est utilisé par une planification) |
+| `POST /api/groups/{id}/members` | tech | Membres manuels : `{ "add": ["PC-01"], "remove": ["PC-02"] }` |
+| `GET /api/schedules` | lecture | Planifications (dernière et prochaine exécution, fuseau du serveur) |
+| `POST /api/schedules` / `PUT /api/schedules/{id}` | tech | `{ "name", "type": "scan", "dryRun": false, "groupId": 3, "frequency": "daily"\|"weekly", "days": [1, 4], "time": "22:00", "windowMinutes": 120, "enabled": true }` (jours : 1 = lundi … 7 = dimanche ; `groupId` null = tous les postes) |
+| `DELETE /api/schedules/{id}` | tech | Supprime la planification (les tâches déjà créées restent) |
+| `GET /api/users` | admin | Comptes (jamais d'empreinte de mot de passe) et rôles |
+| `POST /api/users` / `PUT /api/users/{id}` | admin | `{ "login", "displayName", "role": "admin"\|"technician"\|"readonly", "password", "enabled" }` (en modification, `password` vide = inchangé) |
+| `DELETE /api/users/{id}` | admin | Supprime un compte |
+| `GET /api/audit?category=&q=&limit=` | admin | Journal d'audit (les plus récentes d'abord) |
+| `GET /api/audit/export?category=&q=` | admin | Journal d'audit complet en CSV |
 
 `POST /api/reports` renvoie aussi `reportId` (à indiquer dans le résultat d'une tâche) et `renamedFrom` (ancien nom si le
 poste, reconnu par son identifiant, a été renommé).
@@ -470,5 +642,5 @@ dotnet test tests\SpokaPilote.Server.Tests
 
 La console web (`server/SpokaPilote.Server/wwwroot`) est en HTML/CSS/JavaScript sans framework ni CDN, avec une
 politique de sécurité du contenu stricte (aucun script ni style en ligne). Pour l'automatisation ou les captures, le
-lien `http://localhost:8080/#jeton=<jeton-admin>&vue=/postes` ouvre directement une session (le jeton est retiré de
-l'adresse aussitôt ; le fragment `#` n'est jamais envoyé au serveur).
+lien `http://localhost:8080/#jeton=<jeton-admin>&vue=/postes` ouvre directement une session avec le jeton administrateur
+(le jeton est retiré de l'adresse aussitôt ; le fragment `#` n'est jamais envoyé au serveur).

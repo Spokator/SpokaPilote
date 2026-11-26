@@ -31,6 +31,10 @@ services:
       SPOKAPILOTE_JOB_EXPIRY_DAYS: ${SPOKAPILOTE_JOB_EXPIRY_DAYS:-7}
       SPOKAPILOTE_JOB_TIMEOUT_HOURS: ${SPOKAPILOTE_JOB_TIMEOUT_HOURS:-6}
       SPOKAPILOTE_AUTH_FAILURES_PER_MINUTE: ${SPOKAPILOTE_AUTH_FAILURES_PER_MINUTE:-10}
+      # Comptes de la console (3.1) : session fermée après N heures d'inactivité ; rétention du journal d'audit.
+      SPOKAPILOTE_SESSION_HOURS: ${SPOKAPILOTE_SESSION_HOURS:-8}
+      SPOKAPILOTE_AUDIT_MAX_ENTRIES: ${SPOKAPILOTE_AUDIT_MAX_ENTRIES:-5000}
+      SPOKAPILOTE_AUDIT_DAYS: ${SPOKAPILOTE_AUDIT_DAYS:-180}
       # Alertes (facultatif ; sinon page Paramètres de la console). Une variable définie prime sur la console.
       SPOKAPILOTE_SMTP_HOST: ${SPOKAPILOTE_SMTP_HOST:-}
       SPOKAPILOTE_SMTP_PORT: ${SPOKAPILOTE_SMTP_PORT:-}
@@ -47,6 +51,7 @@ services:
       # Adresse réelle des postes derrière un reverse proxy (limitation des tentatives par IP, journaux).
       # N'activez que si la console n'est joignable QUE par le proxy (SPOKAPILOTE_PORT=127.0.0.1:8080).
       ASPNETCORE_FORWARDEDHEADERS_ENABLED: ${SPOKAPILOTE_BEHIND_PROXY:-false}
+      # Fuseau horaire : résumé quotidien des alertes et heures des actions planifiées.
       TZ: ${TZ:-Europe/Paris}
     volumes:
       - spokapilote-data:/data
