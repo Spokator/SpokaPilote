@@ -387,6 +387,60 @@ public class ImageInjectorTests
         Assert.Equal(10, offline!.Value.Version.Major);
     }
 
+    /// <summary>Sortie réelle de dism /Get-WimInfo sur l'ISO d'évaluation de Windows 11 Entreprise fr-FR (26300.9457), page 850 décodée.</summary>
+    private const string WimInfoEnterpriseEval = """
+
+        Deployment Image Servicing and Management tool
+        Version: 10.0.26100.9549
+
+        Details for image : G:\sources\install.wim
+
+        Index : 1
+        Name : Version d'évaluation de Windows 11 Entreprise
+        Description : Version d'évaluation de Windows 11 Entreprise
+        Size : 26 081 400 812 bytes
+
+        The operation completed successfully.
+        """;
+
+    [Fact]
+    public void Enterprise_evaluation_image_list_is_parsed()
+    {
+        var info = Assert.Single(ImageInjector.ParseWimInfo(WimInfoEnterpriseEval));
+        Assert.Equal(1, info.Index);
+        Assert.Equal("Version d'évaluation de Windows 11 Entreprise", info.Name);
+        Assert.Equal(26081400812, info.SizeBytes);
+        Assert.Null(info.Architecture); // la liste ne donne pas l'architecture : /Index:n est relu avant l'injection
+    }
+
+    [Fact]
+    public void Registry_hive_failure_behind_error_87_is_explained()
+    {
+        // Extrait réel du journal DISM (poste de test : RegLoadKey refusé, même « reg load » d'une ruche minuscule échoue).
+        const string log = """
+            2026-11-26 04:35:52, Info                  DISM   DISM OS Provider: PID=6420 TID=57720 Setting SystemPath to E:\sp-tmp-img\home\Mount\20261126-043431-1 - CDISMOSServiceManager::SetSystemPath
+            2026-11-26 04:35:52, Error                 DISM   DISM OS Provider: PID=6420 TID=57720 Failed trying to determine the OS Version. HRESULT=0x80070057 - CDISMOSServiceManager::get_OSVersion
+            2026-11-26 04:35:52, Info                  DISM   DISM Manager: PID=54048 TID=16732 Closing session event handle 0x2a0 - CDISMManager::CleanupImageSessionEntry
+            """;
+        var hint = ImageInjector.DiagnoseDismLog(log);
+        Assert.NotNull(hint);
+        Assert.Contains("ruches de registre", hint);
+        Assert.Contains("reg load", hint);
+        Assert.Null(ImageInjector.DiagnoseDismLog("2026-11-26 04:35:52, Info DISM The operation completed successfully."));
+        Assert.Null(ImageInjector.DiagnoseDismLog(null));
+    }
+
+    [Fact]
+    public void Firmware_inf_is_flagged_and_counted_in_the_report()
+    {
+        var report = new InjectionReport();
+        report.Checks.Add(new InfCheck(@"C:\r\uefi\SurfaceUEFI.inf", true, "signé", "Surface", "Firmware", "18.109.143.0", IsFirmware: true));
+        report.Checks.Add(new InfCheck(@"C:\r\wifi\netwtw.inf", true, "signé", "Intel", "Net", "23.0.0.1"));
+        report.Checks.Add(new InfCheck(@"C:\r\ec\SurfaceEC.inf", false, "firmware exclu (--no-firmware)", "Surface", "Firmware", "1.0", IsFirmware: true));
+        Assert.Equal(2, report.Accepted.Count());
+        Assert.Equal(1, report.AcceptedFirmwareCount);
+    }
+
     [Theory]
     [InlineData("D:", @"D:\")]
     [InlineData(@"D:\", @"D:\")]

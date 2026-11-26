@@ -158,7 +158,7 @@ public class DriverPackTests
 
     [Fact]
     public void Unknown_text_searches_every_catalog()
-        => Assert.Equal(3, OemDriverPacks.InferVendors("20XW").Length);
+        => Assert.Equal(4, OemDriverPacks.InferVendors("20XW").Length); // Dell, HP, Lenovo, Surface (aucune page Surface lue : aucun modèle ne correspond)
 
     [Fact]
     public void Windows_releases_are_ordered()
