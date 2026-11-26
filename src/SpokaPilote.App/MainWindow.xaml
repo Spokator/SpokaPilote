@@ -110,6 +110,41 @@
                             </StackPanel>
                         </Border>
 
+                        <Border Style="{StaticResource Card}" Margin="0,16,0,0"
+                                Visibility="{Binding HasHealth, Converter={StaticResource BoolToVisibility}}">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <Border Width="84" Height="84" CornerRadius="42" VerticalAlignment="Top" Margin="0,0,20,0"
+                                        Background="{DynamicResource AccentFillColorDefaultBrush}">
+                                    <TextBlock Text="{Binding HealthGrade, Mode=OneWay}" FontSize="42" FontWeight="Bold" Foreground="White"
+                                               HorizontalAlignment="Center" VerticalAlignment="Center"
+                                               AutomationProperties.Name="Note de santé des pilotes" />
+                                </Border>
+                                <StackPanel Grid.Column="1">
+                                    <TextBlock FontWeight="SemiBold" FontSize="16" Text="Santé des pilotes" />
+                                    <TextBlock Opacity="0.85" Text="{Binding HealthScoreText, Mode=OneWay}" />
+                                    <TextBlock Margin="0,4,0,8" TextWrapping="Wrap" Opacity="0.8" Text="{Binding HealthSummaryText, Mode=OneWay}" />
+                                    <ItemsControl ItemsSource="{Binding HealthFindings, Mode=OneWay}">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <StackPanel Margin="0,0,0,6">
+                                                    <TextBlock TextWrapping="Wrap">
+                                                        <Run FontWeight="SemiBold" Text="{Binding SeverityLabel, Mode=OneWay}" />
+                                                        <Run Text=" · " />
+                                                        <Run FontWeight="SemiBold" Text="{Binding Title, Mode=OneWay}" />
+                                                    </TextBlock>
+                                                    <TextBlock Opacity="0.75" FontSize="12" TextWrapping="Wrap" Text="{Binding Detail, Mode=OneWay}" />
+                                                </StackPanel>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+
                         <Border Style="{StaticResource Card}" Margin="0,16,0,0">
                             <StackPanel>
                                 <TextBlock FontWeight="SemiBold" Text="Politique de pilotes" />
@@ -145,6 +180,19 @@
                             </TextBlock.Style>
                         </TextBlock>
                         <Button HorizontalAlignment="Left" Margin="0,8,0,0" Content="Exporter le rapport (HTML / JSON)" Command="{Binding ExportHtmlCommand}" />
+
+                        <Border Style="{StaticResource Card}" Margin="0,24,0,0">
+                            <StackPanel>
+                                <TextBlock FontWeight="SemiBold" Text="Nettoyage du magasin de pilotes" />
+                                <TextBlock Opacity="0.75" TextWrapping="Wrap" Margin="0,4,0,8"
+                                           Text="Windows garde toutes les anciennes versions de pilotes. SpokaPilote repère celles qui ne servent plus et ont été remplacées (jamais un pilote utilisé, jamais la seule version, jamais un pilote d'imprimante), les sauvegarde puis les supprime." />
+                                <WrapPanel>
+                                    <Button Content="Analyser le magasin" Command="{Binding AnalyzeDriverStoreCommand}" Margin="0,0,8,0" />
+                                    <Button Content="Nettoyer..." Command="{Binding CleanDriverStoreCommand}" />
+                                </WrapPanel>
+                                <TextBlock Margin="0,8,0,0" TextWrapping="Wrap" Opacity="0.85" Text="{Binding DriverStoreText, Mode=OneWay}" />
+                            </StackPanel>
+                        </Border>
                     </StackPanel>
                 </ScrollViewer>
             </TabItem>
@@ -221,13 +269,29 @@
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
                     <StackPanel>
                         <TextBlock Style="{StaticResource PageTitle}" Text="Inventaire matériel" />
-                        <TextBlock Style="{StaticResource PageSubtitle}" Text="Tous les composants détectés, leur pilote actuel et leur état. Survolez un périphérique en erreur pour le diagnostic." />
+                        <TextBlock Style="{StaticResource PageSubtitle}" Text="Tous les composants détectés, leur pilote actuel et leur état. Sélectionnez un périphérique en erreur pour le diagnostic et la réparation guidée." />
                         <CheckBox Content="Afficher aussi les périphériques logiciels et virtuels" IsChecked="{Binding ShowAllDevices}" Margin="0,0,0,12" />
                     </StackPanel>
+                    <Border Grid.Row="2" Style="{StaticResource Card}" Margin="0,12,0,0"
+                            Visibility="{Binding HasRepairPlan, Converter={StaticResource BoolToVisibility}}">
+                        <StackPanel>
+                            <TextBlock FontWeight="SemiBold" Text="Réparation guidée" />
+                            <TextBlock Margin="0,4,0,8" TextWrapping="Wrap" Text="{Binding RepairPlanText, Mode=OneWay}" />
+                            <WrapPanel>
+                                <ComboBox ItemsSource="{Binding RepairPlan.Actions, Mode=OneWay}" SelectedItem="{Binding SelectedRepairAction}"
+                                          DisplayMemberPath="Label" MinWidth="260" Margin="0,0,8,0" AutomationProperties.Name="Action de réparation" />
+                                <Button Content="Appliquer" Style="{DynamicResource AccentButtonStyle}" Command="{Binding ExecuteRepairCommand}" />
+                            </WrapPanel>
+                            <TextBlock Margin="0,4,0,0" Opacity="0.75" FontSize="12" TextWrapping="Wrap" Text="{Binding SelectedRepairAction.Explanation, Mode=OneWay}" />
+                            <TextBlock Margin="0,6,0,0" TextWrapping="Wrap" Text="{Binding RepairResultText, Mode=OneWay}" />
+                        </StackPanel>
+                    </Border>
                     <DataGrid Grid.Row="1" ItemsSource="{Binding Devices}" AutoGenerateColumns="False" IsReadOnly="True"
+                              SelectedItem="{Binding SelectedDevice}" SelectionMode="Single"
                               HeadersVisibility="Column" GridLinesVisibility="Horizontal">
                         <DataGrid.RowStyle>
                             <Style TargetType="DataGridRow" BasedOn="{StaticResource {x:Type DataGridRow}}">

@@ -249,5 +249,25 @@
   "{0} périphérique(s) sans solution automatique": "{0} device(s) without automatic fix",
   "Analyse terminée en {0:0} s — {1}": "Scan finished in {0:0} s — {1}",
   "N° de série {0}": "Serial number {0}",
-  "Interface": "Interface"
+  "Interface": "Interface",
+
+  // ---------------------------------------------------------------- boîte à outils du technicien
+  "Santé des pilotes": "Driver health",
+  "Note de santé des pilotes": "Driver health grade",
+  "Excellent": "Excellent", "Bon": "Good", "À surveiller": "Watch", "À traiter": "Needs attention", "Critique": "Critical",
+  "Tous les composants détectés, leur pilote actuel et leur état. Sélectionnez un périphérique en erreur pour le diagnostic et la réparation guidée.": "All detected components, their current driver and status. Select a failing device for the diagnosis and guided repair.",
+  "Réparation guidée": "Guided repair",
+  "Action de réparation": "Repair action",
+  "Appliquer": "Apply",
+  "Continuer quand même ?": "Continue anyway?",
+  "La réparation d'un périphérique": "Repairing a device",
+  "Nettoyage du magasin de pilotes": "Driver store cleanup",
+  "Windows garde toutes les anciennes versions de pilotes. SpokaPilote repère celles qui ne servent plus et ont été remplacées (jamais un pilote utilisé, jamais la seule version, jamais un pilote d'imprimante), les sauvegarde puis les supprime.": "Windows keeps every old driver version. SpokaPilote finds the ones that are no longer used and have been replaced (never a driver in use, never the only version, never a printer driver), backs them up, then removes them.",
+  "Analyser le magasin": "Analyze the store",
+  "Nettoyer...": "Clean up...",
+  "Analyse du magasin de pilotes...": "Analyzing the driver store...",
+  "Le nettoyage du magasin de pilotes": "Driver store cleanup",
+  "Nettoyage du magasin de pilotes...": "Cleaning up the driver store...",
+  "{0} paquet(s) supprimé(s), {1} libéré(s).": "{0} package(s) removed, {1} freed.",
+  "Supprimer {0} ancienne(s) version(s) de pilotes inutilisée(s) ({1}) ?\n\nChaque paquet est sauvegardé avant suppression et l'opération apparaît dans l'Historique.": "Remove {0} unused old driver version(s) ({1})?\n\nEach package is backed up before removal and the operation appears in History."
 }

@@ -498,6 +498,122 @@ public sealed class MainViewModel : ObservableObject
         return Task.CompletedTask;
     }
 
+    // ------------------------------------------------------------------ santé des pilotes
+
+    public bool HasHealth => LastScan?.Health is not null;
+    public string HealthGrade => LastScan?.Health?.Grade ?? "—";
+    public string HealthScoreText => LastScan?.Health is { } h ? $"{h.Score}/100 · {Loc.T(h.GradeLabel)}" : "";
+    public string HealthSummaryText => LastScan?.Health?.Summary ?? "";
+    public List<Core.Health.HealthFinding> HealthFindings =>
+        LastScan?.Health?.Findings.OrderBy(f => f.Severity).Take(10).ToList() ?? new();
+
+    // ------------------------------------------------------------------ réparation guidée
+
+    private DeviceItem? _selectedDevice;
+    public DeviceItem? SelectedDevice
+    {
+        get => _selectedDevice;
+        set
+        {
+            if (!Set(ref _selectedDevice, value)) return;
+            RepairPlan = value is null || LastScan is null ? null : Core.Repair.DeviceRepair.Plan(value.Device, LastScan.Devices);
+        }
+    }
+
+    private Core.Repair.RepairPlan? _repairPlan;
+    public Core.Repair.RepairPlan? RepairPlan
+    {
+        get => _repairPlan;
+        private set
+        {
+            Set(ref _repairPlan, value);
+            OnPropertyChanged(nameof(HasRepairPlan));
+            OnPropertyChanged(nameof(RepairPlanText));
+            SelectedRepairAction = value?.Recommended;
+        }
+    }
+    public bool HasRepairPlan => RepairPlan is not null && RepairPlan.Device.HasProblem;
+    public string RepairPlanText => RepairPlan is null ? "" :
+        RepairPlan.Diagnosis + (RepairPlan.Advice.Count > 0 ? "\n\n• " + string.Join("\n• ", RepairPlan.Advice) : "")
+        + (RepairPlan.IsCritical ? "\n\n⚠ " + RepairPlan.CriticalReason : "");
+
+    private Core.Repair.RepairAction? _selectedRepairAction;
+    public Core.Repair.RepairAction? SelectedRepairAction { get => _selectedRepairAction; set => Set(ref _selectedRepairAction, value); }
+    public RelayCommand ExecuteRepairCommand => _executeRepair ??= new RelayCommand(ExecuteRepairAsync,
+        () => !IsBusy && RepairPlan is not null && SelectedRepairAction is not null);
+    private RelayCommand? _executeRepair;
+
+    private async Task ExecuteRepairAsync()
+    {
+        if (RepairPlan is null || SelectedRepairAction is null) return;
+        if (!IsAdmin) { AskRelaunch(Loc.T("La réparation d'un périphérique")); return; }
+        var confirmCritical = false;
+        if (RepairPlan.IsCritical)
+        {
+            if (MessageBox.Show($"{RepairPlan.CriticalReason}\n\n{Loc.T("Continuer quand même ?")}", "SpokaPilote",
+                    MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No) != MessageBoxResult.Yes) return;
+            confirmCritical = true;
+        }
+        var plan = RepairPlan;
+        var action = SelectedRepairAction;
+        await RunBusyAsync($"{action.Label}...", async ct =>
+        {
+            var result = await Core.Repair.DeviceRepair.ExecuteAsync(plan, action.Kind,
+                new Core.Repair.RepairOptions { ConfirmCritical = confirmCritical }, new Progress<string>(m => Status = m), ct);
+            Status = result.Message;
+            RepairResultText = result.Message + (result.RebootRequired ? "\n" + Loc.T("Redémarrage nécessaire") : "");
+            RefreshHistory();
+        });
+    }
+
+    private string _repairResult = "";
+    public string RepairResultText { get => _repairResult; private set => Set(ref _repairResult, value); }
+
+    // ------------------------------------------------------------------ nettoyage du magasin de pilotes
+
+    private DriverStoreAnalysis? _storeAnalysis;
+    private string _storeText = "";
+    public string DriverStoreText { get => _storeText; private set => Set(ref _storeText, value); }
+    public RelayCommand AnalyzeDriverStoreCommand => _analyzeStore ??= new RelayCommand(AnalyzeDriverStoreAsync, () => !IsBusy);
+    public RelayCommand CleanDriverStoreCommand => _cleanStore ??= new RelayCommand(CleanDriverStoreAsync,
+        () => !IsBusy && _storeAnalysis is { Candidates.Count: > 0 });
+    private RelayCommand? _analyzeStore, _cleanStore;
+
+    private async Task AnalyzeDriverStoreAsync()
+    {
+        await RunBusyAsync(Loc.T("Analyse du magasin de pilotes..."), async ct =>
+        {
+            _storeAnalysis = await Task.Run(() => DriverStoreCleaner.AnalyzeThisPc(new Progress<string>(m => Status = m)), ct);
+            DriverStoreText = _storeAnalysis.Summary +
+                (_storeAnalysis.Candidates.Count > 0
+                    ? "\n\n" + string.Join("\n", _storeAnalysis.Candidates.Take(12).Select(c => $"• {c.Package.DisplayName} {c.Package.Version} — {c.Package.SizeLabel}"))
+                      + (_storeAnalysis.Candidates.Count > 12 ? $"\n… (+{_storeAnalysis.Candidates.Count - 12})" : "")
+                    : "");
+            Status = _storeAnalysis.Summary;
+        });
+    }
+
+    private async Task CleanDriverStoreAsync()
+    {
+        if (_storeAnalysis is null) return;
+        if (!IsAdmin) { AskRelaunch(Loc.T("Le nettoyage du magasin de pilotes")); return; }
+        var candidates = _storeAnalysis.Candidates;
+        if (MessageBox.Show(Loc.F("Supprimer {0} ancienne(s) version(s) de pilotes inutilisée(s) ({1}) ?\n\nChaque paquet est sauvegardé avant suppression et l'opération apparaît dans l'Historique.",
+                candidates.Count, DriverStoreCleaner.FormatSize(_storeAnalysis.ReclaimableBytes)),
+                "SpokaPilote", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
+        await RunBusyAsync(Loc.T("Nettoyage du magasin de pilotes..."), async ct =>
+        {
+            var result = await DriverStoreCleaner.CleanAsync(candidates, new DriverStoreCleanOptions { Backup = true },
+                new Progress<string>(m => Status = m), ct);
+            DriverStoreText = Loc.F("{0} paquet(s) supprimé(s), {1} libéré(s).", result.Removals.Count(r => r.Success),
+                DriverStoreCleaner.FormatSize(result.FreedBytes))
+                + (result.Removals.Any(r => !r.Success) ? "\n" + string.Join("\n", result.Removals.Where(r => !r.Success).Select(r => $"✗ {r.Package.DisplayName} : {r.Message}")) : "");
+            Status = DriverStoreText.Split('\n')[0];
+            _storeAnalysis = null;
+            RefreshHistory();
+        });
+    }
+
     // ------------------------------------------------------------------ langue de l'interface
 
     public string[] LanguageChoices { get; } = { Loc.T("Automatique (langue de Windows)"), "Français", "English" };
@@ -577,6 +693,11 @@ public sealed class MainViewModel : ObservableObject
             OnPropertyChanged(nameof(HealthHeadline));
             OnPropertyChanged(nameof(PolicySummary));
             OnPropertyChanged(nameof(BlockedCount));
+            OnPropertyChanged(nameof(HasHealth));
+            OnPropertyChanged(nameof(HealthGrade));
+            OnPropertyChanged(nameof(HealthScoreText));
+            OnPropertyChanged(nameof(HealthSummaryText));
+            OnPropertyChanged(nameof(HealthFindings));
         }
     }
 
