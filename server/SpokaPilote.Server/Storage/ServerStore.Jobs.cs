@@ -21,7 +21,9 @@ public sealed record JobRecord(
     string? Message,
     int? ExitCode,
     long? ReportId,
-    string? Log);
+    string? Log,
+    DateTimeOffset? NotAfter = null,
+    long? ScheduleId = null);
 
 public enum JobCompletion { Completed, NotFound, NotRunning }
 
@@ -35,7 +37,7 @@ public sealed partial class ServerStore
 
     private const string JobColumns = """
         j.id, j.machine_ref, m.name, j.type, j.parameters, j.created_at, j.created_by, j.state, j.started_at, j.finished_at,
-        j.message, j.exit_code, j.report_id
+        j.message, j.exit_code, j.report_id, j.not_after, j.schedule_id
         """;
 
     /// <summary>
@@ -56,6 +58,31 @@ public sealed partial class ServerStore
         var id = Convert.ToInt64(Scalar(c, """
             INSERT INTO jobs(machine_ref, type, parameters, created_at, created_by, state) VALUES($m, $t, $p, $at, $by, 'pending') RETURNING id;
             """, ("$m", machineRef), ("$t", type), ("$p", json), ("$at", Iso(now)), ("$by", createdBy)), CultureInfo.InvariantCulture);
+        tx.Commit();
+        return (GetJob(c, id, withLog: false)!, true);
+    }
+
+    /// <summary>
+    /// Planificateur : ajoute une tâche sauf si une tâche du même type est déjà en attente pour ce poste (quels que soient
+    /// ses paramètres). <paramref name="notAfter"/> : fin de la fenêtre de maintenance — la tâche n'est plus remise au
+    /// poste après cette heure et expire.
+    /// </summary>
+    public (JobRecord Job, bool Created) EnqueueScheduledJob(long machineRef, string type, JobParameters parameters, string createdBy,
+        DateTimeOffset now, DateTimeOffset? notAfter, long scheduleId)
+    {
+        using var c = Open();
+        using var tx = c.BeginTransaction();
+        if (Scalar(c, "SELECT id FROM jobs WHERE machine_ref = $m AND type = $t AND state = 'pending' ORDER BY id LIMIT 1;",
+                ("$m", machineRef), ("$t", type)) is long existing)
+        {
+            tx.Commit();
+            return (GetJob(c, existing, withLog: false)!, false);
+        }
+        var id = Convert.ToInt64(Scalar(c, """
+            INSERT INTO jobs(machine_ref, type, parameters, created_at, created_by, state, not_after, schedule_id)
+            VALUES($m, $t, $p, $at, $by, 'pending', $na, $sid) RETURNING id;
+            """, ("$m", machineRef), ("$t", type), ("$p", JsonSerializer.Serialize(parameters, Json)), ("$at", Iso(now)), ("$by", createdBy),
+            ("$na", notAfter is { } n ? Iso(n) : null), ("$sid", scheduleId)), CultureInfo.InvariantCulture);
         tx.Commit();
         return (GetJob(c, id, withLog: false)!, true);
     }
@@ -124,8 +151,13 @@ public sealed partial class ServerStore
         var ids = new List<long>();
         using (var cmd = c.CreateCommand())
         {
-            cmd.CommandText = "SELECT id FROM jobs WHERE machine_ref = $m AND state = 'pending' ORDER BY id LIMIT $max;";
+            // Une tâche dont la fenêtre de maintenance est terminée n'est plus remise (elle expire).
+            cmd.CommandText = """
+                SELECT id FROM jobs WHERE machine_ref = $m AND state = 'pending' AND (not_after IS NULL OR not_after > $now)
+                ORDER BY id LIMIT $max;
+                """;
             cmd.Parameters.AddWithValue("$m", machineRef);
+            cmd.Parameters.AddWithValue("$now", Iso(now));
             cmd.Parameters.AddWithValue("$max", max);
             using var reader = cmd.ExecuteReader();
             while (reader.Read()) ids.Add(reader.GetInt64(0));
@@ -169,26 +201,30 @@ public sealed partial class ServerStore
     {
         using var c = Open();
         using var tx = c.BeginTransaction();
-        var expired = new List<long>();
+        var expired = new List<(long Id, string Message)>();
         using (var cmd = c.CreateCommand())
         {
             cmd.CommandText = """
-                SELECT id FROM jobs WHERE (state = 'pending' AND created_at < $p) OR (state = 'running' AND started_at < $r);
+                SELECT id, state, not_after IS NOT NULL AND not_after <= $now FROM jobs
+                WHERE (state = 'pending' AND (created_at < $p OR (not_after IS NOT NULL AND not_after <= $now)))
+                   OR (state = 'running' AND started_at < $r);
                 """;
             cmd.Parameters.AddWithValue("$p", Iso(now.AddDays(-pendingDays)));
             cmd.Parameters.AddWithValue("$r", Iso(now.AddHours(-runningHours)));
+            cmd.Parameters.AddWithValue("$now", Iso(now));
             using var reader = cmd.ExecuteReader();
-            while (reader.Read()) expired.Add(reader.GetInt64(0));
+            while (reader.Read())
+                expired.Add((reader.GetInt64(0), reader.GetString(1) == JobStates.Running
+                    ? $"Aucun résultat reçu {runningHours} h après le démarrage : poste éteint ou redémarré pendant l'exécution ?"
+                    : reader.GetBoolean(2)
+                        ? "Fenêtre de maintenance terminée avant que le poste ne récupère la tâche (poste éteint ou agent non activé)."
+                        : $"Non récupérée par le poste en {pendingDays} jour(s) : agent non activé (spokapilote agent enable) ou poste éteint."));
         }
-        foreach (var id in expired)
-            Execute(c, """
-                UPDATE jobs SET finished_at = $now, message = CASE state
-                    WHEN 'pending' THEN $mp ELSE $mr END, state = 'expired' WHERE id = $id;
-                """, ("$id", id), ("$now", Iso(now)),
-                ("$mp", $"Non récupérée par le poste en {pendingDays} jour(s) : agent non activé (spokapilote agent enable) ou poste éteint."),
-                ("$mr", $"Aucun résultat reçu {runningHours} h après le démarrage : poste éteint ou redémarré pendant l'exécution ?"));
+        foreach (var (id, message) in expired)
+            Execute(c, "UPDATE jobs SET finished_at = $now, message = $msg, state = 'expired' WHERE id = $id;",
+                ("$id", id), ("$now", Iso(now)), ("$msg", message));
         tx.Commit();
-        return expired.Select(id => GetJob(c, id, withLog: false)!).ToList();
+        return expired.Select(e => GetJob(c, e.Id, withLog: false)!).ToList();
     }
 
     /// <summary>Supprime les tâches terminées depuis plus de <paramref name="days"/> jours.</summary>
@@ -199,11 +235,13 @@ public sealed partial class ServerStore
             ("$t", Iso(now.AddDays(-days))));
     }
 
-    public JobStats GetJobStats(DateTimeOffset now)
+    /// <summary>Compteurs des tâches, de tout le parc ou des seuls postes indiqués (filtre par groupe).</summary>
+    public JobStats GetJobStats(DateTimeOffset now, IReadOnlyCollection<long>? machineRefs = null)
     {
         using var c = Open();
-        var row = Row(c, """
-            SELECT SUM(state = 'pending'), SUM(state = 'running'), SUM(state = 'failed' AND finished_at >= $since) FROM jobs;
+        var filter = machineRefs is null ? "" : $" WHERE machine_ref IN ({(machineRefs.Count == 0 ? "NULL" : string.Join(",", machineRefs))})";
+        var row = Row(c, $"""
+            SELECT SUM(state = 'pending'), SUM(state = 'running'), SUM(state = 'failed' AND finished_at >= $since) FROM jobs{filter};
             """, ("$since", Iso(now.AddDays(-1))))!;
         static int I(object? v) => v is null ? 0 : Convert.ToInt32(v, CultureInfo.InvariantCulture);
         return new JobStats(I(row[0]), I(row[1]), I(row[2]));
@@ -255,6 +293,8 @@ public sealed partial class ServerStore
             r.IsDBNull(10) ? null : r.GetString(10),
             r.IsDBNull(11) ? null : r.GetInt32(11),
             r.IsDBNull(12) ? null : r.GetInt64(12),
-            r.IsDBNull(13) ? null : r.GetString(13));
+            r.IsDBNull(15) ? null : r.GetString(15),
+            r.IsDBNull(13) ? null : ParseIso(r.GetString(13)),
+            r.IsDBNull(14) ? null : r.GetInt64(14));
     }
 }

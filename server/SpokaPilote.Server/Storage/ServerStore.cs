@@ -25,14 +25,14 @@ public sealed record SaveResult(long MachineRef, long ReportId, bool IsNewMachin
 
 /// <summary>
 /// Stockage SQLite (un seul fichier dans le volume de données) : postes, historique des rapports, documents, tâches à
-/// distance et alertes. Une connexion par opération (le pool de Microsoft.Data.Sqlite les réutilise) ; journal WAL
+/// distance, alertes, groupes, planifications, comptes et journal d'audit. Une connexion par opération (le pool de Microsoft.Data.Sqlite les réutilise) ; journal WAL
 /// pour les lectures concurrentes.
 /// </summary>
 public sealed partial class ServerStore
 {
     public const string PolicyKey = "policy";
     public const string PrinterProfileKey = "printer-profile";
-    private const int SchemaVersion = 2;
+    internal const int SchemaVersion = 3;
 
     private readonly string _connectionString;
     private readonly int _historyPerMachine;
@@ -124,6 +124,76 @@ public sealed partial class ServerStore
         );
         """;
 
+    /// <summary>Tables ajoutées par la version 3 (console 3.1).</summary>
+    private const string SchemaV3 = """
+        CREATE TABLE IF NOT EXISTS machine_groups (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            name          TEXT NOT NULL UNIQUE COLLATE NOCASE,
+            description   TEXT,
+            rules_json    TEXT NOT NULL,
+            created_at    TEXT NOT NULL,
+            updated_at    TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS group_members (
+            group_id      INTEGER NOT NULL REFERENCES machine_groups(id) ON DELETE CASCADE,
+            machine_ref   INTEGER NOT NULL REFERENCES machines(id) ON DELETE CASCADE,
+            PRIMARY KEY (group_id, machine_ref)
+        );
+        CREATE INDEX IF NOT EXISTS ix_group_members_machine ON group_members(machine_ref);
+        CREATE TABLE IF NOT EXISTS schedules (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            name           TEXT NOT NULL,
+            job_type       TEXT NOT NULL,
+            dry_run        INTEGER NOT NULL DEFAULT 0,
+            group_id       INTEGER REFERENCES machine_groups(id),
+            frequency      TEXT NOT NULL,
+            days           TEXT NOT NULL,
+            time           TEXT NOT NULL,
+            window_minutes INTEGER,
+            enabled        INTEGER NOT NULL DEFAULT 1,
+            created_at     TEXT NOT NULL,
+            created_by     TEXT NOT NULL,
+            updated_at     TEXT NOT NULL,
+            next_run       TEXT,
+            last_run       TEXT,
+            last_result    TEXT
+        );
+        CREATE TABLE IF NOT EXISTS users (
+            id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+            login               TEXT NOT NULL UNIQUE COLLATE NOCASE,
+            display_name        TEXT,
+            role                TEXT NOT NULL,
+            password_hash       TEXT NOT NULL,
+            enabled             INTEGER NOT NULL DEFAULT 1,
+            created_at          TEXT NOT NULL,
+            updated_at          TEXT NOT NULL,
+            password_changed_at TEXT NOT NULL,
+            last_login          TEXT
+        );
+        CREATE TABLE IF NOT EXISTS sessions (
+            id_hash       TEXT NOT NULL PRIMARY KEY,
+            user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            csrf          TEXT NOT NULL,
+            created_at    TEXT NOT NULL,
+            last_seen     TEXT NOT NULL,
+            expires_at    TEXT NOT NULL,
+            ip            TEXT
+        );
+        CREATE INDEX IF NOT EXISTS ix_sessions_user ON sessions(user_id);
+        CREATE TABLE IF NOT EXISTS audit (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            at            TEXT NOT NULL,
+            actor         TEXT NOT NULL,
+            role          TEXT,
+            action        TEXT NOT NULL,
+            target        TEXT,
+            detail        TEXT,
+            ip            TEXT,
+            success       INTEGER NOT NULL DEFAULT 1
+        );
+        CREATE INDEX IF NOT EXISTS ix_audit_at ON audit(at);
+        """;
+
     private void Migrate()
     {
         using var c = Open(foreignKeys: false);
@@ -152,10 +222,18 @@ public sealed partial class ServerStore
                 DROP TABLE machines_v1;
                 """);
         }
-        else
+        else if (version < 2)
         {
             Execute(c, SchemaV2);
         }
+        // Version 3 (console 3.1) : groupes, planifications, comptes, sessions, journal d'audit ; adresse IP du dernier
+        // rapport (règles « sous-réseau ») et fenêtre de maintenance des tâches. Ajouts uniquement : rien n'est perdu.
+        Execute(c, """
+            ALTER TABLE machines ADD COLUMN last_ip TEXT;
+            ALTER TABLE jobs ADD COLUMN not_after TEXT;
+            ALTER TABLE jobs ADD COLUMN schedule_id INTEGER;
+            """);
+        Execute(c, SchemaV3);
         Execute(c, $"PRAGMA user_version = {SchemaVersion};");
         tx.Commit();
     }
@@ -168,7 +246,7 @@ public sealed partial class ServerStore
     /// l'identifiant au premier rapport qui le contient. Le « dernier rapport » d'un poste est celui dont l'horodatage
     /// est le plus récent : renvoyer un ancien rapport (reprise d'un partage) l'ajoute à l'historique sans écraser l'état actuel.
     /// </summary>
-    public SaveResult SaveReport(MachineReport report, string rawJson, DateTimeOffset receivedAt)
+    public SaveResult SaveReport(MachineReport report, string rawJson, DateTimeOffset receivedAt, string? remoteIp = null)
     {
         var summary = JsonSerializer.Serialize(report, Json);
         // Dernier contact : date du rapport, bornée par la date de réception (horloge du poste en avance).
@@ -198,6 +276,9 @@ public sealed partial class ServerStore
                     ("$id", machineRef), ("$at", Iso(report.Timestamp)), ("$s", summary), ("$raw", Compress(rawJson)));
             Execute(c, "UPDATE machines SET last_seen = MAX(last_seen, $seen) WHERE id = $id;", ("$id", machineRef), ("$seen", Iso(seen)));
         }
+        // Adresse d'envoi du rapport le plus récent : sert aux règles de groupe « sous-réseau » (jamais transmise aux postes).
+        if (remoteIp is not null && isLatest)
+            Execute(c, "UPDATE machines SET last_ip = $ip WHERE id = $id;", ("$id", machineRef), ("$ip", remoteIp));
 
         var reportId = Convert.ToInt64(Scalar(c, """
             INSERT INTO reports(machine_ref, report_at, received_at, summary_json) VALUES($m, $at, $rcv, $s) RETURNING id;
@@ -242,7 +323,7 @@ public sealed partial class ServerStore
     }
 
     private const string MachineColumns = """
-        m.name, m.last_seen, m.summary_json, (SELECT COUNT(*) FROM reports r WHERE r.machine_ref = m.id), m.id, m.machine_id, m.agent_seen
+        m.name, m.last_seen, m.summary_json, (SELECT COUNT(*) FROM reports r WHERE r.machine_ref = m.id), m.id, m.machine_id, m.agent_seen, m.last_ip
         """;
 
     public List<StoredMachine> GetMachines()
@@ -373,7 +454,8 @@ public sealed partial class ServerStore
         Deserialize(reader.GetString(2)),
         reader.GetInt64(4),
         reader.IsDBNull(5) ? null : reader.GetString(5),
-        reader.IsDBNull(6) ? null : ParseIso(reader.GetString(6)));
+        reader.IsDBNull(6) ? null : ParseIso(reader.GetString(6)),
+        reader.IsDBNull(7) ? null : reader.GetString(7));
 
     private static MachineReport Deserialize(string json) => JsonSerializer.Deserialize<MachineReport>(json, Json)!;
 
