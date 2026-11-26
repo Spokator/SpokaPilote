@@ -1,5 +1,7 @@
 using System.Diagnostics;
+using SpokaPilote.Core.Health;
 using SpokaPilote.Core.Infrastructure;
+using SpokaPilote.Core.Install;
 using SpokaPilote.Core.Inventory;
 using SpokaPilote.Core.Models;
 using SpokaPilote.Core.Policy;
@@ -22,6 +24,8 @@ public sealed class ScanResult
     public LoadedPolicy? Policy { get; init; }
     /// <summary>Décision de la politique pour chaque candidat proposé, y compris ceux retirés par une règle « hide ».</summary>
     public List<CandidateDecision> PolicyDecisions { get; init; } = new();
+    /// <summary>Santé des pilotes (score, note, constats), calculée en fin d'analyse ; null si le calcul a échoué.</summary>
+    public HealthReport? Health { get; init; }
 
     public IEnumerable<DeviceInfo> ProblemDevices => Devices.Where(d => d.IsPresent && d.HasProblem);
 
@@ -126,6 +130,7 @@ public sealed class DriverScanEngine
         foreach (var (source, warning) in context.Warnings) errors.TryAdd(source, warning);
 
         var (merged, decisions) = ApplyPolicy(all, devices, policy.Effective);
+        var health = ComputeHealth(devices, merged, policy.Effective);
         sw.Stop();
         var blocked = merged.Count(c => c.BlockedReason is not null);
         var hidden = decisions.Count(d => d.Decision.Verdict == PolicyVerdict.Hidden);
@@ -142,7 +147,26 @@ public sealed class DriverScanEngine
             Duration = sw.Elapsed,
             Policy = policy,
             PolicyDecisions = decisions,
+            Health = health,
         };
+    }
+
+    /// <summary>Santé des pilotes du poste : ne fait jamais échouer l'analyse.</summary>
+    private static HealthReport? ComputeHealth(IReadOnlyList<DeviceInfo> devices, IReadOnlyList<DriverCandidate> candidates, DriverPolicy policy)
+    {
+        try
+        {
+            return DriverHealth.Compute(devices, candidates, policy, new HealthOptions
+            {
+                OriginalInfNames = DriverStoreCleaner.ReadOriginalInfNames(),
+                Interventions = InterventionHistory.List(),
+            });
+        }
+        catch (Exception ex)
+        {
+            Log.Warn($"Calcul de la santé des pilotes impossible : {ex.Message}");
+            return null;
+        }
     }
 
     /// <summary>

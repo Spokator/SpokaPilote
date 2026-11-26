@@ -12,22 +12,45 @@ public sealed class InterventionItem
     public string Message { get; set; } = "";
 }
 
-/// <summary>Trace d'une installation : ce qui a été installé et quels paquets ont été ajoutés au magasin de pilotes.</summary>
+/// <summary>Types d'intervention (<see cref="Intervention.Kind"/>).</summary>
+public static class InterventionKinds
+{
+    /// <summary>Installation de pilotes (valeur par défaut, historiques antérieurs compris).</summary>
+    public const string Install = "install";
+    /// <summary>Action de réparation sur un périphérique (redémarrage, réactivation, réinstallation).</summary>
+    public const string DeviceRepair = "device-repair";
+    /// <summary>Nettoyage du magasin de pilotes (suppression d'anciennes versions inutilisées).</summary>
+    public const string DriverStoreClean = "driverstore-clean";
+}
+
+/// <summary>
+/// Trace d'une intervention : installation (paquets ajoutés au magasin de pilotes), réparation d'un périphérique
+/// ou nettoyage du magasin (paquets retirés).
+/// </summary>
 public sealed class Intervention
 {
     public string Id { get; set; } = DateTime.Now.ToString("yyyyMMdd-HHmmss");
     public DateTime Timestamp { get; set; } = DateTime.Now;
     public string ComputerName { get; set; } = Environment.MachineName;
+    /// <summary>Type d'intervention (<see cref="InterventionKinds"/>) ; absent dans les historiques antérieurs = installation.</summary>
+    public string? Kind { get; set; }
     public List<InterventionItem> Items { get; set; } = new();
     /// <summary>Paquets publiés ajoutés au magasin pendant l'intervention (oemNN.inf).</summary>
     public List<string> AddedDriverPackages { get; set; } = new();
+    /// <summary>Paquets publiés retirés du magasin (nettoyage) : non annulable, sauf sauvegarde (<see cref="BackupFolder"/>).</summary>
+    public List<string> RemovedDriverPackages { get; set; } = new();
     public string? BackupFolder { get; set; }
     public bool RestorePointCreated { get; set; }
     public DateTime? RolledBackAt { get; set; }
 
     public bool CanRollback => RolledBackAt is null && AddedDriverPackages.Count > 0;
     public string Summary =>
-        $"{Timestamp:dd/MM/yyyy HH:mm} — {Items.Count(i => i.Status == nameof(InstallStatus.Installed))} pilote(s) installé(s)" +
+        $"{Timestamp:dd/MM/yyyy HH:mm} — " + (Kind switch
+        {
+            InterventionKinds.DeviceRepair => $"réparation de périphérique : {string.Join(", ", Items.Select(i => $"{i.Title} ({i.Status})"))}",
+            InterventionKinds.DriverStoreClean => $"nettoyage du magasin de pilotes : {RemovedDriverPackages.Count} paquet(s) retiré(s)",
+            _ => $"{Items.Count(i => i.Status == nameof(InstallStatus.Installed))} pilote(s) installé(s)",
+        }) +
         (RolledBackAt is not null ? $" — annulée le {RolledBackAt:dd/MM/yyyy HH:mm}" : "");
 }
 
