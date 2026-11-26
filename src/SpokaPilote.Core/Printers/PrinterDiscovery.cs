@@ -7,6 +7,20 @@ using SpokaPilote.Core.Infrastructure;
 
 namespace SpokaPilote.Core.Printers;
 
+/// <summary>Réglages du balayage réseau.</summary>
+public sealed record PrinterDiscoveryOptions
+{
+    /// <summary>Réglages historiques : 128 adresses en parallèle, 600 ms par port, communauté « public ».</summary>
+    public static PrinterDiscoveryOptions Default { get; } = new();
+
+    /// <summary>Adresses sondées en même temps (1 à 256).</summary>
+    public int MaxParallelism { get; init; } = 128;
+    /// <summary>Délai de connexion TCP par port d'impression, en millisecondes (100 à 10 000).</summary>
+    public int ConnectTimeoutMs { get; init; } = 600;
+    /// <summary>Communauté SNMP en lecture (souvent « public », parfois propre à l'organisation).</summary>
+    public string SnmpCommunity { get; init; } = "public";
+}
+
 /// <summary>
 /// Découverte des imprimantes réseau : balayage des ports d'impression (9100 RAW, 631 IPP, 515 LPR) puis
 /// identification par SNMP (MIB imprimante + ID IEEE 1284) et IPP (printer-make-and-model).
@@ -89,21 +103,34 @@ public static partial class PrinterDiscovery
         for (uint i = 0; i < count; i++) yield return FromUInt(first + i);
     }
 
-    public static async Task<List<DiscoveredPrinter>> DiscoverAsync(
+    public static Task<List<DiscoveredPrinter>> DiscoverAsync(
         IEnumerable<IPAddress>? targets = null,
+        IProgress<string>? progress = null,
+        CancellationToken ct = default) => DiscoverAsync(targets, PrinterDiscoveryOptions.Default, progress, ct);
+
+    /// <summary>
+    /// Découverte avec réglages explicites : parallélisme et délai de connexion (balayage plus ou moins discret),
+    /// communauté SNMP de l'organisation.
+    /// </summary>
+    public static async Task<List<DiscoveredPrinter>> DiscoverAsync(
+        IEnumerable<IPAddress>? targets,
+        PrinterDiscoveryOptions options,
         IProgress<string>? progress = null,
         CancellationToken ct = default)
     {
+        ArgumentNullException.ThrowIfNull(options);
         var addresses = targets?.ToList() ?? LocalSubnets().SelectMany(s => Hosts(s.Network, s.Prefix)).Distinct().ToList();
         progress?.Report($"Balayage de {addresses.Count} adresse(s) sur les ports d'impression...");
 
         var found = new List<DiscoveredPrinter>();
         var scanned = 0;
-        await Parallel.ForEachAsync(addresses, new ParallelOptions { MaxDegreeOfParallelism = 128, CancellationToken = ct }, async (ip, token) =>
+        var parallelism = Math.Clamp(options.MaxParallelism, 1, 256);
+        var connectTimeout = Math.Clamp(options.ConnectTimeoutMs, 100, 10_000);
+        await Parallel.ForEachAsync(addresses, new ParallelOptions { MaxDegreeOfParallelism = parallelism, CancellationToken = ct }, async (ip, token) =>
         {
             var open = new List<int>();
             foreach (var port in PrinterPorts)
-                if (await IsPortOpenAsync(ip, port, 600, token).ConfigureAwait(false)) open.Add(port);
+                if (await IsPortOpenAsync(ip, port, connectTimeout, token).ConfigureAwait(false)) open.Add(port);
 
             var n = Interlocked.Increment(ref scanned);
             if (n % 64 == 0) progress?.Report($"Balayage : {n}/{addresses.Count}");
@@ -111,7 +138,7 @@ public static partial class PrinterDiscovery
 
             var printer = new DiscoveredPrinter { Address = ip.ToString() };
             printer.OpenPorts.AddRange(open);
-            await IdentifyAsync(printer, token).ConfigureAwait(false);
+            await IdentifyAsync(printer, options.SnmpCommunity, token).ConfigureAwait(false);
             if (printer.IdentifiedBy.Count == 0)
             {
                 // Ni SNMP ni IPP : soit une imprimante très restreinte, soit un serveur (ex. Prometheus écoute aussi sur 9100).
@@ -129,18 +156,22 @@ public static partial class PrinterDiscovery
         return found.OrderBy(p => ToUInt(IPAddress.Parse(p.Address))).ToList();
     }
 
-    public static async Task IdentifyAsync(DiscoveredPrinter printer, CancellationToken ct)
+    public static Task IdentifyAsync(DiscoveredPrinter printer, CancellationToken ct) => IdentifyAsync(printer, "public", ct);
+
+    /// <summary>Identification SNMP (communauté <paramref name="community"/>, lecture seule) puis IPP.</summary>
+    public static async Task IdentifyAsync(DiscoveredPrinter printer, string community, CancellationToken ct)
     {
         var ip = IPAddress.Parse(printer.Address);
+        if (string.IsNullOrWhiteSpace(community)) community = "public";
 
-        // 1. SNMP (public, lecture seule)
+        // 1. SNMP (lecture seule)
         try
         {
             var snmp = await SnmpClient.GetAsync(ip, new[]
             {
                 SnmpClient.SysDescr, SnmpClient.SysName, SnmpClient.SysLocation, SnmpClient.HrDeviceDescr,
                 SnmpClient.PrtSerialNumber, SnmpClient.Ieee1284DeviceId,
-            }, ct: ct).ConfigureAwait(false);
+            }, community, ct: ct).ConfigureAwait(false);
             if (snmp.Count > 0)
             {
                 printer.IdentifiedBy.Add("SNMP");
