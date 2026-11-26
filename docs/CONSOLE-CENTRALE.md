@@ -22,6 +22,9 @@ installations, et l'équipe IT suit le parc en temps réel depuis un navigateur.
 - **Politique de pilotes** et **profil d'imprimantes** : éditeurs JSON (validation, enregistrement) ; les postes les
   récupèrent avec leur jeton.
 - **Enrôlement** : commandes et script prêts à copier pour connecter les postes.
+- **Grands parcs** (3.2) : listes paginées et filtrées par le serveur, indicateurs précalculés, rapports compressés,
+  afflux de postes maîtrisés (`503` + `Retry-After`), supervision (`/api/metrics`, Prometheus), sauvegarde à chaud ;
+  mesuré sur 20 000 postes × 20 rapports (§ 11).
 
 Le serveur est un unique conteneur Linux (ASP.NET Core, .NET 10) avec une base SQLite dans un volume. Aucune base de
 données externe, aucun service tiers.
@@ -73,6 +76,13 @@ La console répond sur `http://<serveur>:8080`. L'image :
 | `SPOKAPILOTE_SESSION_HOURS` | `8` | (3.1) Session de la console fermée après ce nombre d'heures d'inactivité (1 à 168) ; 7 jours au plus dans tous les cas |
 | `SPOKAPILOTE_AUDIT_MAX_ENTRIES` | `5000` | (3.1) Journal d'audit : nombre maximal d'entrées conservées (100 à 1 000 000) |
 | `SPOKAPILOTE_AUDIT_DAYS` | `180` | (3.1) Journal d'audit : ancienneté maximale des entrées, en jours |
+| `SPOKAPILOTE_HISTORY_DAYS` | `0` | (3.2) Historique : rapports de plus de N jours supprimés (le dernier de chaque poste est gardé) ; `0` = pas de limite d'âge (seulement `SPOKAPILOTE_HISTORY`) |
+| `SPOKAPILOTE_MAX_CONCURRENT_UPLOADS` | nb de processeurs (2 à 16) | (3.2) Rapports traités en même temps ; les suivants attendent leur tour (§ 11) |
+| `SPOKAPILOTE_UPLOAD_QUEUE` | `200` | (3.2) Rapports en attente au plus ; au-delà, ou après 20 s d'attente, réponse `503` + `Retry-After` |
+| `SPOKAPILOTE_MAX_CONCURRENT_AGENTS` / `SPOKAPILOTE_AGENT_QUEUE` | `32` / `1000` | (3.2) Idem pour les interrogations des agents et les résultats des tâches |
+| `SPOKAPILOTE_RETRY_AFTER_SECONDS` | `60` | (3.2) Délai conseillé aux postes refusés, étalé au hasard entre la moitié et une fois et demie |
+| `SPOKAPILOTE_BACKUP_TIME` | — | (3.2) Heure de la sauvegarde automatique quotidienne (`03:00`, fuseau `TZ`) ; vide = pas de sauvegarde automatique |
+| `SPOKAPILOTE_BACKUP_KEEP` | `7` | (3.2) Sauvegardes conservées dans `/data/backups` |
 | `SPOKAPILOTE_PORT` | `8080` | (Compose) port publié sur l'hôte ; `127.0.0.1:8080` derrière un reverse proxy |
 | `SPOKAPILOTE_BEHIND_PROXY` | `false` | (Compose) `true` derrière un reverse proxy : adresse réelle des postes (§ 4) |
 | `SPOKAPILOTE_DOMAIN` | — | (Compose, profil `https`) nom DNS public de la console pour le certificat automatique (§ 4) |
@@ -503,8 +513,42 @@ mots de passe, jetons et adresses de webhook n'y figurent jamais.
 
 ## 8. Sauvegarde et restauration
 
-Toutes les données sont dans le volume `/data`. La base SQLite est en mode WAL : sauvegardez-la **conteneur arrêté**,
-ou copiez les trois fichiers `spokapilote.db*` ensemble.
+Toutes les données sont dans le volume `/data`. La base SQLite est en mode WAL : ne copiez jamais `spokapilote.db`
+seul pendant que la console tourne.
+
+### Sauvegarde à chaud (3.2, recommandé)
+
+La console copie elle-même sa base, **sans s'arrêter** (API de sauvegarde en ligne de SQLite : copie cohérente, les
+rapports continuent d'arriver pendant la copie), dans `/data/backups/spokapilote-AAAAMMJJ-HHMMSS.db`. La copie est
+vérifiée (`PRAGMA quick_check`) puis rendue autonome (un seul fichier, sans journal WAL) ; une copie incomplète n'est
+jamais laissée sous ce nom. Les `SPOKAPILOTE_BACKUP_KEEP` plus récentes (7) sont conservées.
+
+- **À la demande** : page **Paramètres** › **Sauvegarder maintenant**, ou `POST /api/admin/backup?wait=true`
+  (Administrateur ; consigné au journal d'audit).
+- **Chaque jour** : `SPOKAPILOTE_BACKUP_TIME=03:00`.
+- **Hors du serveur** : `/data/backups` est dans le volume ; copiez-le ailleurs (sauvegarde de l'hôte, `docker cp`) :
+
+```bash
+docker cp spokapilote-server:/data/backups ./spokapilote-backups      # ou le dossier du volume sur l'hôte
+```
+
+Durée mesurée : 0,2 s pour 300 postes, 10 s pour une base de 20 000 postes × 20 rapports (874 Mo) ; les envois de rapports
+continuent pendant la copie (§ 11).
+
+**Restauration** d'une sauvegarde à chaud (conteneur arrêté) :
+
+```bash
+docker compose -f server/docker-compose.yml stop
+docker run --rm -v server_spokapilote-data:/data alpine sh -c \
+  "cp /data/backups/spokapilote-AAAAMMJJ-HHMMSS.db /data/spokapilote.db && rm -f /data/spokapilote.db-wal /data/spokapilote.db-shm && chown 1654:1654 /data/spokapilote.db"
+docker compose -f server/docker-compose.yml start
+```
+
+Les jetons (`admin-token.txt`, `agent-token.txt`) ne sont pas dans la base : sauvegardez-les une fois (ou fixez-les par
+variable d'environnement). La base contient les empreintes de mots de passe, le mot de passe SMTP et les adresses de
+webhooks : conservez les sauvegardes en lieu sûr.
+
+### Sauvegarde complète du volume (conteneur arrêté)
 
 ```bash
 # Sauvegarde (archive datée dans le dossier courant)
@@ -547,6 +591,22 @@ conservés). Sauvegardez le volume avant une mise à jour majeure.
   `Europe/Paris`.
 - Les groupes « sous-réseau » ne contiennent un poste qu'après son premier rapport reçu par la 3.1.
 
+### Passage de la 3.1 à la 3.2 (grands parcs)
+
+- **Automatique**, en deux temps. Au démarrage : nouvelles tables, table des postes reconstruite avec les indicateurs de
+  chaque poste calculés depuis son dernier rapport, membres des groupes par règle, index (14 s mesurées pour 20 000 postes
+  × 20 rapports). La console est utilisable dès la fin de cette étape. Ensuite, **en arrière-plan** et par petits lots :
+  l'historique des rapports est compressé (81 s pour 395 000 rapports, sans interrompre la réception des rapports) ; les
+  rapports pas encore convertis restent lisibles. Rien n'est supprimé.
+- Un serveur 3.1 ne sait pas relire une base 3.2 : sauvegardez avant la mise à jour (§ 8) pour pouvoir revenir en arrière.
+- **Postes** : rien à faire ; l'API des postes est inchangée (les postes 3.2 savent en plus attendre et réessayer quand la
+  console est surchargée).
+- **Scripts** : les routes et réponses existantes sont inchangées (`GET /api/machines` renvoie toujours le tableau de
+  tous les postes) ; la pagination et les filtres passent par de nouveaux paramètres (§ 9).
+- **Après la compression** (message « Historique compressé » dans les journaux), lancez une fois un compactage en période
+  creuse : `POST /api/admin/vacuum` (17 s et 2,2 Go → 0,9 Go mesurés sur 20 000 postes). Sans lui, SQLite réutilise la
+  place libérée pour les nouveaux rapports, mais le fichier ne diminue pas.
+
 ## 9. API
 
 Toutes les routes sont sous `/api` ; réponses JSON (camelCase).
@@ -557,15 +617,19 @@ requêtes POST, PUT et DELETE exigent l'en-tête `X-SpokaPilote-CSRF` (§ 2.1).
 
 | Méthode et route | Accès | Rôle |
 |---|---|---|
-| `GET /api/health` | aucun | Sonde de vie (`{"status":"ok","version":"…"}`) |
+| `GET /api/health` | aucun | Sonde de vie (`{"status":"ok","version":"…","capabilities":[…]}` ; `capabilities` depuis la 3.2) |
 | `GET /api/whoami` | poste ou lecture | Vérifie un jeton (`{"access":"agent"\|"admin"}` ; `"user"` pour une session) |
 | `POST /api/session` | aucun | Connexion d'un compte : `{ "login", "password" }`, en-tête `X-SpokaPilote-CSRF` (valeur libre) ; dépose le cookie et renvoie l'appelant et son jeton anti-CSRF (`csrf`) |
 | `GET /api/session` | lecture | Appelant courant (compte ou jeton), rôle, droits (`permissions`), jeton anti-CSRF |
 | `DELETE /api/session` | lecture | Déconnexion |
 | `PUT /api/session/password` | lecture (compte) | Changer son mot de passe : `{ "currentPassword", "newPassword" }` |
-| `POST /api/reports` | poste | Rapport `spokapilote scan --json` (JSON, éventuellement `Content-Encoding: gzip`) |
-| `GET /api/fleet?group=` | lecture | Synthèse du parc ou d'un groupe (indicateurs, postes à traiter, matériel sans pilote, modèles, postes non vus) |
-| `GET /api/machines?group=` | lecture | Liste des postes (indicateurs du dernier rapport, `groups` : identifiants des groupes, `lastIp`) |
+| `POST /api/reports` | poste | Rapport `spokapilote scan --json` (JSON, éventuellement `Content-Encoding: gzip` ; limite appliquée après décompression) ; `503` + `Retry-After` si la console est surchargée (3.2) |
+| `GET /api/fleet?group=&top=` | lecture | Synthèse du parc ou d'un groupe (indicateurs, postes à traiter, matériel sans pilote, modèles, postes non vus) ; `top=N` (3.2) limite les listes aux N premiers, `missingDriverCount` donne le nombre total de types de matériel sans pilote |
+| `GET /api/machines?group=` | lecture | Liste des postes (indicateurs du dernier rapport, `groups` : identifiants des groupes, `lastIp`) — tableau de tous les postes, comme en 3.1 |
+| `GET /api/machines?page=&pageSize=` | lecture | (3.2) Une page calculée par la base : `{ total, offset, limit, items, machineCount, toProcessCount, hasHealth, group }` ; aussi `offset=&limit=` (1 000 au plus). Filtres (avec ou sans pagination) : `q` (nom, modèle, n° de série, Windows), `status` (`todo`, `healthy`, `stale`, `unresolved`, `hardware`, `failed`, `blocked`, `dangerous`, `jobs`), `group` (identifiant ou `none`), tri `sort` (`status`, `name`, `model`, `os`, `driverProblems`, `unresolved`, `proposed`, `failed`, `lastReport`, `health`) et `dir` (`asc`/`desc`) |
+| `GET /api/export/machines?…` | lecture | (3.2) Postes filtrés (mêmes paramètres) en CSV, écrit en continu |
+| `GET /api/missing-drivers?q=&offset=&limit=&machines=&group=` | lecture | (3.2) Matériel sans pilote paginé ; `machines` = postes listés par ligne (12 par défaut, `moreMachines` = les autres) |
+| `GET /api/export/missing-drivers?q=&group=` | lecture | (3.2) Matériel sans pilote complet en CSV |
 | `GET /api/machines/{nom}` | lecture | Fiche du poste, dernier rapport normalisé, historique, groupes |
 | `GET /api/machines/{nom}/reports/{id}` | lecture | Un rapport de l'historique |
 | `GET /api/machines/{nom}/raw` | lecture | Dernier rapport complet tel qu'envoyé (pour `spokapilote pack`) |
@@ -585,7 +649,7 @@ requêtes POST, PUT et DELETE exigent l'en-tête `X-SpokaPilote-CSRF` (§ 2.1).
 | `POST /api/alerts/test` | admin | Envoie une alerte de test sur chaque canal et renvoie le résultat de chacun |
 | `GET /api/alerts/events` | admin | Dernières alertes envoyées |
 | `GET /api/groups` | lecture | Groupes (règles, nombre de membres, membres manuels, planifications) |
-| `GET /api/groups/{id}` | lecture | Groupe, membres (`manual`, `byRule`), planifications qui l'utilisent |
+| `GET /api/groups/{id}?limit=&offset=` | lecture | Groupe, membres (`manual`, `byRule`), planifications qui l'utilisent ; (3.2) `limit` pour une page de membres, `memberTotal` et `toProcessCount` pour tout le groupe |
 | `GET /api/group-fields` | lecture | Champs et opérateurs des règles |
 | `POST /api/groups/preview` | lecture | Postes désignés par des règles : `{ "rules": { ... } }` |
 | `POST /api/groups` / `PUT /api/groups/{id}` | tech | `{ "name", "description", "rules": { "match": "all"\|"any", "conditions": [ { "field": "name", "operator": "startsWith", "value": "PC-COMPTA" } ] } }` |
@@ -599,6 +663,10 @@ requêtes POST, PUT et DELETE exigent l'en-tête `X-SpokaPilote-CSRF` (§ 2.1).
 | `DELETE /api/users/{id}` | admin | Supprime un compte |
 | `GET /api/audit?category=&q=&limit=` | admin | Journal d'audit (les plus récentes d'abord) |
 | `GET /api/audit/export?category=&q=` | admin | Journal d'audit complet en CSV |
+| `GET /api/metrics?format=` | admin | (3.2) Supervision : postes, base (taille, pages libres, migration), tâches, files d'attente des postes, cache, mémoire, temps de réponse par route (p50/p95/p99) ; `format=prometheus` pour Prometheus (§ 11) |
+| `GET /api/admin/backups` | admin | (3.2) Sauvegardes présentes et résultat de la dernière |
+| `POST /api/admin/backup?wait=` | admin | (3.2) Sauvegarde à chaud (`202` en arrière-plan, `wait=true` : attend et renvoie le résultat ; `409` si une sauvegarde est en cours) |
+| `POST /api/admin/vacuum` | admin | (3.2) Compactage de la base (bloque les écritures pendant sa durée : période creuse) |
 
 `POST /api/reports` renvoie aussi `reportId` (à indiquer dans le résultat d'une tâche) et `renamedFrom` (ancien nom si le
 poste, reconnu par son identifiant, a été renommé).
@@ -644,3 +712,155 @@ La console web (`server/SpokaPilote.Server/wwwroot`) est en HTML/CSS/JavaScript 
 politique de sécurité du contenu stricte (aucun script ni style en ligne). Pour l'automatisation ou les captures, le
 lien `http://localhost:8080/#jeton=<jeton-admin>&vue=/postes` ouvre directement une session avec le jeton administrateur
 (le jeton est retiré de l'adresse aussitôt ; le fragment `#` n'est jamais envoyé au serveur).
+
+**Test de charge** (`tools/LoadTest`, outil de développement, ni dans l'image ni dans l'installateur) : parc fictif
+réaliste (rapports de la forme de `spokapilote scan --json`, ~200 périphériques, ~195 Ko, 15 Ko compressés), puis
+mesures (§ 11). Exemple sur un conteneur de test :
+
+```powershell
+$lt = "dotnet tools\LoadTest\bin\Release\net10.0\SpokaPilote.LoadTest.dll"
+& $lt seed   --url http://127.0.0.1:18080 --agent <jeton-enrôlement> --machines 20000 --history 20 --concurrency 64
+& $lt groups --url http://127.0.0.1:18080 --admin <jeton-admin> --machines 20000
+& $lt bench  --url http://127.0.0.1:18080 --admin <jeton-admin> --agent <jeton-enrôlement> --machines 20000 --api paged --duration 180 --container <conteneur>
+& $lt burst  --url http://127.0.0.1:18080 --agent <jeton-enrôlement> --machines 20000 --concurrency 200 --duration 60
+```
+
+## 11. Grands parcs
+
+La console 3.2 est conçue pour des parcs de plusieurs dizaines de milliers de postes sur un seul conteneur et une base
+SQLite. Ce qui la rend possible :
+
+- **Rien n'est recalculé à partir des rapports** : les indicateurs de chaque poste (état, compteurs, santé, modèle,
+  Windows...), son matériel sans pilote et son appartenance aux groupes par règle sont calculés **une fois**, à la
+  réception de son rapport. Les listes, filtres, tris, la synthèse et les groupes lisent ces colonnes ; la synthèse du
+  parc est gardée en mémoire et ne relit que les postes modifiés depuis le dernier calcul.
+- **Pagination côté serveur** : la console ne charge jamais tout le parc (pages de 50 à 500 postes, recherche envoyée
+  au serveur quand la saisie s'arrête, exports CSV écrits en continu). Les scripts qui appellent `GET /api/machines`
+  sans pagination reçoivent toujours le tableau complet (14 Mo pour 20 000 postes).
+- **Stockage compact** : rapports normalisés compressés, rapport brut conservé tel que le poste l'a envoyé (gzip),
+  table des postes sans données volumineuses. Environ **46 Ko par poste** avec 20 rapports d'historique.
+- **Écritures en file** : une écriture à la fois, sans attente active de SQLite ; une interrogation d'agent ne fait
+  qu'une lecture (le « dernier contact » est écrit au plus une fois par minute).
+- **Afflux maîtrisés** : au-delà de la capacité de traitement, les rapports attendent leur tour dans une file bornée,
+  puis la console répond `503` avec un `Retry-After` **étalé au hasard** (30 à 90 s par défaut) au lieu de s'effondrer.
+
+### Mesures
+
+Banc d'essai : conteneur limité à **4 vCPU et 2 Go de RAM** (Docker Desktop, SSD), parc fictif de **20 000 postes ×
+20 rapports** (395 000 rapports, ~195 Ko chacun avant compression), 27 groupes (sites, constructeurs, sous-réseau,
+500 membres manuels). Charge mixte pendant 3 minutes : 33 interrogations d'agent par seconde (chaque poste toutes les
+10 minutes), 2 rapports par seconde, 5 utilisateurs de la console qui enchaînent les pages. Temps de réponse en ms
+(p50 / p95), 3.1 puis 3.2 sur la même base (migrée) :
+
+| Requête | 3.1 | 3.2 |
+|---|---:|---:|
+| Interrogation de l'agent (`GET /api/agent/jobs`) | 27 / 1 150 | 1,6 / 3,2 |
+| Envoi d'un rapport (`POST /api/reports`) | 43 / 1 269 | 3,0 / 9,8 |
+| Vue d'ensemble (`/api/fleet?top=12` ; 3.1 : `/api/fleet`) | 1 321 / 2 533 | 42 / 108 |
+| Synthèse complète (`/api/fleet`, 5,4 Mo) | 1 321 / 2 533 | 80 / 139 |
+| Synthèse d'un groupe | 1 222 / 2 006 | 10 / 48 |
+| Liste des postes, une page de 100 (3.1 : liste complète) | 1 605 / 2 635 | 4,5 / 7,4 |
+| Recherche dans la liste (page de 100) | (dans le navigateur, après la liste complète) | 22 / 41 |
+| Liste complète (`/api/machines`, 14 Mo) | 1 605 / 2 635 | 140 / 270 |
+| Fiche d'un poste | 19 / 398 | 2,2 / 3,6 |
+| Groupes (`/api/groups`) | 1 505 / 2 129 | 5,6 / 9,2 |
+| Fiche d'un groupe | 1 272 / 2 154 | 18 / 64 |
+| Matériel sans pilote (page ; 3.1 : `/api/fleet`) | 1 321 / 2 533 | 36 / 86 |
+| Export CSV de tout le parc (5,9 Mo) | — | 274 / 421 |
+| Mémoire du conteneur (max pendant la charge) | 1 520 Mo | 796 Mo |
+| Processeur (moyenne pendant la charge, 4 vCPU = 400 %) | 324 % | 76 % |
+
+Afflux d'envois (tous les postes envoient en même temps, rapports de 15 Ko compressés) :
+
+| Scénario | 3.1 | 3.2 |
+|---|---|---|
+| 200 envois simultanés en continu (60 s) | 81 rapports/s, p50 2,3 s, p99 5,8 s | **660 rapports/s**, p50 0,28 s, p99 0,49 s |
+| 1 000 envois simultanés (60 s) | 78 rapports/s, p50 11,3 s, p99 18,9 s | 597 rapports/s acceptés, p50 0,32 s, p99 0,68 s ; 3 % renvoyés à plus tard (`503` + `Retry-After`) |
+| Création du parc (400 000 envois, 64 simultanés) | 92 rapports/s, p99 2,2 s | (non refait : base 3.1 migrée) |
+
+Base et exploitation (20 000 postes × 20 rapports) :
+
+| | 3.1 | 3.2 |
+|---|---:|---:|
+| Taille de la base | 1,83 Go | 0,92 Go (après compactage) |
+| Migration 3.1 → 3.2 au démarrage | — | 14 s |
+| Compression de l'historique en arrière-plan | — | 81 s |
+| Compactage (`VACUUM`) | — | 17 s |
+| Sauvegarde à chaud (`POST /api/admin/backup`) | — | 10 s |
+
+**Essai à 100 000 postes** (même conteneur 4 vCPU / 2 Go, 97 000 postes × 2 rapports, base de 2,1 Go ; 111 interrogations
+d'agent/s, 5 rapports/s, 5 utilisateurs, dont les routes complètes historiques) : agents 1,7 / 22 ms, envois
+4,8 / 32 ms, page de la liste 10 / 23 ms, recherche 110 / 188 ms, fiche d'un poste 3 / 29 ms, groupes 21 / 57 ms ;
+vue d'ensemble 728 / 1 544 ms et matériel sans pilote 794 / 1 727 ms (recalculés à chaque nouveau rapport) ; liste
+complète historique (69 Mo) 1,0 / 1,4 s ; export CSV de tout le parc (28 Mo) 1,7 / 2,2 s ; afflux de 200 envois
+simultanés : 620 rapports/s, p99 0,68 s ; création d'un groupe par règle : 0,3 s ; mémoire 1,6 Go (dont cache disque).
+
+### Dimensionnement
+
+| Parc | Processeur | Mémoire | Disque (base + 7 sauvegardes) |
+|---|---|---|---|
+| jusqu'à 5 000 postes | 2 vCPU | 1 Go | 2 Go |
+| 5 000 à 20 000 postes | 2 à 4 vCPU | 2 Go | 10 Go (SSD) |
+| 20 000 à 50 000 postes | 4 vCPU | 3 Go | 25 Go (SSD) |
+| 50 000 à 100 000 postes | 4 à 8 vCPU | 4 Go | 50 Go (SSD) |
+
+- **Disque** : ~46 Ko par poste avec 20 rapports d'historique (`SPOKAPILOTE_HISTORY`), dont ~15 Ko pour le dernier
+  rapport complet. Comptez la base, une marge de 50 % pour le compactage et les sauvegardes de `/data/backups`
+  (`SPOKAPILOTE_BACKUP_KEEP`). Un SSD est recommandé.
+- **Capacité d'envoi** : ~620 à 660 rapports/s sur 4 vCPU (20 000 comme 100 000 postes), soit un parc de 20 000 postes
+  qui envoie tout en même temps absorbé en ~30 s. Les analyses planifiées n'ont donc pas besoin d'être étalées pour la
+  console ; elles le sont pour le réseau et pour les sources de pilotes.
+- **Agents** : une interrogation coûte ~2 ms. 20 000 agents toutes les 15 minutes = 22 requêtes/s, moins de 5 % d'un cœur.
+  Les tâches planifiées des postes ajoutent elles-mêmes un délai aléatoire (jusqu'à 1 minute) ; pour un très grand parc,
+  préférez `agent enable --every 30`.
+- **Validé jusqu'à 20 000 postes × 20 rapports** avec la charge décrite ci-dessus (tous les temps sous 0,3 s au p95
+  hors exports complets) ; **essayé à 100 000 postes × 2 rapports** : la console fonctionne (postes, agents et pages
+  rapides), mais la vue d'ensemble et le matériel sans pilote, recalculés sur tout le parc après chaque rapport, prennent
+  0,7 à 1,5 s, et la liste complète sans pagination (`GET /api/machines` sans paramètre, anciens scripts) et l'export
+  de tout le parc 1 à 2 s : utilisez la pagination, les filtres et les groupes. Au-delà de 100 000 postes, rien n'a été
+  mesuré. Le facteur limitant de SQLite est l'écriture unique (~650 rapports/s ici) ; si un parc dépasse ce que ces
+  chiffres permettent (par ex. plusieurs centaines de milliers de postes, ou des envois soutenus au-delà de 500/s),
+  l'étape suivante serait une synthèse tenue à jour de façon incrémentale, puis une base serveur (PostgreSQL) — non
+  nécessaires aux tailles mesurées.
+
+### Afflux de postes (coupure de courant, campagne d'analyses)
+
+Quand des milliers de postes démarrent en même temps, leurs envois et interrogations sont admis dans la limite de
+`SPOKAPILOTE_MAX_CONCURRENT_UPLOADS` (nombre de processeurs) et `SPOKAPILOTE_MAX_CONCURRENT_AGENTS` (32), les suivants
+attendent dans une file (`SPOKAPILOTE_UPLOAD_QUEUE`, `SPOKAPILOTE_AGENT_QUEUE`) au plus 20 s. Au-delà, réponse `503`
+avec `Retry-After` entre la moitié et une fois et demie de `SPOKAPILOTE_RETRY_AFTER_SECONDS` (60 s) : les postes 3.2
+réessaient au plus deux fois après ce délai (plus un aléa), les postes plus anciens renvoient le rapport au passage
+suivant (l'envoi n'est jamais bloquant). La console reste consultable pendant un afflux : seules les requêtes des postes
+sont limitées. Derrière un reverse proxy, laissez au proxy un délai d'attente d'au moins 30 s.
+
+### Supervision
+
+`GET /api/metrics` (Administrateur ou jeton administrateur) renvoie : nombre de postes, à traiter, non vus, agents vus
+depuis 24 h ; taille de la base, du journal WAL et part de pages libres ; tâches en attente et en cours ; files des
+postes (en attente, refusées depuis le démarrage) ; mémoire et processeur ; temps de réponse par route (p50, p95, p99
+sur les 2 048 dernières requêtes) ; dernière sauvegarde. Avec `?format=prometheus`, les mêmes valeurs au format texte de
+Prometheus, par exemple :
+
+```yaml
+scrape_configs:
+  - job_name: spokapilote
+    metrics_path: /api/metrics
+    params: { format: [prometheus] }
+    authorization: { credentials: "<jeton-admin>" }
+    static_configs: [{ targets: ["spokapilote.mon-entreprise.fr"] }]
+    scheme: https
+```
+
+À surveiller : `spokapilote_queue_reports_rejected_total` (afflux refusés : augmentez
+`SPOKAPILOTE_MAX_CONCURRENT_UPLOADS` si le processeur n'est pas saturé), `spokapilote_database_free_ratio` (au-delà de
+30 %, un compactage rendra de la place), `spokapilote_backup_last_success`, `spokapilote_http_latency_ms`. La sonde
+publique `GET /api/health` reste la sonde de vie (elle ne révèle rien du parc).
+
+### Entretien de la base
+
+Automatique et par petits lots (jamais de long verrou) : tâches terminées de plus de 90 jours, journal d'audit, sessions
+expirées, historique au-delà de `SPOKAPILOTE_HISTORY` rapports par poste (et de `SPOKAPILOTE_HISTORY_DAYS` jours si
+défini) ; `PRAGMA optimize` (statistiques de l'optimiseur, `ANALYZE` si nécessaire) toutes les heures. Le **compactage**
+(`VACUUM`) n'est jamais automatique : il bloque les écritures pendant sa durée (17 s pour 20 000 postes, les postes
+reçoivent alors des `503` et réessaient). Lancez-le en période creuse après une grosse suppression ou après la migration
+depuis la 3.1, quand `freeRatio` de `/api/metrics` dépasse 30 % : `POST /api/admin/vacuum`.
