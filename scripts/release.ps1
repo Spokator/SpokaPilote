@@ -36,11 +36,16 @@ $notes = Join-Path $env:TEMP "spokapilote-notes-$version.md"
 "## Nouveautés de la $version`n`n$section`n`n**Installation :** téléchargez ``SpokaPilote-Setup-$version.exe`` (PC Intel/AMD) ou ``SpokaPilote-Installer-$version-arm64.exe`` (PC ARM64 : Snapdragon, Surface) ci-dessous et lancez-le. Pour un parc : ``SpokaPilote-Setup-$version.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART``." |
     Set-Content $notes -Encoding UTF8
 
-git push origin HEAD
+# git et gh écrivent leur progression sur stderr : on lit les codes de sortie plutôt que le flux d'erreur.
+$ErrorActionPreference = "Continue"
+git push origin HEAD 2>&1 | ForEach-Object { "$_" }
+if ($LASTEXITCODE -ne 0) { $ErrorActionPreference = "Stop"; throw "git push a échoué." }
 $ghArgs = @("release", "create", $tag, $setup, $setupArm, "--title", "SpokaPilote $version", "--notes-file", $notes)
 if ($Draft) { $ghArgs += "--draft" }
-gh @ghArgs
-if ($LASTEXITCODE -ne 0) { throw "La création de la Release a échoué." }
+gh @ghArgs 2>&1 | ForEach-Object { "$_" }
+$ghExit = $LASTEXITCODE
+$ErrorActionPreference = "Stop"
+if ($ghExit -ne 0) { throw "La création de la Release a échoué." }
 Write-Host "OK -> https://github.com/Spokator/SpokaPilote/releases/tag/$tag" -ForegroundColor Green
 if ((Get-AuthenticodeSignature $setup).Status -eq "NotSigned") {
     Write-Host "Installeurs non signés (SmartScreen peut avertir) : voir docs\SIGNATURE.md pour activer la signature." -ForegroundColor Yellow
