@@ -35,9 +35,24 @@ namespace SpokaPilote.Core.Printers;
 /// </summary>
 public sealed class PrinterProfile
 {
-    public const int CurrentVersion = 1;
+    /// <summary>
+    /// Version la plus récente comprise : 2 ajoute les critères Active Directory (adSites, organizationalUnits).
+    /// Un profil sans ces critères reste en version 1, lisible par toutes les versions.
+    /// </summary>
+    public const int CurrentVersion = 2;
 
-    public int Version { get; set; } = CurrentVersion;
+    /// <summary>Version 1 par défaut (compatibilité) ; 2 si le profil utilise les critères Active Directory.</summary>
+    public int Version { get; set; } = 1;
+
+    /// <summary>
+    /// Version minimale qu'exige le contenu du profil : 2 dès qu'une condition utilise un critère Active Directory.
+    /// Une version antérieure ignorerait ce critère (et installerait l'imprimante partout) : elle refuse donc un
+    /// profil de version 2, ce qui est le comportement sûr.
+    /// </summary>
+    [JsonIgnore]
+    public int RequiredVersion =>
+        AllEntries().Any(x => (x.Group?.When?.UsesDirectory ?? false) || (x.Entry.When?.UsesDirectory ?? false)) ||
+        Groups.Any(g => g.When?.UsesDirectory ?? false) ? 2 : 1;
     /// <summary>Nom lisible du profil (affiché dans les rapports).</summary>
     public string? Name { get; set; }
     public string? Description { get; set; }
@@ -99,6 +114,9 @@ public sealed class PrinterProfile
         var v = new PrinterProfileValidation();
         if (Version is < 1 or > CurrentVersion)
             v.Errors.Add($"Version de profil {Version} non prise en charge (attendue : {CurrentVersion}).");
+        else if (Version < RequiredVersion)
+            v.Errors.Add($"Les critères Active Directory (adSites, organizationalUnits) exigent « \"version\": {RequiredVersion} » : " +
+                         "une version antérieure les ignorerait et installerait l'imprimante sur tous les postes.");
 
         foreach (var (g, i) in Groups.Select((g, i) => (g, i)))
         {
@@ -230,6 +248,20 @@ public sealed class PrinterProfileCondition
     public List<string>? ComputerNames { get; set; }
     /// <summary>Motifs de nom d'ordinateur exclus (prioritaires).</summary>
     public List<string>? ExcludeComputerNames { get; set; }
+    /// <summary>
+    /// Sites Active Directory (jokers * et ?, ex. « PARIS-* ») : le site du poste doit correspondre à l'un d'eux.
+    /// Profil de version 2. Site inconnu (poste hors domaine) : critère non rempli.
+    /// </summary>
+    public List<string>? AdSites { get; set; }
+    /// <summary>
+    /// Unités d'organisation (« OU=Compta,OU=Paris,DC=corp,DC=local » ou simplement « OU=Paris ») : le nom distinctif
+    /// du compte ordinateur doit les contenir. Profil de version 2. Nom inconnu : critère non rempli.
+    /// </summary>
+    public List<string>? OrganizationalUnits { get; set; }
+
+    /// <summary>Utilise un critère Active Directory (profil de version 2).</summary>
+    [JsonIgnore]
+    public bool UsesDirectory => AdSites is { Count: > 0 } || OrganizationalUnits is { Count: > 0 };
 
     public bool Matches(PrinterProfileContext context)
     {
@@ -238,6 +270,11 @@ public sealed class PrinterProfileCondition
         if (ComputerNames is { Count: > 0 } && !ComputerNames.Any(p => PrinterProfileRules.WildcardMatch(context.ComputerName, p)))
             return false;
         if (Subnets is { Count: > 0 } && !Subnets.Any(s => context.Addresses.Any(a => PrinterProfileRules.CidrContains(s, a))))
+            return false;
+        if (AdSites is { Count: > 0 } && (context.AdSite is not { } site || !AdSites.Any(p => PrinterProfileRules.WildcardMatch(site, p))))
+            return false;
+        if (OrganizationalUnits is { Count: > 0 } &&
+            (context.ComputerDistinguishedName is not { } dn || !OrganizationalUnits.Any(ou => PrinterProfileRules.DistinguishedNameContains(dn, ou))))
             return false;
         return true;
     }
@@ -250,7 +287,13 @@ public sealed class PrinterProfileCondition
         foreach (var p in (ComputerNames ?? new()).Concat(ExcludeComputerNames ?? new()))
             if (!Regex.IsMatch(p ?? "", @"^[A-Za-z0-9\-_.*?]{1,63}$"))
                 v.Errors.Add($"{label} : motif de nom d'ordinateur « {p} » invalide (lettres, chiffres, - _ . et jokers * ?).");
-        if (Subnets is not { Count: > 0 } && ComputerNames is not { Count: > 0 } && ExcludeComputerNames is not { Count: > 0 })
+        foreach (var p in AdSites ?? new())
+            if (!Regex.IsMatch(p ?? "", @"^[A-Za-z0-9\-_.*?]{1,63}$"))
+                v.Errors.Add($"{label} : site Active Directory « {p} » invalide (lettres, chiffres, - _ . et jokers * ?).");
+        foreach (var ou in OrganizationalUnits ?? new())
+            if (!PrinterProfileRules.IsValidDistinguishedNameFilter(ou))
+                v.Errors.Add($"{label} : unité d'organisation « {ou} » invalide (format attendu : OU=Paris,DC=corp,DC=local).");
+        if (Subnets is not { Count: > 0 } && ComputerNames is not { Count: > 0 } && ExcludeComputerNames is not { Count: > 0 } && !UsesDirectory)
             v.Warnings.Add($"{label} : condition « when » vide (toujours remplie).");
     }
 }
@@ -267,6 +310,10 @@ public sealed class PrinterProfileContext
 {
     public required string ComputerName { get; init; }
     public required IReadOnlyList<IPAddress> Addresses { get; init; }
+    /// <summary>Site Active Directory du poste (null hors domaine ou inconnu).</summary>
+    public string? AdSite { get; init; }
+    /// <summary>Nom distinctif du compte ordinateur (« CN=PC01,OU=Compta,DC=corp,DC=local »), null s'il est inconnu.</summary>
+    public string? ComputerDistinguishedName { get; init; }
 
     public static PrinterProfileContext Current()
     {
@@ -283,11 +330,44 @@ public sealed class PrinterProfileContext
         {
             // pas d'information réseau : seules les conditions sur le nom d'ordinateur peuvent être remplies
         }
-        return new PrinterProfileContext { ComputerName = Environment.MachineName, Addresses = addresses.Distinct().ToList() };
+        var (site, dn) = ReadDirectoryInfo();
+        return new PrinterProfileContext
+        {
+            ComputerName = Environment.MachineName,
+            Addresses = addresses.Distinct().ToList(),
+            AdSite = site,
+            ComputerDistinguishedName = dn,
+        };
+    }
+
+    /// <summary>
+    /// Site AD et nom distinctif du poste, lus dans le registre (aucune requête réseau, fonctionne hors connexion) :
+    /// site mémorisé par le service Netlogon (SiteName imposé, sinon DynamicSiteName), nom distinctif mémorisé par le
+    /// dernier traitement des stratégies de groupe de l'ordinateur. Valeurs absentes sur un poste hors domaine.
+    /// </summary>
+    public static (string? Site, string? DistinguishedName) ReadDirectoryInfo()
+    {
+        try
+        {
+            using var hklm = Microsoft.Win32.RegistryKey.OpenBaseKey(Microsoft.Win32.RegistryHive.LocalMachine,
+                Environment.Is64BitOperatingSystem ? Microsoft.Win32.RegistryView.Registry64 : Microsoft.Win32.RegistryView.Default);
+            using var netlogon = hklm.OpenSubKey(@"SYSTEM\CurrentControlSet\Services\Netlogon\Parameters");
+            var site = Clean(netlogon?.GetValue("SiteName") as string) ?? Clean(netlogon?.GetValue("DynamicSiteName") as string);
+            using var gp = hklm.OpenSubKey(@"SOFTWARE\Microsoft\Windows\CurrentVersion\Group Policy\State\Machine");
+            var dn = Clean(gp?.GetValue("Distinguished-Name") as string);
+            return (site, dn);
+        }
+        catch (Exception ex) when (ex is System.Security.SecurityException or UnauthorizedAccessException or IOException)
+        {
+            return (null, null);
+        }
+
+        static string? Clean(string? s) => string.IsNullOrWhiteSpace(s) ? null : s.Trim('\0', ' ');
     }
 
     public override string ToString() =>
-        $"{ComputerName} ({string.Join(", ", Addresses.Where(a => a.AddressFamily == AddressFamily.InterNetwork))})";
+        $"{ComputerName} ({string.Join(", ", Addresses.Where(a => a.AddressFamily == AddressFamily.InterNetwork))})" +
+        (AdSite is null ? "" : $" · site AD {AdSite}");
 }
 
 /// <summary>Règles de validation et d'évaluation (pures, testables).</summary>
@@ -340,6 +420,22 @@ public static class PrinterProfileRules
 
     public static bool IsValidPrinterName(string name) =>
         name.Trim().Length is > 0 and <= 220 && !name.Contains('\\') && !name.Contains(',') && !name.Any(char.IsControl);
+
+    /// <summary>Filtre d'unité d'organisation : composants OU=, DC= ou CN= séparés par des virgules.</summary>
+    public static bool IsValidDistinguishedNameFilter(string? filter) =>
+        !string.IsNullOrWhiteSpace(filter) && filter.Length <= 1024 &&
+        Regex.IsMatch(filter.Trim(), @"^\s*(OU|DC|CN)\s*=\s*[^,=]+(\s*,\s*(OU|DC|CN)\s*=\s*[^,=]+)*\s*$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+    /// <summary>
+    /// Le nom distinctif contient-il la suite de composants du filtre (« OU=Paris » ou « OU=Compta,OU=Paris,DC=corp,DC=local ») ?
+    /// Comparaison sans tenir compte de la casse ni des espaces autour de « = » et « , ».
+    /// </summary>
+    public static bool DistinguishedNameContains(string distinguishedName, string filter)
+    {
+        static string Norm(string s) => "," + string.Join(",", s.Split(',').Select(p => Regex.Replace(p.Trim(), @"\s*=\s*", "="))) + ",";
+        if (string.IsNullOrWhiteSpace(distinguishedName) || !IsValidDistinguishedNameFilter(filter)) return false;
+        return Norm(distinguishedName).Contains(Norm(filter), StringComparison.OrdinalIgnoreCase);
+    }
 
     public static bool IsValidConnection(string connection)
     {

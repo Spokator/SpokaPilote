@@ -87,8 +87,16 @@ Conditions (`when`, sur une imprimante ou un groupe ; celles du groupe et de l'i
 | `subnets` | une adresse du poste appartient à l'un des sous-réseaux CIDR (`10.1.0.0/16`, `192.168.30.0/24`) |
 | `computerNames` | le nom du poste correspond à l'un des motifs (`COMPTA-*`, `PC-??`, sans tenir compte de la casse) |
 | `excludeComputerNames` | exclusions prioritaires (`*-TEST*`) |
+| `adSites` | le site Active Directory du poste correspond à l'un des motifs (`PARIS`, `LYON-*`) — profil `"version": 2` |
+| `organizationalUnits` | le compte ordinateur est dans l'une des unités d'organisation (`OU=Compta,OU=Paris,DC=corp,DC=local`, ou simplement `OU=Paris`) — profil `"version": 2` |
 
 Tous les critères renseignés doivent être remplis ; dans un critère, une seule valeur suffit.
+
+Les critères Active Directory sont lus dans le registre du poste, sans requête réseau (site mémorisé par Netlogon,
+unité d'organisation mémorisée par le dernier traitement des stratégies de groupe). Sur un poste hors domaine, ou si
+l'information n'est pas encore connue, le critère n'est **pas** rempli : l'imprimante n'est pas installée. Un profil
+qui les utilise doit porter `"version": 2` ; les versions antérieures (SpokaPilote 3.1 et avant) refusent alors le
+profil au lieu d'ignorer le critère et d'installer l'imprimante partout.
 
 `removeUnlisted: true` retire les imprimantes **réseau** (port TCP/IP ou IPP) qui ne figurent pas parmi les imprimantes
 applicables au poste. Les imprimantes locales ou virtuelles (PDF, XPS, OneNote, Fax, USB) et les connexions partagées
