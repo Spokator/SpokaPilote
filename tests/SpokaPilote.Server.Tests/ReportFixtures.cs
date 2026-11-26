@@ -77,6 +77,20 @@ internal sealed class ReportFixture
         return this;
     }
 
+    /// <summary>Identifiant machine (MachineGuid), comme les postes 3.0.</summary>
+    public ReportFixture WithMachineId(string machineId)
+    {
+        _root["system"]!.AsObject()["machineId"] = machineId;
+        return this;
+    }
+
+    /// <summary>Objet facultatif « health » (contrat partagé), fourni en JSON brut.</summary>
+    public ReportFixture WithHealth(string healthJson)
+    {
+        _root["health"] = JsonNode.Parse(healthJson);
+        return this;
+    }
+
     public ReportFixture SourceError(string source, string error)
     {
         _root["sourceErrors"]!.AsObject()[source] = error;
