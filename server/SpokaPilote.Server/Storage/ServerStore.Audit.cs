@@ -16,7 +16,7 @@ public sealed partial class ServerStore
         int maxEntries, int maxDays)
     {
         using var c = Open();
-        using var tx = c.BeginTransaction();
+        using var tx = BeginWrite(c);
         var id = Convert.ToInt64(Scalar(c, """
             INSERT INTO audit(at, actor, role, action, target, detail, ip, success) VALUES($at, $a, $r, $act, $t, $d, $ip, $s) RETURNING id;
             """, ("$at", Iso(at)), ("$a", Truncate(actor, 120)), ("$r", role), ("$act", action), ("$t", Truncate(target, 300)),
@@ -34,8 +34,9 @@ public sealed partial class ServerStore
     }
 
     private static int PurgeAudit(Microsoft.Data.Sqlite.SqliteConnection c, DateTimeOffset now, int maxEntries, int maxDays) =>
-        Execute(c, "DELETE FROM audit WHERE at < $cutoff OR id NOT IN (SELECT id FROM audit ORDER BY id DESC LIMIT $max);",
-            ("$cutoff", Iso(now.AddDays(-maxDays))), ("$max", maxEntries));
+        // Deux suppressions sur index (date, clé primaire) : « NOT IN (… LIMIT n) » relisait tout le journal à chaque entrée.
+        Execute(c, "DELETE FROM audit WHERE at < $cutoff;", ("$cutoff", Iso(now.AddDays(-maxDays)))) +
+        Execute(c, "DELETE FROM audit WHERE id <= (SELECT id FROM audit ORDER BY id DESC LIMIT 1 OFFSET $max);", ("$max", maxEntries));
 
     /// <summary>Entrées les plus récentes d'abord, filtrées par catégorie d'action (préfixe, ex. « login »), compte ou texte libre.</summary>
     public List<AuditEntry> GetAudit(string? category = null, string? actor = null, string? search = null, int limit = 500)

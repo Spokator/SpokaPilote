@@ -44,8 +44,6 @@ public sealed class ScheduleRunner(ServerStore store, AuditService audit, TimePr
         lock (_gate)
         {
             var count = 0;
-            List<StoredMachine>? machines = null;
-            List<GroupRecord>? groups = null;
             foreach (var s in store.GetSchedules().Where(s => s.Enabled))
             {
                 if (s.NextRun is null)
@@ -64,9 +62,7 @@ public sealed class ScheduleRunner(ServerStore store, AuditService audit, TimePr
                 }
                 else
                 {
-                    machines ??= store.GetMachines();
-                    groups ??= store.GetGroups();
-                    result = Enqueue(s, now, windowEnd, machines, groups);
+                    result = Enqueue(s, now, windowEnd);
                 }
                 var next = NextRun(s, now);
                 store.RecordScheduleRun(s.Id, now, result, next);
@@ -79,29 +75,24 @@ public sealed class ScheduleRunner(ServerStore store, AuditService audit, TimePr
         }
     }
 
-    private string Enqueue(ScheduleRecord s, DateTimeOffset now, DateTimeOffset? windowEnd, List<StoredMachine> machines, List<GroupRecord> groups)
+    private string Enqueue(ScheduleRecord s, DateTimeOffset now, DateTimeOffset? windowEnd)
     {
-        List<StoredMachine> targets;
+        List<(long Id, string Name)> targets;
         if (s.GroupId is { } groupId)
         {
-            var group = groups.FirstOrDefault(g => g.Id == groupId);
-            if (group is null) return "Groupe introuvable : aucune tâche créée.";
-            targets = machines.Where(m => GroupMatcher.IsMember(group, m)).ToList();
+            if (!store.GroupExists(groupId)) return "Groupe introuvable : aucune tâche créée.";
+            targets = store.GetMachineRefs(groupId);
         }
         else
         {
-            targets = machines;
+            targets = store.GetMachineRefs();
         }
         if (targets.Count == 0) return "Aucun poste visé : aucune tâche créée.";
 
         var by = $"Planification « {s.Name} »";
-        int created = 0, skipped = 0;
-        foreach (var m in targets)
-        {
-            var (_, isNew) = store.EnqueueScheduledJob(m.Id, s.JobType, new JobParameters(s.DryRun), by, now, windowEnd, s.Id);
-            if (isNew) created++;
-            else skipped++;
-        }
+        // Par lots de 500 postes par transaction : le verrou d'écriture reste bref même sur tout un grand parc.
+        var (created, skipped) = store.EnqueueScheduledJobs(targets.Select(t => t.Id).ToList(), s.JobType, new JobParameters(s.DryRun), by, now,
+            windowEnd, s.Id);
         var text = created == 1 ? "1 tâche créée" : $"{created} tâches créées";
         if (skipped > 0) text += $", {skipped} poste{(skipped > 1 ? "s" : "")} ignoré{(skipped > 1 ? "s" : "")} (tâche identique déjà en attente)";
         return text + ".";

@@ -82,21 +82,32 @@ public sealed class ServerClient
     private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan UploadTimeout = TimeSpan.FromMinutes(2);
 
+    /// <summary>
+    /// Console surchargée (503 + Retry-After, consoles 3.2 et ultérieures, par ex. quand des milliers de postes démarrent
+    /// en même temps) : l'envoi d'un rapport est retenté au plus deux fois, après le délai indiqué (plus un aléa, pour ne
+    /// pas revenir tous ensemble), si ce délai ne dépasse pas deux minutes. Sinon le rapport reste local et sera renvoyé
+    /// au passage suivant.
+    /// </summary>
+    internal const int MaxUploadRetries = 2;
+    internal static readonly TimeSpan MaxRetryAfter = TimeSpan.FromMinutes(2);
+
     private readonly HttpClient _http;
     private readonly string? _token;
+    private readonly Func<TimeSpan, CancellationToken, Task> _delay;
 
     /// <summary>Adresse de base normalisée (se termine par « / »).</summary>
     public Uri BaseUri { get; }
 
     public ServerClient(Settings settings) : this(settings.ServerUrl, settings.ServerToken, null) { }
 
-    internal ServerClient(string? serverUrl, string? token, HttpMessageHandler? handler)
+    internal ServerClient(string? serverUrl, string? token, HttpMessageHandler? handler, Func<TimeSpan, CancellationToken, Task>? delay = null)
     {
         BaseUri = ValidateUrl(serverUrl);
         _token = string.IsNullOrWhiteSpace(token) ? null : token.Trim();
         if (_token is not null && _token.Any(c => char.IsWhiteSpace(c) || char.IsControl(c)))
             throw new ServerException("ServerToken invalide : le jeton ne doit contenir ni espace ni retour à la ligne.");
         _http = handler is null ? SharedClient.Value : CreateClient(handler);
+        _delay = delay ?? Task.Delay;
     }
 
     public static bool IsConfigured(Settings settings) => !string.IsNullOrWhiteSpace(settings.ServerUrl);
@@ -128,19 +139,43 @@ public sealed class ServerClient
 
     // ------------------------------------------------------------------ opérations
 
-    /// <summary>Envoie un rapport d'analyse / d'installation (JSON compressé gzip).</summary>
+    /// <summary>
+    /// Envoie un rapport d'analyse / d'installation (JSON compressé gzip : toutes les versions de la console l'acceptent ;
+    /// si un intermédiaire le refuse avec 415, le rapport est renvoyé non compressé). Une console surchargée (503 +
+    /// Retry-After) est réessayée au plus deux fois après le délai demandé.
+    /// </summary>
     public async Task<ServerUploadResult> UploadReportAsync(ScanReport report, CancellationToken ct = default)
     {
         var json = Encoding.UTF8.GetBytes(report.ToJson());
         using var compressed = new MemoryStream();
         await using (var gzip = new GZipStream(compressed, CompressionLevel.Optimal, leaveOpen: true))
             await gzip.WriteAsync(json, ct).ConfigureAwait(false);
+        var gzipped = compressed.ToArray();
 
-        var content = new ByteArrayContent(compressed.ToArray());
-        content.Headers.ContentType = new MediaTypeHeaderValue("application/json") { CharSet = "utf-8" };
-        content.Headers.ContentEncoding.Add("gzip");
-
-        using var response = await SendAsync(HttpMethod.Post, "api/reports", content, UploadTimeout, ct).ConfigureAwait(false);
+        var useGzip = true;
+        HttpResponseMessage response;
+        for (var attempt = 0; ; attempt++)
+        {
+            var content = new ByteArrayContent(useGzip ? gzipped : json);
+            content.Headers.ContentType = new MediaTypeHeaderValue("application/json") { CharSet = "utf-8" };
+            if (useGzip) content.Headers.ContentEncoding.Add("gzip");
+            response = await SendAsync(HttpMethod.Post, "api/reports", content, UploadTimeout, ct).ConfigureAwait(false);
+            if (response.StatusCode == HttpStatusCode.UnsupportedMediaType && useGzip)
+            {
+                // Intermédiaire (proxy, pare-feu applicatif) qui refuse Content-Encoding : envoi en clair.
+                response.Dispose();
+                useGzip = false;
+                continue;
+            }
+            if (attempt < MaxUploadRetries && RetryDelay(response) is { } wait)
+            {
+                response.Dispose();
+                await _delay(wait, ct).ConfigureAwait(false);
+                continue;
+            }
+            break;
+        }
+        using var _ = response;
         await EnsureSuccessAsync(response, "Envoi du rapport", ct).ConfigureAwait(false);
         try
         {
@@ -322,8 +357,22 @@ public sealed class ServerClient
             HttpStatusCode.TooManyRequests => $"{operation} : trop de tentatives avec un jeton refusé depuis cette adresse ; " +
                                               "la console bloque temporairement les accès (réessayez dans une minute, vérifiez ServerToken).",
             HttpStatusCode.Conflict => $"{operation} : {detail ?? "conflit"}.",
+            HttpStatusCode.ServiceUnavailable => $"{operation} : {detail?.TrimEnd('.') ?? "console momentanément indisponible"} (réponse 503, réessayez plus tard).",
             _ => $"{operation} : erreur de la console ({code}){(detail is null ? "" : $" — {detail}")}.",
         }, response.StatusCode);
+    }
+
+    /// <summary>
+    /// Délai avant un nouvel essai : seulement pour 503 avec Retry-After (console surchargée qui demande de revenir), si le
+    /// délai ne dépasse pas MaxRetryAfter ; un aléa de 0 à 25 % étale les postes qui reviennent.
+    /// </summary>
+    internal static TimeSpan? RetryDelay(HttpResponseMessage response)
+    {
+        if (response.StatusCode != HttpStatusCode.ServiceUnavailable || response.Headers.RetryAfter is not { } retry) return null;
+        var wait = retry.Delta ?? (retry.Date is { } date ? date - DateTimeOffset.UtcNow : null);
+        if (wait is not { } w || w > MaxRetryAfter) return null;
+        if (w < TimeSpan.Zero) w = TimeSpan.Zero;
+        return w + TimeSpan.FromMilliseconds(w.TotalMilliseconds * 0.25 * Random.Shared.NextDouble());
     }
 
     private static string? ReadString(string json, string property)

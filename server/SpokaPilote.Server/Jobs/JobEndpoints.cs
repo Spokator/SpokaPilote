@@ -106,15 +106,21 @@ public static class JobEndpoints
 
         var agent = api.MapGroup("/agent").RequireAccess(Access.Agent);
 
-        agent.MapGet("/jobs", (HttpRequest request, ServerStore store, ServerOptions options, TimeProvider clock, ILogger<ServerStore> log) =>
+        // Interrogation de la file (la requête la plus fréquente d'un grand parc : chaque poste toutes les 15 minutes) :
+        // une lecture sur index quand il n'y a rien à faire, aucune écriture en dehors du « dernier contact » (1 par minute).
+        agent.MapGet("/jobs", async (HttpRequest request, ServerStore store, ServerOptions options, AdmissionControl admission, TimeProvider clock,
+            ILogger<ServerStore> log, CancellationToken ct) =>
         {
             if (Identify(request, out var machineId, out var name) is { } error) return error;
+            using var lease = await admission.Agents.EnterAsync(ct);
+            if (lease is null) return admission.Busy(request.HttpContext, "file des tâches");
             var now = clock.GetUtcNow();
-            store.ExpireJobs(now, options.JobExpiryDays, options.JobRunningTimeoutHours);
             var machine = store.FindMachineForAgent(machineId!, name, now);
             if (machine is null)
                 return Results.Ok(new { known = false, machine = name, jobs = Array.Empty<object>() });
-            var jobs = store.ClaimPendingJobs(machine.Id, now);
+            // Tâches de ce poste arrivées à expiration (les autres le sont chaque minute par la tâche de fond).
+            store.ExpireJobs(now, options.JobExpiryDays, options.JobRunningTimeoutHours, machine.Id);
+            var jobs = store.ClaimPendingJobs(machine.Id, now, pendingDays: options.JobExpiryDays);
             foreach (var j in jobs) log.LogInformation("Tâche {Id} ({Type}) remise au poste {Machine}.", j.Id, j.Type, machine.Name);
             return Results.Ok(new
             {
@@ -124,10 +130,12 @@ public static class JobEndpoints
             });
         });
 
-        agent.MapPost("/jobs/{id:long}/result", async (long id, HttpRequest request, ServerStore store, AlertService alerts, TimeProvider clock,
-            ILogger<ServerStore> log, CancellationToken ct) =>
+        agent.MapPost("/jobs/{id:long}/result", async (long id, HttpRequest request, ServerStore store, AlertService alerts, AdmissionControl admission,
+            TimeProvider clock, ILogger<ServerStore> log, CancellationToken ct) =>
         {
             if (Identify(request, out var machineId, out var name) is { } error) return error;
+            using var lease = await admission.Agents.EnterAsync(ct);
+            if (lease is null) return admission.Busy(request.HttpContext, "résultats des tâches");
             var body = await BodyReader.ReadAsync(request, ServerStore.MaxJobLogChars * 4L + 16 * 1024, "Résultat", ct);
             if (body.Error is not null) return body.Error;
             JobResultRequest? result;
@@ -172,8 +180,8 @@ public static class JobEndpoints
             return Results.Json(new ApiError($"« {type.Label} » ne propose pas de simulation (l'action ne modifie rien)."), statusCode: 400);
 
         var now = clock.GetUtcNow();
-        var all = store.GetMachines();
-        List<StoredMachine> targets;
+        // Cibles lues par la base (clés et noms seulement) : aucun rapport n'est relu, même pour tout le parc.
+        List<(long Id, string Name)> targets;
         var unknown = new List<string>();
         string targetText;
         switch (req.Target?.Trim().ToLowerInvariant())
@@ -181,22 +189,22 @@ public static class JobEndpoints
             case "group":
                 if (req.Group is not { } groupId || store.GetGroup(groupId) is not { } group)
                     return Results.Json(new ApiError("Groupe introuvable."), statusCode: StatusCodes.Status404NotFound);
-                targets = all.Where(m => GroupMatcher.IsMember(group, m)).ToList();
+                targets = store.GetMachineRefs(groupId);
                 if (targets.Count == 0) return Results.Json(new ApiError($"Le groupe « {group.Name} » ne contient aucun poste."), statusCode: 400);
                 targetText = $"groupe « {group.Name} »";
                 break;
             case "to-process":
-                targets = all.Where(m => !m.Report.Healthy).ToList();
+                targets = store.GetMachineRefs(toProcessOnly: true);
                 targetText = "postes à traiter";
                 break;
             case "all":
-                targets = all;
+                targets = store.GetMachineRefs();
                 targetText = "tout le parc";
                 break;
             case null or "" or "selection":
                 var names = (req.Machines ?? new List<string>()).Select(n => n.Trim()).Where(n => n.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
                 if (names.Count == 0) return Results.Json(new ApiError("Aucun poste sélectionné."), statusCode: 400);
-                var byName = all.ToDictionary(m => m.Name, StringComparer.OrdinalIgnoreCase);
+                var byName = store.FindMachinesByName(names);
                 targets = names.Where(byName.ContainsKey).Select(n => byName[n]).ToList();
                 unknown = names.Where(n => !byName.ContainsKey(n)).ToList();
                 targetText = targets.Count == 1 ? targets[0].Name : $"{targets.Count} postes sélectionnés";
@@ -214,11 +222,11 @@ public static class JobEndpoints
             : new string(req.RequestedBy.Trim().Where(c => !char.IsControl(c)).Take(60).ToArray());
         var created = new List<object>();
         var skipped = unknown.Select(n => (object)new { machine = n, reason = "Poste inconnu de la console." }).ToList();
-        foreach (var m in targets)
+        // Création par lots de 500 postes par transaction (même règle anti-doublon que pour un seul poste).
+        foreach (var c in store.CreateJobs(targets, type.Id, new JobParameters(req.DryRun), by, now))
         {
-            var (job, isNew) = store.CreateJob(m.Id, type.Id, new JobParameters(req.DryRun), by, now);
-            if (isNew) created.Add(View(job));
-            else skipped.Add(new { machine = m.Name, reason = $"Une tâche identique (n° {job.Id}) est déjà en attente." });
+            if (c.Created) created.Add(View(c.Job!));
+            else skipped.Add(new { machine = c.Machine, reason = $"Une tâche identique (n° {c.JobId}) est déjà en attente." });
         }
         log.LogInformation("{Count} tâche(s) « {Type} »{DryRun} créée(s) par {By} depuis {Remote}.", created.Count, type.Id,
             req.DryRun ? " (simulation)" : "", by, request.HttpContext.Connection.RemoteIpAddress);

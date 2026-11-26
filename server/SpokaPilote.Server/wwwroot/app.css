@@ -269,6 +269,9 @@ h3 { font-size: 14px; margin: 0 0 6px; font-weight: 600; }
 .bulkbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; padding: 8px 12px; margin-bottom: 12px; }
 .bulkbar #m-selected { font-weight: 600; margin-right: 4px; }
 .bulkbar select { max-width: 290px; }
+/* Pagination des listes calculées par le serveur (postes, matériel sans pilote). */
+.pager { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; justify-content: flex-end; margin: 10px 0 4px; }
+.pager select { width: auto; }
 .table-compact th, .table-compact td { padding-left: 9px; padding-right: 9px; }
 .table-compact td.wrap { min-width: 120px; }
 th.check-col, td.check-col { width: 34px; padding-right: 0; }

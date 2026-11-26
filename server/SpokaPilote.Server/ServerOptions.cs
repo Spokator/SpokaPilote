@@ -28,7 +28,28 @@ public sealed class ServerOptions
     /// <summary>Journal d'audit : ancienneté maximale des entrées, en jours.</summary>
     public int AuditRetentionDays { get; init; } = 180;
 
+    // ------------------------------------------------------------------ grands parcs (3.2)
+
+    /// <summary>Historique : rapports plus anciens que ce nombre de jours supprimés (le dernier de chaque poste est gardé ; 0 = sans limite d'âge).</summary>
+    public int HistoryDays { get; init; }
+    /// <summary>Rapports traités en même temps ; au-delà ils attendent leur tour (file), puis sont refusés (503 + Retry-After).</summary>
+    public int MaxConcurrentUploads { get; init; } = Math.Clamp(Environment.ProcessorCount, 2, 16);
+    /// <summary>Rapports en attente au plus (au-delà : 503 immédiat avec Retry-After).</summary>
+    public int UploadQueueLimit { get; init; } = 200;
+    /// <summary>Interrogations d'agents traitées en même temps / en attente au plus.</summary>
+    public int MaxConcurrentAgentRequests { get; init; } = 32;
+    public int AgentQueueLimit { get; init; } = 1000;
+    /// <summary>Attente maximale dans la file avant un refus 503.</summary>
+    public TimeSpan QueueTimeout { get; init; } = TimeSpan.FromSeconds(20);
+    /// <summary>Délai conseillé aux postes refusés (Retry-After), étalé aléatoirement entre la moitié et une fois et demie.</summary>
+    public int RetryAfterSeconds { get; init; } = 60;
+    /// <summary>Sauvegardes conservées dans /data/backups (les plus récentes).</summary>
+    public int BackupKeep { get; init; } = 7;
+    /// <summary>Heure de la sauvegarde automatique quotidienne (« 03:00 », fuseau du serveur) ; vide = pas de sauvegarde automatique.</summary>
+    public string? BackupTime { get; init; }
+
     public string DatabasePath => Path.Combine(DataDirectory, "spokapilote.db");
+    public string BackupDirectory => Path.Combine(DataDirectory, "backups");
 
     public static ServerOptions FromConfiguration(IConfiguration config, string contentRoot)
     {
@@ -48,6 +69,14 @@ public sealed class ServerOptions
             SessionIdleHours = Int(config, "SPOKAPILOTE_SESSION_HOURS", 8, 1, 168),
             AuditMaxEntries = Int(config, "SPOKAPILOTE_AUDIT_MAX_ENTRIES", 5000, 100, 1_000_000),
             AuditRetentionDays = Int(config, "SPOKAPILOTE_AUDIT_DAYS", 180, 1, 3650),
+            HistoryDays = Int(config, "SPOKAPILOTE_HISTORY_DAYS", 0, 0, 3650),
+            MaxConcurrentUploads = Int(config, "SPOKAPILOTE_MAX_CONCURRENT_UPLOADS", Math.Clamp(Environment.ProcessorCount, 2, 16), 1, 256),
+            UploadQueueLimit = Int(config, "SPOKAPILOTE_UPLOAD_QUEUE", 200, 0, 100_000),
+            MaxConcurrentAgentRequests = Int(config, "SPOKAPILOTE_MAX_CONCURRENT_AGENTS", 32, 1, 1024),
+            AgentQueueLimit = Int(config, "SPOKAPILOTE_AGENT_QUEUE", 1000, 0, 100_000),
+            RetryAfterSeconds = Int(config, "SPOKAPILOTE_RETRY_AFTER_SECONDS", 60, 5, 3600),
+            BackupKeep = Int(config, "SPOKAPILOTE_BACKUP_KEEP", 7, 1, 365),
+            BackupTime = string.IsNullOrWhiteSpace(config["SPOKAPILOTE_BACKUP_TIME"]) ? null : config["SPOKAPILOTE_BACKUP_TIME"]!.Trim(),
         };
     }
 }

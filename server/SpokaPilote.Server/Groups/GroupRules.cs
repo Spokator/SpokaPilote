@@ -97,23 +97,30 @@ public static class GroupMatcher
     }
 
     /// <summary>Le poste remplit-il les règles ? (false pour des règles vides : le groupe n'a alors que des membres manuels)</summary>
-    public static bool Matches(GroupRules rules, StoredMachine machine)
+    public static bool Matches(GroupRules rules, StoredMachine machine) => Matches(rules, machine.Name, machine.LastIp, machine.Report.System);
+
+    public static bool Matches(GroupRules rules, MachineSummary machine) => Matches(rules, machine.Name, machine.LastIp, machine.System);
+
+    /// <summary>Évaluation sur les seuls champs utilisés par les règles (nom, adresse du dernier rapport, identité du poste).</summary>
+    public static bool Matches(GroupRules rules, string name, string? lastIp, SystemSnapshot system)
     {
         if (rules.IsEmpty) return false;
         return rules.Match == MatchAny
-            ? rules.Conditions.Any(c => MatchesCondition(c, machine))
-            : rules.Conditions.All(c => MatchesCondition(c, machine));
+            ? rules.Conditions.Any(c => MatchesCondition(c, name, lastIp, system))
+            : rules.Conditions.All(c => MatchesCondition(c, name, lastIp, system));
     }
 
-    public static bool MatchesCondition(GroupCondition condition, StoredMachine machine)
+    public static bool MatchesCondition(GroupCondition condition, StoredMachine machine) =>
+        MatchesCondition(condition, machine.Name, machine.LastIp, machine.Report.System);
+
+    public static bool MatchesCondition(GroupCondition condition, string name, string? lastIp, SystemSnapshot s)
     {
-        var s = machine.Report.System;
         if (condition.Field == "subnet")
-            return machine.LastIp is { } ip && IPAddress.TryParse(ip, out var address) &&
+            return lastIp is { } ip && IPAddress.TryParse(ip, out var address) &&
                    SplitSubnets(condition.Value).Any(part => InSubnet(address, part));
         IEnumerable<string?> candidates = condition.Field switch
         {
-            "name" => [machine.Name],
+            "name" => [name],
             "manufacturer" => [s.Manufacturer],
             "model" => [s.Model, s.FriendlyModel, s.DisplayModel],
             "os" => [$"{s.OsCaption} {s.OsDisplayVersion}".Trim(), s.OsVersion],
@@ -134,16 +141,27 @@ public static class GroupMatcher
     /// <summary>Motif « * » (n'importe quelle suite de caractères) et « ? » (un caractère), sur toute la valeur.</summary>
     public static bool Wildcard(string text, string pattern)
     {
-        var regex = "^" + Regex.Escape(pattern).Replace("\\*", ".*").Replace("\\?", ".") + "$";
         try
         {
-            return Regex.IsMatch(text, regex, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Singleline,
-                TimeSpan.FromMilliseconds(100));
+            return WildcardRegex(pattern).IsMatch(text);
         }
         catch (RegexMatchTimeoutException)
         {
             return false;
         }
+    }
+
+    // Motifs compilés une seule fois (l'évaluation d'un groupe porte sur tout le parc) ; cache borné.
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, Regex> Patterns = new(StringComparer.Ordinal);
+
+    private static Regex WildcardRegex(string pattern)
+    {
+        if (Patterns.TryGetValue(pattern, out var cached)) return cached;
+        var regex = new Regex("^" + Regex.Escape(pattern).Replace("\\*", ".*").Replace("\\?", ".") + "$",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Singleline, TimeSpan.FromMilliseconds(100));
+        if (Patterns.Count > 512) Patterns.Clear();
+        Patterns[pattern] = regex;
+        return regex;
     }
 
     /// <summary>Plusieurs sous-réseaux peuvent être donnés dans une condition, séparés par des virgules ou des espaces.</summary>
@@ -185,6 +203,9 @@ public static class GroupMatcher
 
     /// <summary>Membres effectifs d'un groupe : ajoutés à la main ou désignés par les règles.</summary>
     public static bool IsMember(GroupRecord group, StoredMachine machine) =>
+        group.ManualMembers.Contains(machine.Id) || Matches(group.Rules, machine);
+
+    public static bool IsMember(GroupRecord group, MachineSummary machine) =>
         group.ManualMembers.Contains(machine.Id) || Matches(group.Rules, machine);
 
     /// <summary>Groupes de chaque poste (clé interne du poste → identifiants des groupes).</summary>

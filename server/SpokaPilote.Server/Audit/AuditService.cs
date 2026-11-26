@@ -32,6 +32,8 @@ public static class AuditActions
     public const string PrinterProfileDelete = "printer-profile.delete";
     public const string MachineDelete = "machine.delete";
     public const string AuditExport = "audit.export";
+    public const string MaintenanceBackup = "maintenance.backup";
+    public const string MaintenanceVacuum = "maintenance.vacuum";
 
     public static readonly IReadOnlyDictionary<string, string> Labels = new Dictionary<string, string>
     {
@@ -61,6 +63,8 @@ public static class AuditActions
         [PrinterProfileDelete] = "Profil d'imprimantes supprimé",
         [MachineDelete] = "Poste supprimé",
         [AuditExport] = "Journal d'audit exporté",
+        [MaintenanceBackup] = "Sauvegarde de la base",
+        [MaintenanceVacuum] = "Compactage de la base (VACUUM)",
     };
 
     /// <summary>Catégories du filtre de la console (préfixe du code).</summary>
@@ -76,6 +80,7 @@ public static class AuditActions
         ["printer-profile"] = "Profil d'imprimantes",
         ["machine"] = "Postes",
         ["audit"] = "Journal d'audit",
+        ["maintenance"] = "Sauvegarde et entretien",
     };
 
     public static string Label(string action) => Labels.GetValueOrDefault(action, action);

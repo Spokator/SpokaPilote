@@ -18,13 +18,20 @@ public static class ApiEndpoints
     public static string Version { get; } =
         typeof(ApiEndpoints).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion.Split('+')[0] ?? "0.0.0";
 
+    /// <summary>
+    /// Possibilités annoncées par /api/health : rapports compressés gzip (toutes les versions de la console),
+    /// refus temporaire 503 + Retry-After en cas d'afflux, liste des postes paginée, supervision, sauvegarde à chaud.
+    /// </summary>
+    public static readonly string[] Capabilities = ["gzip-reports", "retry-after", "machines-paging", "metrics", "backup"];
+
     public static void MapSpokaPiloteApi(this WebApplication app)
     {
         var api = app.MapGroup("/api");
 
-        // Sonde de vie (HEALTHCHECK Docker, reverse proxy) : publique, ne révèle rien du parc.
+        // Sonde de vie (HEALTHCHECK Docker, reverse proxy) : publique, ne révèle rien du parc. « capabilities » (3.2) :
+        // possibilités de ce serveur, pour les clients qui veulent s'adapter (les clients plus anciens l'ignorent).
         api.MapGet("/health", (ServerStore store) => store.IsHealthy()
-            ? Results.Ok(new { status = "ok", version = Version })
+            ? Results.Ok(new { status = "ok", version = Version, capabilities = Capabilities })
             : Results.Json(new { status = "error", version = Version }, statusCode: StatusCodes.Status503ServiceUnavailable));
 
         // Vérifie un jeton (connexion à la console, « spokapilote server status ») : « admin » ou « agent » pour les jetons
@@ -43,71 +50,10 @@ public static class ApiEndpoints
 
         // ------------------------------------------------------------------ consultation (tous les rôles)
 
+        // Synthèse, liste et fiche des postes, matériel sans pilote, exports (FleetEndpoints).
+        api.MapFleetApi();
+
         var view = api.MapGroup("").RequireAccess(Access.View);
-
-        // Synthèse du parc, éventuellement limitée à un groupe (?group=id).
-        view.MapGet("/fleet", (long? group, ServerStore store, ServerOptions options, TimeProvider clock) =>
-        {
-            var now = clock.GetUtcNow();
-            store.ExpireJobs(now, options.JobExpiryDays, options.JobRunningTimeoutHours);
-            var machines = store.GetMachines();
-            if (group is { } groupId)
-            {
-                if (store.GetGroup(groupId) is not { } g) return GroupEndpoints.GroupNotFound();
-                machines = machines.Where(m => GroupMatcher.IsMember(g, m)).ToList();
-            }
-            var summary = FleetAggregator.Summarize(machines, now, options.StaleDays);
-            var jobs = store.GetJobStats(now, group is null ? null : machines.Select(m => m.Id).ToList());
-            summary.PendingJobs = jobs.Pending;
-            summary.RunningJobs = jobs.Running;
-            summary.FailedJobs24h = jobs.FailedLast24h;
-            return Results.Ok(summary);
-        });
-
-        // Liste des postes (?group=id pour un groupe) ; chaque ligne indique les groupes du poste.
-        view.MapGet("/machines", (long? group, ServerStore store, ServerOptions options, TimeProvider clock) =>
-        {
-            var machines = store.GetMachines();
-            var groups = store.GetGroups();
-            if (group is { } groupId)
-            {
-                if (groups.FirstOrDefault(g => g.Id == groupId) is not { } g) return GroupEndpoints.GroupNotFound();
-                machines = machines.Where(m => GroupMatcher.IsMember(g, m)).ToList();
-            }
-            var active = store.GetActiveJobCounts();
-            var membership = GroupMatcher.GroupsByMachine(groups, machines);
-            var ids = machines.ToDictionary(m => m.Name, m => m.Id, StringComparer.OrdinalIgnoreCase);
-            var rows = FleetAggregator.Rows(machines, clock.GetUtcNow(), options.StaleDays);
-            foreach (var r in rows)
-            {
-                r.ActiveJobs = active.GetValueOrDefault(ids[r.Name]);
-                r.Groups = membership.GetValueOrDefault(ids[r.Name]) ?? new List<long>();
-            }
-            return Results.Ok(rows);
-        });
-
-        view.MapGet("/machines/{name}", (string name, ServerStore store, ServerOptions options, TimeProvider clock) =>
-        {
-            if (store.GetMachine(name) is not { } m) return NotFound(name);
-            var now = clock.GetUtcNow();
-            store.ExpireJobs(now, options.JobExpiryDays, options.JobRunningTimeoutHours);
-            var row = FleetAggregator.ToRow(m, now, options.StaleDays);
-            var jobs = store.ListJobs(machine: m.Name, limit: 20);
-            row.ActiveJobs = jobs.Count(j => j.State is JobStates.Pending or JobStates.Running);
-            var groups = store.GetGroups().Where(g => GroupMatcher.IsMember(g, m)).ToList();
-            row.Groups = groups.Select(g => g.Id).ToList();
-            return Results.Ok(new
-            {
-                machine = row,
-                report = m.Report,
-                history = store.GetHistory(m.Name),
-                jobs = jobs.Select(j => JobEndpoints.View(j)),
-                groups = groups.Select(g => new
-                {
-                    id = g.Id, name = g.Name, manual = g.ManualMembers.Contains(m.Id), byRule = GroupMatcher.Matches(g.Rules, m),
-                }),
-            });
-        });
 
         view.MapGet("/machines/{name}/reports/{id:long}", (string name, long id, ServerStore store) =>
             store.GetHistoricReport(name, id) is { } r ? Results.Ok(r) : Results.Json(new ApiError("Rapport introuvable."), statusCode: 404));
@@ -203,6 +149,7 @@ public static class ApiEndpoints
         api.MapScheduleApi();
         api.MapAccountApi();
         api.MapAuditApi();
+        api.MapOperationsApi();
 
         // ------------------------------------------------------------------ documents partagés avec les postes
 
@@ -212,9 +159,16 @@ public static class ApiEndpoints
     }
 
     private static async Task<IResult> ReceiveReportAsync(HttpRequest request, ServerStore store, ServerOptions options,
-        AlertService alerts, TimeProvider clock, ILogger<ServerStore> log, CancellationToken ct)
+        AlertService alerts, AdmissionControl admission, TimeProvider clock, ILogger<ServerStore> log, CancellationToken ct)
     {
-        var body = await BodyReader.ReadAsync(request, options.MaxReportBytes, "Rapport", ct);
+        // Afflux (démarrage simultané de milliers de postes) : file d'attente bornée, puis 503 + Retry-After étalé.
+        using var lease = await admission.Uploads.EnterAsync(ct);
+        if (lease is null)
+        {
+            log.LogDebug("Rapport refusé temporairement ({Remote}) : console surchargée.", request.HttpContext.Connection.RemoteIpAddress);
+            return admission.Busy(request.HttpContext, "réception des rapports");
+        }
+        var body = await BodyReader.ReadAsync(request, options.MaxReportBytes, "Rapport", ct, keepCompressed: true);
         if (body.Error is not null) return body.Error;
 
         MachineReport report;
@@ -232,7 +186,8 @@ public static class ApiEndpoints
         // L'adresse d'envoi sert aux règles de groupe « sous-réseau » (contrat des postes inchangé).
         var remote = request.HttpContext.Connection.RemoteIpAddress;
         var remoteIp = remote is null ? null : (remote.IsIPv4MappedToIPv6 ? remote.MapToIPv4() : remote).ToString();
-        var saved = store.SaveReport(report, body.Text!, received, remoteIp);
+        // Corps gzip du poste conservé tel quel comme rapport brut (pas de recompression).
+        var saved = store.SaveReport(report, body.Text!, received, remoteIp, body.Compressed);
         if (saved.RenamedFrom is not null)
             log.LogInformation("Poste {Old} renommé en {New} (même identifiant machine).", saved.RenamedFrom, report.Name);
         try
@@ -303,6 +258,6 @@ public static class ApiEndpoints
             .RequireAccess(Access.Admin);
     }
 
-    private static IResult NotFound(string name) =>
+    internal static IResult NotFound(string name) =>
         Results.Json(new ApiError($"Poste « {name} » inconnu de la console."), statusCode: StatusCodes.Status404NotFound);
 }

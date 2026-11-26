@@ -40,29 +40,33 @@ public static class GroupEndpoints
 
         view.MapGet("/groups", (ServerStore store) =>
         {
-            var machines = store.GetMachines();
+            var counts = store.GetGroupCounts();
             var schedules = store.GetSchedules();
-            return Results.Ok(store.GetGroups().Select(g => Summary(g, machines, schedules.Count(s => s.GroupId == g.Id))));
+            return Results.Ok(store.GetGroups().Select(g => Summary(g, counts, schedules.Count(s => s.GroupId == g.Id))));
         });
 
-        view.MapGet("/groups/{id:long}", (long id, ServerStore store, ServerOptions options, TimeProvider clock) =>
+        // Membres : tous par défaut (comme en 3.1) ; ?limit=&offset= (3.2) pour une page, toProcessCount pour tout le groupe.
+        view.MapGet("/groups/{id:long}", (long id, int? limit, int? offset, ServerStore store, ServerOptions options, TimeProvider clock) =>
         {
             if (store.GetGroup(id) is not { } g) return GroupNotFound();
-            var machines = store.GetMachines();
             var now = clock.GetUtcNow();
             var schedules = store.GetSchedules().Where(s => s.GroupId == id).ToList();
+            var (total, toProcess, members) = store.GetGroupMembers(id, offset ?? 0, limit is null ? null : Math.Clamp(limit.Value, 1, 10_000));
+            var rows = members.Select(x =>
+            {
+                var m = x.Machine;
+                return new
+                {
+                    name = m.Name, model = m.DisplayModel, os = m.Os, healthy = m.Healthy, stale = FleetAggregator.IsStale(m.LastSeen, now, options.StaleDays),
+                    lastReport = m.LastReport, lastIp = m.LastIp, manual = x.Manual, byRule = x.ByRule,
+                };
+            });
             return Results.Ok(new
             {
-                group = Summary(g, machines, schedules.Count),
-                members = machines.Where(m => GroupMatcher.IsMember(g, m)).Select(m =>
-                {
-                    var row = FleetAggregator.ToRow(m, now, options.StaleDays);
-                    return new
-                    {
-                        name = m.Name, model = row.Model, os = row.Os, healthy = row.Healthy, stale = row.Stale, lastReport = row.LastReport,
-                        lastIp = m.LastIp, manual = g.ManualMembers.Contains(m.Id), byRule = GroupMatcher.Matches(g.Rules, m),
-                    };
-                }).OrderBy(m => m.name, StringComparer.OrdinalIgnoreCase),
+                group = Summary(g, store.GetGroupCounts(), schedules.Count),
+                members = limit is null ? rows.OrderBy(m => m.name, StringComparer.OrdinalIgnoreCase).ToList() : rows.ToList(),
+                memberTotal = total,
+                toProcessCount = toProcess,
                 schedules = schedules.Select(s => new { id = s.Id, name = s.Name, enabled = s.Enabled }),
             });
         });
@@ -75,7 +79,7 @@ public static class GroupEndpoints
             GroupRules rules;
             try { rules = GroupMatcher.Normalize(req!.Rules); }
             catch (GroupValidationException ex) { return BadRequest(ex.Message); }
-            var matching = store.GetMachines().Where(m => GroupMatcher.Matches(rules, m)).Select(m => m.Name).OrderBy(n => n).ToList();
+            var matching = store.PreviewRules(rules).OrderBy(n => n).ToList();
             return Results.Ok(new { count = matching.Count, machines = matching.Take(50), description = GroupMatcher.Describe(rules) });
         });
 
@@ -88,7 +92,7 @@ public static class GroupEndpoints
             if (id is null) return Conflict($"Un groupe « {name} » existe déjà.");
             audit.Record(request.HttpContext, AuditActions.GroupCreate, name, RulesText(rules));
             var g = store.GetGroup(id.Value)!;
-            return Results.Json(Summary(g, store.GetMachines(), 0), statusCode: StatusCodes.Status201Created);
+            return Results.Json(Summary(g, store.GetGroupCounts(), 0), statusCode: StatusCodes.Status201Created);
         });
 
         operate.MapPut("/groups/{id:long}", async (long id, HttpRequest request, ServerStore store, AuditService audit, TimeProvider clock,
@@ -113,7 +117,7 @@ public static class GroupEndpoints
             var newRules = RulesText(rules);
             if (oldRules != newRules) changes.Add($"règles : {newRules}");
             audit.Record(request.HttpContext, AuditActions.GroupUpdate, name, changes.Count == 0 ? "aucun changement" : string.Join(" ; ", changes));
-            return Results.Ok(Summary(store.GetGroup(id)!, store.GetMachines(), store.CountSchedulesForGroup(id)));
+            return Results.Ok(Summary(store.GetGroup(id)!, store.GetGroupCounts(), store.CountSchedulesForGroup(id)));
         });
 
         operate.MapDelete("/groups/{id:long}", (long id, HttpContext http, ServerStore store, AuditService audit) =>
@@ -133,13 +137,13 @@ public static class GroupEndpoints
             if (store.GetGroup(id) is not { } g) return GroupNotFound();
             var (req, error) = await ReadAsync<GroupMembersRequest>(request, ct);
             if (error is not null) return error;
-            var byName = store.GetMachines().ToDictionary(m => m.Name, StringComparer.OrdinalIgnoreCase);
             List<string> Clean(List<string>? names) =>
                 (names ?? new List<string>()).Select(n => n.Trim()).Where(n => n.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
             var add = Clean(req!.Add);
             var remove = Clean(req.Remove);
             if (add.Count + remove.Count == 0) return BadRequest("Aucun poste indiqué.");
             if (add.Count + remove.Count > 10_000) return BadRequest("Trop de postes en une seule demande.");
+            var byName = store.FindMachinesByName(add.Concat(remove));
             var unknown = add.Concat(remove).Where(n => !byName.ContainsKey(n)).ToList();
             var changes = store.ChangeGroupMembers(id, add.Where(byName.ContainsKey).Select(n => byName[n].Id),
                 remove.Where(byName.ContainsKey).Select(n => byName[n].Id), clock.GetUtcNow());
@@ -152,19 +156,19 @@ public static class GroupEndpoints
                         known.Count > 0 ? $"ajout : {Names(known)}" : null,
                         gone.Count > 0 ? $"retrait : {Names(gone)}" : null,
                     }.Where(x => x is not null)));
-            return Results.Ok(new { changes, unknown, group = Summary(store.GetGroup(id)!, store.GetMachines(), store.CountSchedulesForGroup(id)) });
+            return Results.Ok(new { changes, unknown, group = Summary(store.GetGroup(id)!, store.GetGroupCounts(), store.CountSchedulesForGroup(id)) });
         });
     }
 
-    private static object Summary(GroupRecord g, IReadOnlyCollection<StoredMachine> machines, int scheduleCount) => new
+    private static object Summary(GroupRecord g, IReadOnlyDictionary<long, (int Members, int Manual)> counts, int scheduleCount) => new
     {
         id = g.Id,
         name = g.Name,
         description = g.Description,
         rules = g.Rules,
         rulesText = GroupMatcher.Describe(g.Rules),
-        manualCount = machines.Count(m => g.ManualMembers.Contains(m.Id)),
-        memberCount = machines.Count(m => GroupMatcher.IsMember(g, m)),
+        manualCount = counts.GetValueOrDefault(g.Id).Manual,
+        memberCount = counts.GetValueOrDefault(g.Id).Members,
         scheduleCount,
         createdAt = g.CreatedAt,
         updatedAt = g.UpdatedAt,

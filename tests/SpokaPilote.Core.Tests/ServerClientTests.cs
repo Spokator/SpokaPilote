@@ -93,6 +93,86 @@ public class ServerClientTests
         Assert.Equal(status, ex.StatusCode);
     }
 
+    // ------------------------------------------------------------------ grands parcs : 415, 503 + Retry-After
+
+    [Fact]
+    public async Task Upload_is_resent_uncompressed_when_gzip_is_refused()
+    {
+        // Intermédiaire (proxy, pare-feu applicatif) qui refuse Content-Encoding : un seul renvoi, en clair.
+        var handler = new StubHandler(r => r.Content!.Headers.ContentEncoding.Count > 0
+            ? Respond(HttpStatusCode.UnsupportedMediaType, "{\"error\":\"Encodage non pris en charge\"}")
+            : Respond(HttpStatusCode.OK, "{\"machine\":\"PC-TEST\",\"healthy\":true,\"reportId\":7}"));
+        var result = await new ServerClient("https://srv", "jeton", handler).UploadReportAsync(Report());
+
+        Assert.Equal(7, result.ReportId);
+        Assert.Equal(2, handler.Requests.Count);
+        Assert.Equal("gzip", handler.Requests[0].ContentEncoding);
+        Assert.Null(handler.Requests[1].ContentEncoding);
+        Assert.Contains("\"computerName\": \"PC-TEST\"", Encoding.UTF8.GetString(handler.Requests[1].Body!));
+    }
+
+    [Fact]
+    public async Task Busy_console_is_retried_after_retry_after_with_jitter()
+    {
+        var calls = 0;
+        var waits = new List<TimeSpan>();
+        var handler = new StubHandler(_ => ++calls < 3 ? Busy(TimeSpan.FromSeconds(30)) : Respond(HttpStatusCode.OK, "{\"machine\":\"PC-TEST\"}"));
+        var client = new ServerClient("https://srv", "jeton", handler, (d, _) => { waits.Add(d); return Task.CompletedTask; });
+
+        Assert.Equal("PC-TEST", (await client.UploadReportAsync(Report())).Machine);
+        Assert.Equal(3, handler.Requests.Count);
+        Assert.Equal(2, waits.Count);
+        Assert.All(waits, w => Assert.InRange(w.TotalSeconds, 30, 37.5)); // délai demandé + 0 à 25 %
+        Assert.All(handler.Requests, r => Assert.Equal("gzip", r.ContentEncoding));
+    }
+
+    [Fact]
+    public async Task Busy_console_retries_are_bounded_and_explained()
+    {
+        var waits = 0;
+        var handler = new StubHandler(_ => Busy(TimeSpan.FromSeconds(10)));
+        var client = new ServerClient("https://srv", "jeton", handler, (_, _) => { waits++; return Task.CompletedTask; });
+        var ex = await Assert.ThrowsAsync<ServerException>(() => client.UploadReportAsync(Report()));
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, ex.StatusCode);
+        Assert.Contains("surchargée", ex.Message);
+        Assert.Equal(1 + ServerClient.MaxUploadRetries, handler.Requests.Count);
+        Assert.Equal(ServerClient.MaxUploadRetries, waits);
+    }
+
+    [Fact]
+    public async Task No_retry_without_retry_after_or_when_it_is_too_long()
+    {
+        foreach (var response in new Func<HttpResponseMessage>[]
+                 {
+                     () => Respond(HttpStatusCode.ServiceUnavailable, "{\"error\":\"maintenance\"}"),
+                     () => Busy(TimeSpan.FromMinutes(10)),
+                 })
+        {
+            var handler = new StubHandler(_ => response());
+            var client = new ServerClient("https://srv", "jeton", handler, (_, _) => throw new InvalidOperationException("pas d'attente attendue"));
+            await Assert.ThrowsAsync<ServerException>(() => client.UploadReportAsync(Report()));
+            Assert.Single(handler.Requests);
+        }
+    }
+
+    [Fact]
+    public async Task Agent_poll_is_not_retried_on_a_busy_console()
+    {
+        // L'agent repassera de lui-même à son prochain intervalle : pas d'attente dans la tâche planifiée.
+        var handler = new StubHandler(_ => Busy(TimeSpan.FromSeconds(5)));
+        var client = new ServerClient("https://srv", "jeton", handler, (_, _) => throw new InvalidOperationException("pas d'attente attendue"));
+        var ex = await Assert.ThrowsAsync<ServerException>(() => client.GetPendingJobsAsync("6f1c2a8e-1d2b-4c3d-9e4f-0123456789ab", "PC-TEST"));
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, ex.StatusCode);
+        Assert.Single(handler.Requests);
+    }
+
+    private static HttpResponseMessage Busy(TimeSpan retryAfter)
+    {
+        var r = Respond(HttpStatusCode.ServiceUnavailable, "{\"error\":\"Console momentanément surchargée (réception des rapports) : nouvel essai dans 30 s.\"}");
+        r.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(retryAfter);
+        return r;
+    }
+
     [Fact]
     public async Task Redirects_are_refused()
     {

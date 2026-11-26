@@ -44,13 +44,16 @@ public sealed class MachineRow
     /// <summary>Un pilote connu pour être dangereux (constat critique « known-bad-driver ») est présent.</summary>
     public bool DangerousDriver { get; init; }
     /// <summary>Dernière interrogation de la file de tâches par l'agent (null = agent jamais vu).</summary>
-    public DateTimeOffset? AgentSeen { get; init; }
+    public DateTimeOffset? AgentSeen { get; set; }
     /// <summary>Tâches à distance en attente ou en cours pour ce poste (renseigné par l'API).</summary>
     public int ActiveJobs { get; set; }
     /// <summary>Adresse IP d'envoi du dernier rapport (vue par la console).</summary>
     public string? LastIp { get; init; }
     /// <summary>Groupes dont le poste fait partie (identifiants ; renseigné par l'API).</summary>
     public List<long> Groups { get; set; } = new();
+
+    /// <summary>Copie superficielle (les synthèses en cache ne sont jamais modifiées).</summary>
+    public MachineRow Copy() => (MachineRow)MemberwiseClone();
 }
 
 /// <summary>Matériel sans pilote trouvé, agrégé par ID matériel sur tout le parc : la liste de ce qu'il reste à trouver.</summary>
@@ -104,46 +107,80 @@ public sealed class FleetSummary
     public List<MachineRow> StaleMachines { get; init; } = new();
     public List<MissingHardware> MissingDrivers { get; init; } = new();
     public List<ModelRow> Models { get; init; } = new();
+    /// <summary>Nombre de types de matériel sans pilote (3.2 : la liste peut être tronquée par ?top=).</summary>
+    public int MissingDriverCount => MissingDriverKinds ?? MissingDrivers.Count;
+
+    /// <summary>
+    /// Copie pour une réponse : listes éventuellement limitées aux <paramref name="top"/> premiers éléments (la liste
+    /// complète reste la valeur par défaut de l'API), lignes recopiées puis complétées par <paramref name="row"/>. La
+    /// synthèse mise en cache n'est jamais modifiée.
+    /// </summary>
+    public FleetSummary Copy(int? top, Action<MachineRow> row)
+    {
+        List<T> Take<T>(List<T> list) => top is { } n && list.Count > n ? list.GetRange(0, n) : list;
+        List<MachineRow> Rows(List<MachineRow> list) => Take(list).Select(r => { var copy = r.Copy(); row(copy); return copy; }).ToList();
+        return new FleetSummary
+        {
+            GeneratedAt = GeneratedAt, StaleDays = StaleDays, MachineCount = MachineCount, Healthy = Healthy, ToProcess = ToProcess, Stale = Stale,
+            ModelCount = ModelCount, DriverProblems = DriverProblems, HardwareFaults = HardwareFaults, Unresolved = Unresolved, Proposed = Proposed,
+            Blocked = Blocked, Installed = Installed, Failed = Failed, RebootRequired = RebootRequired, AverageHealth = AverageHealth,
+            HealthMachines = HealthMachines, DangerousDrivers = DangerousDrivers, PendingJobs = PendingJobs, RunningJobs = RunningJobs,
+            FailedJobs24h = FailedJobs24h,
+            ToProcessMachines = Rows(ToProcessMachines),
+            StaleMachines = Rows(StaleMachines),
+            MissingDrivers = top is null ? MissingDrivers : Take(MissingDrivers),
+            MissingDriverKinds = MissingDrivers.Count,
+            Models = Models,
+        };
+    }
+
+    /// <summary>Nombre total de types de matériel sans pilote quand la liste est tronquée (null : liste complète).</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public int? MissingDriverKinds { get; private init; }
 }
 
-/// <summary>Calculs de synthèse du parc, sans état (testables indépendamment du stockage).</summary>
+/// <summary>
+/// Calculs de synthèse du parc, sans état (testables indépendamment du stockage). Ils portent sur les indicateurs
+/// précalculés des postes (MachineSummary) ; les surcharges StoredMachine (rapport complet) donnent le même résultat.
+/// </summary>
 public static class FleetAggregator
 {
-    public static MachineRow ToRow(StoredMachine m, DateTimeOffset now, int staleDays)
+    public static MachineRow ToRow(StoredMachine m, DateTimeOffset now, int staleDays) => ToRow(MachineSummary.From(m), now, staleDays);
+
+    public static MachineRow ToRow(MachineSummary m, DateTimeOffset now, int staleDays)
     {
-        var r = m.Report;
-        var s = r.System;
+        var s = m.System;
         return new MachineRow
         {
             Name = m.Name,
-            MachineId = m.MachineId ?? s.MachineId,
-            Model = s.DisplayModel,
+            MachineId = m.MachineId,
+            Model = m.DisplayModel,
             SerialNumber = s.SerialNumber,
-            Os = $"{s.OsCaption} {s.OsDisplayVersion}".Trim(),
+            Os = m.Os,
             OsVersion = s.OsVersion,
             Architecture = s.Architecture,
-            AppVersion = r.AppVersion,
-            LastReport = r.Timestamp,
+            AppVersion = m.AppVersion,
+            LastReport = m.LastReport,
             LastSeen = m.LastSeen,
             ReportCount = m.ReportCount,
-            DeviceCount = r.DeviceCount,
-            DriverProblems = r.DriverProblems,
-            HardwareFaults = r.HardwareFaults,
-            Unresolved = r.Unresolved,
-            Proposed = r.Proposed,
-            Blocked = r.Blocked,
-            Installed = r.Installed,
-            Failed = r.Failed,
-            SourceErrors = r.SourceErrors.Count,
-            AnalysisOnly = r.AnalysisOnly,
-            RebootRequired = r.RebootRequired,
-            Healthy = r.Healthy,
+            DeviceCount = m.DeviceCount,
+            DriverProblems = m.DriverProblems,
+            HardwareFaults = m.HardwareFaults,
+            Unresolved = m.Unresolved,
+            Proposed = m.Proposed,
+            Blocked = m.Blocked,
+            Installed = m.Installed,
+            Failed = m.Failed,
+            SourceErrors = m.SourceErrors,
+            AnalysisOnly = m.AnalysisOnly,
+            RebootRequired = m.RebootRequired,
+            Healthy = m.Healthy,
             Stale = IsStale(m.LastSeen, now, staleDays),
-            HealthScore = r.Health?.Score,
-            HealthGrade = r.Health?.Grade,
-            HealthCritical = r.Health?.Critical ?? 0,
-            HealthWarnings = r.Health?.Warnings ?? 0,
-            DangerousDriver = r.Health?.HasDangerousDriver ?? false,
+            HealthScore = m.HealthScore,
+            HealthGrade = m.HealthGrade,
+            HealthCritical = m.HealthCritical,
+            HealthWarnings = m.HealthWarnings,
+            DangerousDriver = m.DangerousDriver,
             AgentSeen = m.AgentSeen,
             LastIp = m.LastIp,
         };
@@ -152,20 +189,26 @@ public static class FleetAggregator
     public static bool IsStale(DateTimeOffset lastSeen, DateTimeOffset now, int staleDays) =>
         staleDays > 0 && now - lastSeen > TimeSpan.FromDays(staleDays);
 
-    /// <summary>Postes à traiter d'abord (échecs, pilotes en erreur), puis par nom.</summary>
-    public static List<MachineRow> Rows(IEnumerable<StoredMachine> machines, DateTimeOffset now, int staleDays) =>
-        machines.Select(m => ToRow(m, now, staleDays))
-            .OrderBy(r => r.Healthy)
+    /// <summary>Ordre historique de la liste des postes : à traiter d'abord (échecs, pilotes en erreur), puis par nom.</summary>
+    public static IOrderedEnumerable<MachineRow> DefaultOrder(IEnumerable<MachineRow> rows) =>
+        rows.OrderBy(r => r.Healthy)
             .ThenByDescending(r => r.Failed)
             .ThenByDescending(r => r.DriverProblems)
-            .ThenBy(r => r.Name, StringComparer.OrdinalIgnoreCase)
-            .ToList();
+            .ThenBy(r => r.Name, StringComparer.OrdinalIgnoreCase);
 
-    public static List<MissingHardware> MissingDrivers(IEnumerable<StoredMachine> machines) =>
+    /// <summary>Postes à traiter d'abord (échecs, pilotes en erreur), puis par nom.</summary>
+    public static List<MachineRow> Rows(IEnumerable<StoredMachine> machines, DateTimeOffset now, int staleDays) =>
+        Rows(machines.Select(MachineSummary.From), now, staleDays);
+
+    public static List<MachineRow> Rows(IEnumerable<MachineSummary> machines, DateTimeOffset now, int staleDays) =>
+        DefaultOrder(machines.Select(m => ToRow(m, now, staleDays))).ToList();
+
+    public static List<MissingHardware> MissingDrivers(IEnumerable<StoredMachine> machines) => MissingDrivers(machines.Select(MachineSummary.From));
+
+    /// <summary>Matériel sans pilote agrégé par ID matériel (ordre des postes = ordre reçu, par nom pour le stockage).</summary>
+    public static List<MissingHardware> MissingDrivers(IEnumerable<MachineSummary> machines) =>
         machines
-            .SelectMany(m => m.Report.ProblemDevices
-                .Where(d => !d.IsHardwareFault && !d.HasCandidate)
-                .Select(d => (Machine: m, Device: d)))
+            .SelectMany(m => m.Missing.Select(d => (Machine: m, Device: d)))
             .GroupBy(x => x.Device.AggregationKey, StringComparer.OrdinalIgnoreCase)
             .Select(g =>
             {
@@ -178,7 +221,7 @@ public static class FleetAggregator
                     StatusText = first.StatusText,
                     Hint = g.Select(x => x.Device.Hint).FirstOrDefault(h => h is not null),
                     Machines = g.Select(x => x.Machine.Name).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(n => n).ToList(),
-                    Models = g.Select(x => x.Machine.Report.System.DisplayModel).Distinct().OrderBy(n => n).ToList(),
+                    Models = g.Select(x => x.Machine.DisplayModel).Distinct().OrderBy(n => n).ToList(),
                     BlockedOn = g.Where(x => x.Device.OnlyBlockedCandidates).Select(x => x.Machine.Name).Distinct(StringComparer.OrdinalIgnoreCase).Count(),
                 };
             })
@@ -186,7 +229,10 @@ public static class FleetAggregator
             .ThenBy(h => h.Name, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
-    public static FleetSummary Summarize(IReadOnlyCollection<StoredMachine> machines, DateTimeOffset now, int staleDays)
+    public static FleetSummary Summarize(IReadOnlyCollection<StoredMachine> machines, DateTimeOffset now, int staleDays) =>
+        SummarizeFleet(machines.Select(MachineSummary.From).ToList(), now, staleDays);
+
+    public static FleetSummary SummarizeFleet(IReadOnlyCollection<MachineSummary> machines, DateTimeOffset now, int staleDays)
     {
         var rows = Rows(machines, now, staleDays);
         var scored = rows.Where(r => r.HealthScore is not null).ToList();

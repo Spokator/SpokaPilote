@@ -16,7 +16,11 @@ public sealed partial class ServerStore
     public bool TryRegisterAlert(string subject, string reason, DateTimeOffset now, TimeSpan window)
     {
         using var c = Open();
-        using var tx = c.BeginTransaction();
+        // Lecture d'abord : une alerte déjà envoyée (cas le plus fréquent) ne coûte aucune écriture.
+        if (Scalar(c, "SELECT last_sent FROM alert_log WHERE subject = $s AND reason = $r;", ("$s", subject), ("$r", reason)) is string sent &&
+            now - ParseIso(sent) < window)
+            return false;
+        using var tx = BeginWrite(c);
         if (Scalar(c, "SELECT last_sent FROM alert_log WHERE subject = $s AND reason = $r;", ("$s", subject), ("$r", reason)) is string last &&
             now - ParseIso(last) < window)
             return false;
@@ -40,7 +44,8 @@ public sealed partial class ServerStore
         using var c = Open();
         Execute(c, "INSERT INTO alert_events(created_at, machine, reason, title, status, detail) VALUES($at, $m, $r, $t, $s, $d);",
             ("$at", Iso(at)), ("$m", machine), ("$r", reason), ("$t", title), ("$s", status), ("$d", detail));
-        Execute(c, "DELETE FROM alert_events WHERE id NOT IN (SELECT id FROM alert_events ORDER BY id DESC LIMIT $keep);", ("$keep", AlertEventsKept));
+        // Rétention par seuil d'identifiant (clé primaire) plutôt que « NOT IN (…) », qui relirait toute la table.
+        Execute(c, "DELETE FROM alert_events WHERE id <= (SELECT id FROM alert_events ORDER BY id DESC LIMIT 1 OFFSET $keep);", ("$keep", AlertEventsKept));
     }
 
     public List<AlertEventRecord> GetAlertEvents(int limit = 50)
