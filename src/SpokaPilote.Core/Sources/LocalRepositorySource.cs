@@ -14,14 +14,14 @@ public sealed class LocalRepositorySource : IDriverSource
     public string Name => "Dépôt local";
     public DriverSourceKind Kind => DriverSourceKind.LocalRepository;
 
-    public bool IsEnabled(ScanContext context) => context.Settings.RepositoryPaths.Count > 0;
+    public bool IsEnabled(ScanContext context) => context.Settings.EffectiveRepositoryPaths().Count > 0;
 
     public async Task<IReadOnlyList<DriverCandidate>> FindAsync(ScanContext context, CancellationToken ct)
     {
         var byInf = new Dictionary<string, DriverCandidate>(StringComparer.OrdinalIgnoreCase);
         var bestForDevice = new Dictionary<string, (DriverCandidate Candidate, int Rank, Version? Version)>(StringComparer.OrdinalIgnoreCase);
 
-        foreach (var root in context.Settings.RepositoryPaths)
+        foreach (var root in context.Settings.EffectiveRepositoryPaths())
         {
             context.Report(Name, $"Indexation du dépôt {root}...");
             var repo = new DriverRepository(root);

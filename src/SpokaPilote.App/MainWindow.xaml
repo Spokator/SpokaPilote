@@ -35,12 +35,27 @@
                         <TextBlock Style="{StaticResource PageSubtitle}" Text="{Binding MachineDetails}" />
 
                         <Border Style="{StaticResource Card}" Margin="0,0,0,16"
-                                Visibility="{Binding HasUpdate, Converter={StaticResource BoolToVisibility}}">
+                                Visibility="{Binding HasInstallerUpdate, Converter={StaticResource BoolToVisibility}}">
                             <DockPanel>
                                 <Button DockPanel.Dock="Right" Content="Mettre à jour" Style="{DynamicResource AccentButtonStyle}" Command="{Binding InstallUpdateCommand}" />
                                 <TextBlock VerticalAlignment="Center" TextWrapping="Wrap" Margin="0,0,16,0">
                                     <Run FontWeight="SemiBold" Text="{Binding UpdateLabel, Mode=OneWay}" />
                                     <Run Text="Téléchargement depuis GitHub, vérifié (taille + SHA-256), puis installation automatique." />
+                                </TextBlock>
+                            </DockPanel>
+                        </Border>
+
+                        <!-- Mode portable : aucun installeur, l'archive portable vérifiée est déposée sur la clé. -->
+                        <Border Style="{StaticResource Card}" Margin="0,0,0,16"
+                                Visibility="{Binding HasPortableUpdate, Converter={StaticResource BoolToVisibility}}">
+                            <DockPanel>
+                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                                    <Button Content="Page de la version" Command="{Binding OpenReleasePageCommand}" Margin="0,0,8,0" />
+                                    <Button Content="Télécharger sur la clé" Style="{DynamicResource AccentButtonStyle}" Command="{Binding DownloadPortableUpdateCommand}" />
+                                </StackPanel>
+                                <TextBlock VerticalAlignment="Center" TextWrapping="Wrap" Margin="0,0,16,0">
+                                    <Run FontWeight="SemiBold" Text="{Binding UpdateLabel, Mode=OneWay}" />
+                                    <Run Text="Mode portable : téléchargez la nouvelle version. L'archive est vérifiée (taille + SHA-256) et rangée sur la clé ; extrayez-la ensuite par-dessus l'ancienne version." />
                                 </TextBlock>
                             </DockPanel>
                         </Border>
@@ -585,7 +600,11 @@
                     <StackPanel Margin="28,24" MaxWidth="820" HorizontalAlignment="Left">
                         <TextBlock Style="{StaticResource PageTitle}" Text="Paramètres" />
                         <TextBlock Style="{StaticResource PageSubtitle}"
+                                   Visibility="{Binding IsNotPortable, Converter={StaticResource BoolToVisibility}}"
                                    Text="Enregistrés dans %ProgramData%\SpokaPilote\settings.json : le même fichier peut être déployé sur tout le parc (GPO, Intune, script)." />
+                        <TextBlock Style="{StaticResource PageSubtitle}" TextWrapping="Wrap"
+                                   Visibility="{Binding IsPortable, Converter={StaticResource BoolToVisibility}}"
+                                   Text="{Binding PortableSettingsNote, Mode=OneWay}" />
                         <Border Style="{StaticResource Card}" Margin="0,0,0,16">
                             <StackPanel>
                                 <TextBlock FontWeight="SemiBold" Text="Interface" Margin="0,0,0,8" />
@@ -698,6 +717,9 @@
                              Visibility="{Binding IsBusy, Converter={StaticResource BoolToVisibility}}" />
                 <TextBlock DockPanel.Dock="Right" Margin="12,0" VerticalAlignment="Center" FontWeight="SemiBold"
                            Text="Redémarrage nécessaire" Visibility="{Binding RebootPending, Converter={StaticResource BoolToVisibility}}" />
+                <TextBlock DockPanel.Dock="Right" Margin="12,0" VerticalAlignment="Center" Opacity="0.8" MaxWidth="420" TextTrimming="CharacterEllipsis"
+                           Text="{Binding PortableLabel, Mode=OneWay}" ToolTip="{Binding PortableDetails, Mode=OneWay}"
+                           Visibility="{Binding IsPortable, Converter={StaticResource BoolToVisibility}}" />
                 <TextBlock VerticalAlignment="Center" Text="{Binding Status}" TextTrimming="CharacterEllipsis" AutomationProperties.LiveSetting="Polite" AutomationProperties.Name="État" />
             </DockPanel>
         </Border>

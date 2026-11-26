@@ -20,7 +20,7 @@ internal static partial class Program
     /// <summary>Erreur du dernier envoi de rapport (null si réussi ou non tenté).</summary>
     private static string? _lastUploadError;
 
-    private static string AgentStateFile => Path.Combine(AppPaths.Ensure(AppPaths.Root), "agent-state.json");
+    private static string AgentStateFile => Path.Combine(AppPaths.Ensure(AppPaths.MachineRoot), "agent-state.json");
 
     private static async Task<int> AgentAsync(Args a, CancellationToken ct)
     {
@@ -31,6 +31,11 @@ internal static partial class Program
                 return await AgentRunAsync(a, ct);
             case "enable" or "activer":
             {
+                if (AppPaths.IsPortable)
+                {
+                    WriteLine(MaintenanceScheduler.PortableRefusal, ConsoleColor.Red);
+                    return ExitError;
+                }
                 Banner();
                 var every = AgentScheduler.DefaultIntervalMinutes;
                 if (a.Value("every") is { } text && (!int.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out every) ||
@@ -268,6 +273,8 @@ internal static partial class Program
 
             case AgentJobTypes.SelfUpdate:
             {
+                if (AppPaths.IsPortable)
+                    return (new AgentJobResult(false, ExitError, "Mode portable : la mise à jour automatique n'est pas disponible (aucun installeur n'est lancé depuis une clé USB)."), null);
                 var current = UpdateChecker.CurrentVersion;
                 WriteLine($"Version installée : {current.ToString(3)}", ConsoleColor.White);
                 var update = await UpdateChecker.CheckAsync(current, ct);

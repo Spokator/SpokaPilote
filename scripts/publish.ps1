@@ -1,8 +1,12 @@
 ﻿# Publie SpokaPilote (interface + ligne de commande) en autonome dans .\dist\app-<arch> (aucune installation de .NET requise).
+#   -Portable : produit aussi dist\SpokaPilote-Portable-<version>-<arch>.zip (mode portable, voir docs\MODE-PORTABLE.md).
+#   Le nom de l'archive ne contient jamais « Setup » ni « Installer » : les versions 1.0.x prennent le premier « Setup* »
+#   d'une Release pour l'installeur (contrat vérifié par les tests : UpdateChecker.PortableAssetName).
 param(
     [string]$Configuration = "Release",
     [ValidateSet("x64", "arm64")] [string]$Arch = "x64",
-    [switch]$SkipTests
+    [switch]$SkipTests,
+    [switch]$Portable
 )
 
 $ErrorActionPreference = "Stop"
@@ -39,6 +43,34 @@ if ($signing) {
     Invoke-CodeSign $signing $own
     foreach ($f in $own) { Test-CodeSignature $signing $f }
 }
+
+# Archive portable : copie de dist\app-<arch> + fichier témoin + dossier Depot vide + LISEZMOI.txt, dans un dossier
+# SpokaPilote\ à extraire à la racine de la clé. Préparée à part : dist\app-<arch> (source de l'installeur) ne reçoit
+# jamais le fichier témoin, sinon la version installée se croirait portable.
+$portableZip = $null
+if ($Portable) {
+    [xml]$props = Get-Content "$root\Directory.Build.props"
+    $version = ($props.Project.PropertyGroup | Where-Object { $_.Version } | Select-Object -First 1).Version
+    $staging = Join-Path $root "dist\portable-$Arch"
+    if (Test-Path $staging) { Remove-Item $staging -Recurse -Force }
+    $portableRoot = Join-Path $staging "SpokaPilote"
+    New-Item -ItemType Directory -Force $portableRoot | Out-Null
+    Copy-Item (Join-Path $out "*") $portableRoot -Recurse -Force
+    Copy-Item "$root\installer\portable\SpokaPilote.portable" (Join-Path $portableRoot "SpokaPilote.portable")
+    # LISEZMOI en UTF-8 avec BOM et fins de ligne Windows (lisible par tous les Bloc-notes).
+    $readme = [System.IO.File]::ReadAllText("$root\installer\portable\LISEZMOI.txt") -replace "`r?`n", "`r`n"
+    [System.IO.File]::WriteAllText((Join-Path $portableRoot "LISEZMOI.txt"), $readme, (New-Object System.Text.UTF8Encoding($true)))
+    New-Item -ItemType Directory -Force (Join-Path $portableRoot "Depot") | Out-Null
+    if (Test-Path (Join-Path $portableRoot "Data")) { throw "Le dossier Data ne doit pas être livré dans l'archive portable." }
+
+    $portableZip = Join-Path $root "dist\SpokaPilote-Portable-$version-$Arch.zip"
+    if ((Split-Path $portableZip -Leaf) -match "Setup|Installer") { throw "Nom d'archive portable interdit : $portableZip" }
+    if (Test-Path $portableZip) { Remove-Item $portableZip -Force }
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    # CreateFromDirectory conserve les dossiers vides (Depot), contrairement à Compress-Archive.
+    [System.IO.Compression.ZipFile]::CreateFromDirectory($staging, $portableZip, [System.IO.Compression.CompressionLevel]::Optimal, $false)
+    Write-Host "Archive portable -> $portableZip" -ForegroundColor Cyan
+}
 # Les contrôles d'exécution ne sont possibles que pour l'architecture de ce poste (un PC x64 n'exécute pas l'ARM64).
 $hostArch = if ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq 'Arm64') { "arm64" } else { "x64" }
 if ($Arch -ne $hostArch) {
@@ -58,3 +90,22 @@ if ($ui.ExitCode -ne 0) { throw "L'interface a rencontré une erreur (code $($ui
 $tabs = (Get-ChildItem $shots -Filter *.png).Count
 if ($tabs -lt 8) { throw "L'interface n'a affiché que $tabs onglet(s) sur 8." }
 Write-Host "OK -> $out (CLI $cliVersion, interface : $tabs onglets)" -ForegroundColor Green
+
+# Contrôle de l'archive portable extraite : mode portable reconnu, données rangées à côté de l'exécutable.
+if ($portableZip) {
+    $check = Join-Path $env:TEMP "spokapilote-portable-check"
+    Remove-Item $check -Recurse -Force -ErrorAction SilentlyContinue
+    [System.IO.Compression.ZipFile]::ExtractToDirectory($portableZip, $check)
+    foreach ($required in "SpokaPilote.portable", "LISEZMOI.txt", "Depot", "SpokaPilote.App.exe", "spokapilote.exe") {
+        if (-not (Test-Path (Join-Path $check "SpokaPilote\$required"))) { throw "Archive portable incomplète : $required absent." }
+    }
+    $previousHome = $env:SPOKAPILOTE_HOME
+    if ($previousHome) { Remove-Item Env:\SPOKAPILOTE_HOME }
+    $config = (& (Join-Path $check "SpokaPilote\spokapilote.exe") config show) -join "`n"
+    $configExit = $LASTEXITCODE
+    if ($previousHome) { $env:SPOKAPILOTE_HOME = $previousHome }
+    if ($configExit -ne 0 -or $config -notmatch "Mode portable") { throw "La copie portable ne se reconnaît pas comme telle :`n$config" }
+    if (-not (Test-Path (Join-Path $check "SpokaPilote\Data"))) { throw "La copie portable n'a pas créé son dossier Data." }
+    Remove-Item $check -Recurse -Force
+    Write-Host "OK -> $portableZip (mode portable vérifié)" -ForegroundColor Green
+}

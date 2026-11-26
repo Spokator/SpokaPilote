@@ -1,0 +1,35 @@
+SpokaPilote - version portable (clé USB du technicien)
+=====================================================
+
+Installation : aucune. Extrayez l'archive à la racine de la clé : vous obtenez E:\SpokaPilote\.
+Format de clé conseillé : exFAT ou NTFS (les packs constructeurs dépassent souvent 4 Go, limite du FAT32).
+
+Lancer
+  - Interface : double-cliquez sur SpokaPilote.App.exe (bouton « Relancer en administrateur » pour installer).
+  - Ligne de commande (console administrateur) : E:\SpokaPilote\spokapilote.exe scan
+  - Vérifier le mode : spokapilote config show  ->  « Mode portable - données sur E:\SpokaPilote\Data »
+
+Ce qui reste sur la clé
+  Data\                        configuration (settings.json), cache, téléchargements, rapports
+  Data\Postes\<POSTE>_<id>\    journaux, historique des interventions, sauvegardes de pilotes : un dossier par poste
+  Depot\                       votre dépôt de pilotes, utilisé automatiquement sur tous les postes (hors ligne)
+
+Ce qui est écrit sur le poste : uniquement ce qu'exige l'installation des pilotes (magasin de pilotes de
+Windows, point de restauration, programmes d'installation des constructeurs).
+
+Remplir le dépôt (sur un poste connecté)
+  spokapilote driverpack download        pack officiel Dell / HP / Lenovo / Surface du modèle -> Depot
+  spokapilote export                     pilotes d'un poste de référence -> Depot
+
+Annuler une intervention : rebranchez la clé sur le MÊME poste (l'historique est sur la clé), puis
+  spokapilote history  et  spokapilote rollback last
+Sans la clé, utilisez le point de restauration Windows créé avant l'intervention.
+
+Non disponible en mode portable : maintenance planifiée et agent (ils pointeraient vers la clé absente).
+Installez SpokaPilote sur le poste pour les utiliser.
+
+Mise à jour : spokapilote self-update télécharge et vérifie (SHA-256) la nouvelle archive dans
+Data\Mises-a-jour. Fermez SpokaPilote puis extrayez-la par-dessus : Data et Depot sont conservés.
+
+Ne supprimez pas le fichier SpokaPilote.portable : c'est lui qui active le mode portable.
+Documentation complète : https://github.com/Spokator/SpokaPilote/blob/main/docs/MODE-PORTABLE.md

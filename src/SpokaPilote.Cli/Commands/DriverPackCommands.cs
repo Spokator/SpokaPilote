@@ -129,7 +129,7 @@ internal static partial class Program
 
     private static async Task<int> DownloadPackAsync(Args a, Settings settings, List<DriverPackMatch> matches, CancellationToken ct)
     {
-        var repo = a.Positional(1) ?? settings.RepositoryPaths.FirstOrDefault();
+        var repo = a.Positional(1) ?? settings.EffectiveRepositoryPaths().FirstOrDefault();
         if (repo is null)
         {
             WriteLine("Usage : spokapilote driverpack download <dépôt> [--model \"Latitude 7420\"] [--os win11|win10] [--arch x64|arm64] [--yes]", ConsoleColor.Yellow);

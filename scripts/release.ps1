@@ -1,4 +1,5 @@
-﻿# Publie une version sur GitHub : construit l'installeur puis crée la Release vX.Y.Z avec les notes du CHANGELOG.
+﻿# Publie une version sur GitHub : construit les installeurs et les archives portables, puis crée la Release vX.Y.Z
+# avec les notes du CHANGELOG.
 #   .\scripts\release.ps1            -> release de la version indiquée dans Directory.Build.props
 #   .\scripts\release.ps1 -Draft     -> brouillon (non visible par la mise à jour automatique)
 param(
@@ -27,20 +28,28 @@ if ($exists) { throw "La Release $tag existe déjà : augmentez la version dans 
 $setup = Join-Path $root "dist\SpokaPilote-Setup-$version.exe"
 $setupArm = Join-Path $root "dist\SpokaPilote-Installer-$version-arm64.exe"
 foreach ($f in $setup, $setupArm) { if (-not (Test-Path $f)) { throw "Installeur introuvable : $f" } }
+# Archives portables (clé USB) : leur nom ne contient ni « Setup » ni « Installer » (les versions 1.0.x prennent le
+# premier « Setup* » de la Release pour l'installeur ; les versions actuelles n'acceptent que les .exe).
+$portable = Join-Path $root "dist\SpokaPilote-Portable-$version-x64.zip"
+$portableArm = Join-Path $root "dist\SpokaPilote-Portable-$version-arm64.zip"
+foreach ($f in $portable, $portableArm) {
+    if (-not (Test-Path $f)) { throw "Archive portable introuvable : $f" }
+    if ((Split-Path $f -Leaf) -match "Setup|Installer") { throw "Nom d'archive portable interdit : $f" }
+}
 
 # Notes : la section du CHANGELOG correspondant à la version.
 $changelog = Get-Content "$root\CHANGELOG.md" -Raw -Encoding UTF8
 $section = [regex]::Match($changelog, "(?ms)^## $([regex]::Escape($version))\b.*?\r?\n(.*?)(?=^## |\z)").Groups[1].Value.Trim()
 if (-not $section) { throw "Aucune section « ## $version » dans CHANGELOG.md." }
 $notes = Join-Path $env:TEMP "spokapilote-notes-$version.md"
-"## Nouveautés de la $version`n`n$section`n`n**Installation :** téléchargez ``SpokaPilote-Setup-$version.exe`` (PC Intel/AMD) ou ``SpokaPilote-Installer-$version-arm64.exe`` (PC ARM64 : Snapdragon, Surface) ci-dessous et lancez-le. Pour un parc : ``SpokaPilote-Setup-$version.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART``." |
+"## Nouveautés de la $version`n`n$section`n`n**Installation :** téléchargez ``SpokaPilote-Setup-$version.exe`` (PC Intel/AMD) ou ``SpokaPilote-Installer-$version-arm64.exe`` (PC ARM64 : Snapdragon, Surface) ci-dessous et lancez-le. Pour un parc : ``SpokaPilote-Setup-$version.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART``.`n`n**Mode portable (clé USB, sans installation) :** ``SpokaPilote-Portable-$version-x64.zip`` ou ``SpokaPilote-Portable-$version-arm64.zip``, à extraire à la racine de la clé (voir docs/MODE-PORTABLE.md)." |
     Set-Content $notes -Encoding UTF8
 
 # git et gh écrivent leur progression sur stderr : on lit les codes de sortie plutôt que le flux d'erreur.
 $ErrorActionPreference = "Continue"
 git push origin HEAD 2>&1 | ForEach-Object { "$_" }
 if ($LASTEXITCODE -ne 0) { $ErrorActionPreference = "Stop"; throw "git push a échoué." }
-$ghArgs = @("release", "create", $tag, $setup, $setupArm, "--title", "SpokaPilote $version", "--notes-file", $notes)
+$ghArgs = @("release", "create", $tag, $setup, $setupArm, $portable, $portableArm, "--title", "SpokaPilote $version", "--notes-file", $notes)
 if ($Draft) { $ghArgs += "--draft" }
 gh @ghArgs 2>&1 | ForEach-Object { "$_" }
 $ghExit = $LASTEXITCODE
