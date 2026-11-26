@@ -2,6 +2,8 @@ using Microsoft.AspNetCore.Server.Kestrel.Core;
 using SpokaPilote.Server;
 using SpokaPilote.Server.Alerts;
 using SpokaPilote.Server.Api;
+using SpokaPilote.Server.Audit;
+using SpokaPilote.Server.Jobs;
 using SpokaPilote.Server.Security;
 using SpokaPilote.Server.Storage;
 
@@ -18,6 +20,11 @@ builder.Services.AddSingleton(sp => TokenService.Initialize(
     sp.GetRequiredService<IConfiguration>(), sp.GetRequiredService<ServerOptions>(),
     sp.GetRequiredService<ILoggerFactory>().CreateLogger("SpokaPilote.Jetons")));
 builder.Services.AddSingleton<AuthFailureLimiter>();
+// Console 3.1 : comptes nominatifs (sessions), journal d'audit, planificateur des actions planifiées.
+builder.Services.AddSingleton<SessionService>();
+builder.Services.AddSingleton<AuditService>();
+builder.Services.AddSingleton<ScheduleRunner>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<ScheduleRunner>());
 // Alertes (e-mail, webhooks) et tâches périodiques : expiration des tâches à distance, postes non vus, résumé quotidien.
 builder.Services.AddSpokaPiloteAlerts();
 // Limite globale de Kestrel (la limite fine, après décompression, est appliquée par BodyReader).

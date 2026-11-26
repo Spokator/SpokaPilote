@@ -21,6 +21,12 @@ public sealed class ServerOptions
     public int JobRunningTimeoutHours { get; init; } = 6;
     /// <summary>Tentatives d'authentification refusées tolérées par adresse IP et par minute (0 = pas de limite).</summary>
     public int AuthFailuresPerMinute { get; init; } = 10;
+    /// <summary>Session de la console fermée après ce nombre d'heures d'inactivité (expiration glissante).</summary>
+    public int SessionIdleHours { get; init; } = 8;
+    /// <summary>Journal d'audit : nombre maximal d'entrées conservées (les plus anciennes sont supprimées).</summary>
+    public int AuditMaxEntries { get; init; } = 5000;
+    /// <summary>Journal d'audit : ancienneté maximale des entrées, en jours.</summary>
+    public int AuditRetentionDays { get; init; } = 180;
 
     public string DatabasePath => Path.Combine(DataDirectory, "spokapilote.db");
 
@@ -39,6 +45,9 @@ public sealed class ServerOptions
             JobExpiryDays = Int(config, "SPOKAPILOTE_JOB_EXPIRY_DAYS", 7, 1, 365),
             JobRunningTimeoutHours = Int(config, "SPOKAPILOTE_JOB_TIMEOUT_HOURS", 6, 1, 168),
             AuthFailuresPerMinute = Int(config, "SPOKAPILOTE_AUTH_FAILURES_PER_MINUTE", 10, 0, 10000),
+            SessionIdleHours = Int(config, "SPOKAPILOTE_SESSION_HOURS", 8, 1, 168),
+            AuditMaxEntries = Int(config, "SPOKAPILOTE_AUDIT_MAX_ENTRIES", 5000, 100, 1_000_000),
+            AuditRetentionDays = Int(config, "SPOKAPILOTE_AUDIT_DAYS", 180, 1, 3650),
         };
     }
 }

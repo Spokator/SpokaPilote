@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Net;
 using System.Text;
+using SpokaPilote.Server.Audit;
 using SpokaPilote.Server.Storage;
 
 namespace SpokaPilote.Server.Alerts;
@@ -87,9 +88,9 @@ public sealed class AlertDispatcher(AlertQueue queue, AlertSender sender, AlertS
 
 /// <summary>
 /// Tâches périodiques du serveur (toutes les minutes) : expiration des tâches à distance, alertes « poste non vu »,
-/// résumé quotidien et nettoyage.
+/// résumé quotidien et nettoyage (tâches terminées, sessions expirées, rétention du journal d'audit).
 /// </summary>
-public sealed class FleetMonitor(ServerStore store, ServerOptions options, AlertService alerts, AlertSettingsService settings,
+public sealed class FleetMonitor(ServerStore store, ServerOptions options, AlertService alerts, AlertSettingsService settings, AuditService audit,
     TimeProvider clock, ILogger<FleetMonitor> log) : BackgroundService
 {
     private DateTimeOffset _lastHousekeeping = DateTimeOffset.MinValue;
@@ -126,6 +127,8 @@ public sealed class FleetMonitor(ServerStore store, ServerOptions options, Alert
             if (stale > 0) log.LogInformation("{Count} poste(s) non vu(s) signalé(s).", stale);
             store.PurgeFinishedJobs(now);
             store.PurgeAlertLog(now);
+            store.PurgeSessions(now);
+            audit.Purge(now);
         }
 
         var s = settings.Current();

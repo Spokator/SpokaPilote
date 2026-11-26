@@ -3,14 +3,22 @@ using System.Text;
 
 namespace SpokaPilote.Server.Security;
 
+/// <summary>
+/// Droits d'un appelant. Un endpoint exige l'un des droits demandés. Jeton administrateur et rôle Administrateur :
+/// Admin | Operate | View ; Technicien : Operate | View ; Lecture seule : View ; jeton d'enrôlement : Agent.
+/// </summary>
 [Flags]
 public enum Access
 {
     None = 0,
     /// <summary>Poste enrôlé (jeton d'enrôlement SPOKAPILOTE_AGENT_TOKEN).</summary>
     Agent = 1,
-    /// <summary>Console et API d'administration (jeton SPOKAPILOTE_ADMIN_TOKEN).</summary>
+    /// <summary>Administration complète : comptes, paramètres, alertes, jetons, politique (jeton SPOKAPILOTE_ADMIN_TOKEN ou rôle Administrateur).</summary>
     Admin = 2,
+    /// <summary>Actions à distance, planifications, groupes (rôle Technicien et au-delà).</summary>
+    Operate = 4,
+    /// <summary>Consultation du parc (tous les rôles).</summary>
+    View = 8,
 }
 
 /// <summary>

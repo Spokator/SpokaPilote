@@ -15,16 +15,31 @@
 
   <!-- Connexion -->
   <section id="login" class="login" hidden>
-    <form id="login-form" class="login-card" autocomplete="off">
+    <form id="login-form" class="login-card" novalidate>
       <div class="brand brand-lg"><span class="brand-mark" aria-hidden="true"></span><span>SpokaPilote <b>Server</b></span></div>
-      <p class="muted">Console centrale du parc : rapports des postes, matériel sans pilote, politique de pilotes.</p>
-      <label for="login-token">Jeton administrateur</label>
-      <input id="login-token" name="token" type="password" spellcheck="false" autocapitalize="off" required
-             placeholder="Collez le jeton administrateur">
+      <p class="muted">Console centrale du parc : rapports des postes, matériel sans pilote, actions à distance.</p>
+      <fieldset class="segmented">
+        <legend class="visually-hidden">Mode de connexion</legend>
+        <label><input type="radio" name="mode" value="account" checked> Compte</label>
+        <label><input type="radio" name="mode" value="token"> Jeton administrateur</label>
+      </fieldset>
+      <div id="login-account" class="login-fields">
+        <label for="login-user">Identifiant</label>
+        <input id="login-user" name="username" type="text" autocomplete="username" spellcheck="false" autocapitalize="off">
+        <label for="login-password">Mot de passe</label>
+        <input id="login-password" name="password" type="password" autocomplete="current-password">
+      </div>
+      <div id="login-token-fields" class="login-fields" hidden>
+        <label for="login-token">Jeton administrateur</label>
+        <input id="login-token" name="token" type="password" spellcheck="false" autocapitalize="off" autocomplete="off"
+               placeholder="Collez le jeton administrateur">
+      </div>
       <p id="login-error" class="form-error" role="alert" hidden></p>
       <button type="submit" class="btn btn-primary btn-block">Se connecter</button>
-      <p class="hint">Le jeton est défini par la variable <code>SPOKAPILOTE_ADMIN_TOKEN</code> ou généré au premier démarrage
-        (journaux du conteneur et fichier <code>/data/admin-token.txt</code>). Il reste dans cet onglet uniquement.</p>
+      <p id="login-hint-account" class="hint">Première connexion : choisissez « Jeton administrateur » pour créer le premier compte
+        administrateur, puis les comptes de l'équipe.</p>
+      <p id="login-hint-token" class="hint" hidden>Le jeton est défini par la variable <code>SPOKAPILOTE_ADMIN_TOKEN</code> ou généré au
+        premier démarrage (journaux du conteneur et fichier <code>/data/admin-token.txt</code>). Il reste dans cet onglet uniquement.</p>
     </form>
   </section>
 
@@ -38,18 +53,24 @@
       <div class="topbar-right">
         <span id="refresh-info" class="muted small"></span>
         <button id="refresh" class="btn btn-ghost" type="button" title="Actualiser">Actualiser</button>
+        <a id="user-chip" class="user-chip" href="#/compte" title="Mon compte"></a>
         <button id="logout" class="btn btn-ghost" type="button">Déconnexion</button>
       </div>
     </header>
     <nav id="nav" class="nav" aria-label="Navigation principale">
       <a href="#/" data-route="overview">Vue d'ensemble</a>
       <a href="#/postes" data-route="machines">Postes</a>
+      <a href="#/groupes" data-route="groups">Groupes</a>
       <a href="#/taches" data-route="jobs">Tâches</a>
+      <a href="#/planifications" data-route="schedules">Planifications</a>
       <a href="#/materiel" data-route="missing">Matériel sans pilote</a>
       <a href="#/politique" data-route="policy">Politique</a>
       <a href="#/imprimantes" data-route="printers">Profil d'imprimantes</a>
-      <a href="#/enrolement" data-route="enroll">Enrôlement</a>
-      <a href="#/parametres" data-route="settings">Paramètres</a>
+      <div class="nav-section" data-perm="admin">Administration</div>
+      <a href="#/enrolement" data-route="enroll" data-perm="admin">Enrôlement</a>
+      <a href="#/parametres" data-route="settings" data-perm="admin">Paramètres</a>
+      <a href="#/comptes" data-route="accounts" data-perm="admin">Comptes</a>
+      <a href="#/journal" data-route="audit" data-perm="admin">Journal d'audit</a>
       <div class="nav-foot muted small" id="server-version"></div>
     </nav>
     <main id="view" class="view" tabindex="-1"></main>
@@ -60,6 +81,7 @@
     <form id="modal-form" method="dialog" class="modal-card">
       <h2 id="modal-title"></h2>
       <div id="modal-body" class="modal-body"></div>
+      <p id="modal-error" class="form-error" role="alert" hidden></p>
       <div class="modal-actions">
         <button id="modal-cancel" class="btn" type="button" value="cancel">Annuler</button>
         <button id="modal-ok" class="btn btn-primary" type="submit" value="ok">Confirmer</button>

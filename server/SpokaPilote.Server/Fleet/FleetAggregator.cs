@@ -4,8 +4,9 @@ namespace SpokaPilote.Server.Fleet;
 /// <param name="Id">Clé interne du poste (stable même si le poste change de nom).</param>
 /// <param name="MachineId">Identifiant Windows du poste (MachineGuid), null pour un poste qui n'a envoyé que des rapports antérieurs à la 3.0.</param>
 /// <param name="AgentSeen">Dernière interrogation de la file de tâches par l'agent du poste (null = agent jamais vu).</param>
+/// <param name="LastIp">Adresse IP d'envoi du dernier rapport, vue par la console (règles de groupe « sous-réseau »).</param>
 public sealed record StoredMachine(string Name, DateTimeOffset LastSeen, int ReportCount, MachineReport Report,
-    long Id = 0, string? MachineId = null, DateTimeOffset? AgentSeen = null);
+    long Id = 0, string? MachineId = null, DateTimeOffset? AgentSeen = null, string? LastIp = null);
 
 /// <summary>Ligne de la liste des postes (indicateurs uniquement, sans le détail des périphériques).</summary>
 public sealed class MachineRow
@@ -46,6 +47,10 @@ public sealed class MachineRow
     public DateTimeOffset? AgentSeen { get; init; }
     /// <summary>Tâches à distance en attente ou en cours pour ce poste (renseigné par l'API).</summary>
     public int ActiveJobs { get; set; }
+    /// <summary>Adresse IP d'envoi du dernier rapport (vue par la console).</summary>
+    public string? LastIp { get; init; }
+    /// <summary>Groupes dont le poste fait partie (identifiants ; renseigné par l'API).</summary>
+    public List<long> Groups { get; set; } = new();
 }
 
 /// <summary>Matériel sans pilote trouvé, agrégé par ID matériel sur tout le parc : la liste de ce qu'il reste à trouver.</summary>
@@ -140,6 +145,7 @@ public static class FleetAggregator
             HealthWarnings = r.Health?.Warnings ?? 0,
             DangerousDriver = r.Health?.HasDangerousDriver ?? false,
             AgentSeen = m.AgentSeen,
+            LastIp = m.LastIp,
         };
     }
 

@@ -1,22 +1,30 @@
 /* SpokaPilote Server — console web (JavaScript sans framework ni dépendance).
- * Le jeton administrateur est conservé dans sessionStorage : il disparaît à la fermeture de l'onglet.
+ * Connexion par compte nominatif (session par cookie HttpOnly, jeton anti-CSRF dans l'en-tête X-SpokaPilote-CSRF) ou par
+ * jeton administrateur (conservé dans sessionStorage : il disparaît à la fermeture de l'onglet).
  * Aucun HTML n'est construit sans échappement (fonction esc) ; aucun script ni style en ligne (CSP stricte). */
 'use strict';
 
 (() => {
   const TOKEN_KEY = 'spokapilote.adminToken';
+  const CSRF_HEADER = 'X-SpokaPilote-CSRF';
   const REFRESH_MS = 30000;
 
   const state = {
-    token: null,
+    // Appelant : { mode: 'session' | 'token', token?, csrf?, label, role, roleLabel, permissions: { view, operate, admin }, accountCount }
+    auth: null,
     version: '',
     page: null,          // page affichée : { refresh?, canLeave? }
     timer: null,
-    machines: { search: '', status: 'all', sort: 'status', dir: 'asc', selected: new Set() },
+    overview: { group: '' },
+    machines: { search: '', status: 'all', group: '', sort: 'status', dir: 'asc', selected: new Set() },
     missing: { search: '' },
     jobs: { state: 'all', search: '' },
+    audit: { category: '', search: '' },
     jobTypes: null,
+    groups: null,        // liste des groupes (sélecteurs), rechargée après chaque modification
   };
+  /** Droit de l'appelant : 'view' (tous), 'operate' (Technicien, Administrateur), 'admin'. */
+  const can = (perm) => !!state.auth?.permissions?.[perm];
 
   // ------------------------------------------------------------------ utilitaires
 
@@ -46,18 +54,21 @@
   }
 
   /** Appel de l'API (chemin relatif : la console fonctionne aussi publiée sous un sous-dossier du reverse proxy). */
-  async function api(path, { method = 'GET', body, raw = false } = {}) {
-    const headers = { Authorization: `Bearer ${state.token}` };
+  async function api(path, { method = 'GET', body, raw = false, blob = false } = {}) {
+    const headers = {};
+    if (state.auth?.mode === 'token') headers.Authorization = `Bearer ${state.auth.token}`;
+    else if (state.auth?.csrf && method !== 'GET') headers[CSRF_HEADER] = state.auth.csrf;
     if (body !== undefined) headers['Content-Type'] = 'application/json; charset=utf-8';
     let res;
     try {
-      res = await fetch(`api${path}`, { method, headers, body, cache: 'no-store' });
+      res = await fetch(`api${path}`, { method, headers, body, cache: 'no-store', credentials: 'same-origin' });
     } catch {
       throw new HttpError(0, 'Console injoignable : vérifiez la connexion réseau.');
     }
     if (res.status === 401) {
-      logout('Session expirée ou jeton refusé : reconnectez-vous.');
-      throw new HttpError(401, 'Jeton refusé.');
+      logout(state.auth?.mode === 'session' ? 'Session expirée : reconnectez-vous.' : 'Session expirée ou jeton refusé : reconnectez-vous.',
+        { remote: false });
+      throw new HttpError(401, 'Non authentifié.');
     }
     if (!res.ok) {
       let message = `Erreur ${res.status}`;
@@ -65,8 +76,12 @@
       throw new HttpError(res.status, message);
     }
     if (raw) return { status: res.status, text: res.status === 204 ? null : await res.text(), lastModified: res.headers.get('Last-Modified'), response: res };
+    if (blob) return res.blob();
     return res.status === 204 ? null : res.json();
   }
+
+  /** Message d'erreur d'une action (rien pour 401 : la page de connexion est déjà affichée). */
+  const fail = (e) => { if (e.status !== 401) toast(e.message, true); };
 
   let toastTimer;
   function toast(message, bad = false) {
@@ -105,6 +120,13 @@
     a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
+
+  /** Groupes de postes (liste mise en cache pour les sélecteurs ; force = recharger). */
+  async function groupsList(force = false) {
+    if (!state.groups || force) state.groups = await api('/groups');
+    return state.groups;
+  }
+  const groupLink = (g) => `<a href="#/groupes/${enc(g.id)}">${esc(g.name)}</a>`;
 
   const badge = (text, kind = '') => `<span class="badge${kind ? ` badge-${kind}` : ''}">${esc(text)}</span>`;
   const num = (n, kind) => `<td class="num${n > 0 && kind ? ` ${kind}` : ''}">${esc(n)}</td>`;
@@ -176,10 +198,20 @@
    * Ouvre la fenêtre modale. body : HTML déjà échappé. Renvoie une promesse résolue avec le formulaire de la fenêtre
    * (lecture des champs) si l'utilisateur confirme, ou null s'il annule.
    */
-  function openModal({ title, body, confirmLabel = 'Confirmer', danger = false, cancelLabel = 'Annuler', wide = false }) {
+  /**
+   * onOpen(body) : branchement des champs après affichage. onConfirm(form) : enregistrement avant fermeture ; renvoie un
+   * message d'erreur (affiché dans la fenêtre, qui reste ouverte) ou rien en cas de succès.
+   */
+  function openModal({ title, body, confirmLabel = 'Confirmer', danger = false, cancelLabel = 'Annuler', wide = false, onOpen, onConfirm }) {
     const dialog = $('#modal');
+    const error = $('#modal-error');
+    error.hidden = true;
+    error.textContent = '';
     $('#modal-title').textContent = title;
-    $('#modal-body').innerHTML = body;
+    const previous = $('#modal-body');
+    const fresh = previous.cloneNode(false);
+    previous.replaceWith(fresh);
+    fresh.innerHTML = body;
     const ok = $('#modal-ok');
     ok.textContent = confirmLabel;
     ok.hidden = confirmLabel === null;
@@ -195,13 +227,33 @@
         if (dialog.open) dialog.close();
         resolve(value);
       };
-      const onSubmit = (e) => { e.preventDefault(); done(form); };
+      let busy = false;
+      const onSubmit = async (e) => {
+        e.preventDefault();
+        if (busy) return;
+        if (onConfirm) {
+          busy = true;
+          ok.disabled = true;
+          let message = null;
+          try {
+            message = await onConfirm(form);
+          } catch (err) {
+            if (err.status === 401) { busy = false; ok.disabled = false; done(null); return; }
+            message = err.message;
+          }
+          busy = false;
+          ok.disabled = false;
+          if (message) { error.textContent = message; error.hidden = false; return; }
+        }
+        done(form);
+      };
       const onCancel = (e) => { e.preventDefault(); done(null); };
       form.addEventListener('submit', onSubmit);
       $('#modal-cancel').addEventListener('click', onCancel);
       dialog.addEventListener('cancel', onCancel);
       dialog.showModal();
-      (dialog.querySelector('input:not([type=checkbox]), select') || ok).focus();
+      if (onOpen) onOpen($('#modal-body'));
+      (dialog.querySelector('#modal-body input:not([type=checkbox]):not([type=radio]):not([disabled]), #modal-body select, #modal-body textarea') || ok).focus();
     });
   }
 
@@ -213,7 +265,9 @@
     const count = target.machines ? target.machines.length : target.count;
     const who = target.machines
       ? (count === 1 ? `le poste <b>${esc(target.machines[0])}</b>` : `<b>${esc(count)} postes</b> sélectionnés`)
+      : target.group ? `tous les postes du groupe <b>${esc(target.group.name)}</b> (${esc(count)} actuellement)`
       : `<b>tous les postes à traiter</b> (${esc(count)} actuellement)`;
+    const tokenMode = state.auth.mode === 'token';
     const form = await openModal({
       title: type.label,
       confirmLabel: count > 1 || !target.machines ? `Lancer sur ${count} postes` : 'Lancer la tâche',
@@ -225,20 +279,22 @@
           SpokaPilote du poste (compte SYSTEM) à son prochain passage, sans intervention de l'utilisateur.</div>` : ''}
         ${type.supportsDryRun ? `<label class="check"><input type="checkbox" name="dryRun"> Simulation : montrer ce qui serait fait,
           sans rien modifier</label>` : ''}
-        <label class="field">Demandée par <span class="muted">(facultatif, visible dans l'historique)</span>
-          <input type="text" name="requestedBy" maxlength="60" value="${esc(getRequester())}" placeholder="Votre nom"></label>
+        ${tokenMode ? `<label class="field">Demandée par <span class="muted">(facultatif, visible dans l'historique)</span>
+          <input type="text" name="requestedBy" maxlength="60" value="${esc(getRequester())}" placeholder="Votre nom"></label>`
+          : `<p class="small">Demandée par <b>${esc(state.auth.label)}</b> (inscrit dans l'historique des tâches et le journal d'audit).</p>`}
         <p class="hint">L'agent interroge la console toutes les 15 minutes par défaut. Une tâche non récupérée expire au bout de 7 jours.</p>`,
     });
     if (!form) return null;
-    const requestedBy = form.elements.requestedBy.value.trim();
-    setRequester(requestedBy);
+    const requestedBy = form.elements.requestedBy ? form.elements.requestedBy.value.trim() : '';
+    if (form.elements.requestedBy) setRequester(requestedBy);
     try {
       const res = await api('/jobs', {
         method: 'POST',
         body: JSON.stringify({
           type: type.id,
           machines: target.machines,
-          target: target.machines ? 'selection' : target.target,
+          target: target.machines ? 'selection' : target.group ? 'group' : target.target,
+          group: target.group ? target.group.id : undefined,
           dryRun: !!(form.elements.dryRun && form.elements.dryRun.checked),
           requestedBy,
         }),
@@ -263,6 +319,7 @@
       ['État', jobStateBadge(j.state)], ['Demandée par', esc(j.createdBy)], ['Créée le', esc(fmtDate(j.createdAt))],
       ['Démarrée le', esc(fmtDate(j.startedAt))], ['Terminée le', esc(fmtDate(j.finishedAt))],
       ['Code de sortie', esc(j.exitCode ?? '—')],
+      ...(j.notAfter ? [['Fenêtre de maintenance jusqu\'à', esc(fmtDate(j.notAfter))]] : []),
       ['Rapport produit', j.reportId ? `<a href="#/postes/${enc(j.machine)}/rapport/${enc(j.reportId)}">Voir le rapport</a>` : '—'],
     ];
     await openModal({
@@ -288,13 +345,13 @@
           <td class="num">${esc(j.id)}</td>
           <td class="nowrap">${esc(fmtDate(j.createdAt))}<div class="cell-sub">${esc(fmtAgo(j.createdAt))}</div></td>
           ${showMachine ? `<td class="nowrap cell-title">${machineLink(j.machine)}</td>` : ''}
-          <td>${esc(j.typeLabel)}${j.dryRun ? ` ${badge('simulation', 'accent')}` : ''}</td>
+          <td>${esc(j.typeLabel)}${j.dryRun ? ` ${badge('simulation', 'accent')}` : ''}${j.scheduleId ? ` ${badge('planifiée')}` : ''}</td>
           <td>${jobStateBadge(j.state)}${j.finishedAt ? `<div class="cell-sub">${esc(fmtAgo(j.finishedAt))}</div>`
             : j.startedAt ? `<div class="cell-sub">depuis ${esc(fmtAgo(j.startedAt).replace('il y a ', ''))}</div>` : ''}</td>
           <td class="small">${esc(j.createdBy)}</td>
           <td class="wrap small">${esc(j.message || '')}${j.reportId ? ` <a href="#/postes/${enc(j.machine)}/rapport/${enc(j.reportId)}">rapport</a>` : ''}</td>
           <td class="nowrap"><button class="btn btn-sm btn-ghost" type="button" data-job-detail="${esc(j.id)}">Détail</button>
-            ${j.state === 'pending' ? `<button class="btn btn-sm btn-danger" type="button" data-job-cancel="${esc(j.id)}">Annuler</button>` : ''}</td>
+            ${j.state === 'pending' && can('operate') ? `<button class="btn btn-sm btn-danger" type="button" data-job-cancel="${esc(j.id)}">Annuler</button>` : ''}</td>
         </tr>`).join('')}</tbody></table></div>`;
   }
 
@@ -323,6 +380,17 @@
 
   // ------------------------------------------------------------------ connexion
 
+  const loginMode = () => ($('#login-form').elements.mode.value === 'token' ? 'token' : 'account');
+
+  function setLoginMode(mode, focus = true) {
+    const token = mode === 'token';
+    $('#login-account').hidden = token;
+    $('#login-token-fields').hidden = !token;
+    $('#login-hint-account').hidden = token;
+    $('#login-hint-token').hidden = !token;
+    if (focus) (token ? $('#login-token') : ($('#login-user').value ? $('#login-password') : $('#login-user'))).focus();
+  }
+
   function showLogin(message) {
     stopTimer();
     $('#app').hidden = true;
@@ -331,40 +399,77 @@
     err.textContent = message || '';
     err.hidden = !message;
     $('#login-token').value = '';
-    $('#login-token').focus();
+    $('#login-password').value = '';
+    setLoginMode(loginMode());
   }
 
-  function logout(message) {
-    state.token = null;
-    try { sessionStorage.removeItem(TOKEN_KEY); } catch { /* stockage indisponible */ }
+  /** Déconnexion : ferme la session côté serveur (remote) puis affiche la page de connexion. */
+  async function logout(message, { remote = true } = {}) {
+    const auth = state.auth;
+    state.auth = null;
+    state.groups = null;
     state.page = null;
+    try { sessionStorage.removeItem(TOKEN_KEY); } catch { /* stockage indisponible */ }
+    if (remote && auth?.mode === 'session') {
+      try {
+        await fetch('api/session', { method: 'DELETE', headers: { [CSRF_HEADER]: auth.csrf }, credentials: 'same-origin', cache: 'no-store' });
+      } catch { /* session expirée côté serveur de toute façon */ }
+    }
     showLogin(message);
   }
 
-  /** Vérifie le jeton auprès du serveur ; renvoie un message d'erreur ou null. */
-  async function verifyToken(token) {
-    let res;
-    try {
-      res = await fetch('api/whoami', { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' });
-    } catch {
-      return 'Console injoignable.';
-    }
-    if (res.status === 401) return 'Jeton refusé.';
-    if (!res.ok) return `Erreur ${res.status}.`;
-    const who = await res.json();
-    if (who.access !== 'admin') return 'Ce jeton est celui d\'enrôlement des postes : utilisez le jeton administrateur.';
-    state.version = who.version;
-    return null;
+  async function errorText(res) {
+    try { return (await res.json()).error || `Erreur ${res.status}.`; } catch { return `Erreur ${res.status}.`; }
   }
 
-  async function login(token, target) {
-    const error = await verifyToken(token);
-    if (error) { showLogin(error); return; }
-    state.token = token;
+  /** Appelant courant (GET api/session) avec un jeton ou le cookie de session : { info } ou { error }. */
+  async function fetchSession(headers = {}) {
+    let res;
+    try {
+      res = await fetch('api/session', { headers, cache: 'no-store', credentials: 'same-origin' });
+    } catch {
+      return { error: 'Console injoignable.' };
+    }
+    if (res.status === 401) return { error: headers.Authorization ? 'Jeton refusé.' : null };
+    if (res.status === 403) return { error: 'Ce jeton est celui d\'enrôlement des postes : utilisez le jeton administrateur.' };
+    if (!res.ok) return { error: await errorText(res) };
+    return { info: await res.json() };
+  }
+
+  async function loginWithToken(token, target) {
+    const { info, error } = await fetchSession({ Authorization: `Bearer ${token}` });
+    if (!info) { showLogin(error); return; }
     try { sessionStorage.setItem(TOKEN_KEY, token); } catch { /* onglet sans stockage : session en mémoire */ }
+    enterApp({ ...info, token }, target);
+  }
+
+  async function loginWithPassword(login, password) {
+    let res;
+    try {
+      res = await fetch('api/session', {
+        method: 'POST', cache: 'no-store', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json; charset=utf-8', [CSRF_HEADER]: '1' },
+        body: JSON.stringify({ login, password }),
+      });
+    } catch {
+      showLogin('Console injoignable.');
+      return;
+    }
+    if (!res.ok) { showLogin(await errorText(res)); return; }
+    enterApp(await res.json());
+  }
+
+  function enterApp(info, target) {
+    state.auth = info;
+    state.version = info.version;
     $('#login').hidden = true;
     $('#app').hidden = false;
     $('#server-version').textContent = `SpokaPilote Server ${state.version}`;
+    const chip = $('#user-chip');
+    chip.textContent = `${info.label} · ${info.roleLabel}`;
+    if (info.mode === 'session') { chip.setAttribute('href', '#/compte'); chip.title = 'Mon compte'; }
+    else { chip.removeAttribute('href'); chip.title = 'Connecté avec le jeton administrateur'; }
+    $$('[data-perm]').forEach((el) => { el.hidden = !can(el.dataset.perm); });
     if (target !== undefined) location.hash = `#${target}`;
     route();
   }
@@ -384,14 +489,20 @@
     { re: /^\/materiel$/, nav: 'missing', page: missingPage },
     { re: /^\/politique$/, nav: 'policy', page: () => documentPage(DOCUMENTS.policy) },
     { re: /^\/imprimantes$/, nav: 'printers', page: () => documentPage(DOCUMENTS.printers) },
-    { re: /^\/enrolement$/, nav: 'enroll', page: enrollPage },
+    { re: /^\/enrolement$/, nav: 'enroll', page: enrollPage, perm: 'admin' },
     { re: /^\/taches$/, nav: 'jobs', page: jobsPage },
-    { re: /^\/parametres$/, nav: 'settings', page: settingsPage },
+    { re: /^\/parametres$/, nav: 'settings', page: settingsPage, perm: 'admin' },
+    { re: /^\/groupes$/, nav: 'groups', page: groupsPage },
+    { re: /^\/groupes\/(\d+)$/, nav: 'groups', page: groupPage },
+    { re: /^\/planifications$/, nav: 'schedules', page: schedulesPage },
+    { re: /^\/comptes$/, nav: 'accounts', page: accountsPage, perm: 'admin' },
+    { re: /^\/journal$/, nav: 'audit', page: auditPage, perm: 'admin' },
+    { re: /^\/compte$/, nav: 'me', page: mePage },
   ];
 
   let currentHash = location.hash;
   async function route() {
-    if (!state.token) return;
+    if (!state.auth) return;
     const { path, query } = parseHash();
     const match = routes.map((r) => ({ r, m: path.match(r.re) })).find((x) => x.m) || { r: routes[0], m: [] };
     $$('#nav a').forEach((a) => a.classList.toggle('active', a.dataset.route === match.r.nav));
@@ -402,6 +513,13 @@
     const view = $('#view');
     view.innerHTML = '<div class="loading">Chargement…</div>';
     currentHash = location.hash;
+    if (match.r.perm && !can(match.r.perm)) {
+      state.page = {};
+      view.innerHTML = `<div class="notice notice-warn">Cette page est réservée aux administrateurs (votre rôle : ${esc(state.auth.roleLabel)}).</div>
+        <p><a href="#/">Retour à la vue d'ensemble</a></p>`;
+      view.focus({ preventScroll: true });
+      return;
+    }
     try {
       state.page = await match.r.page(view, match.m.slice(1).map((x) => (x === undefined ? x : decodeURIComponent(x))), query) || {};
       if (state.page.refresh) startTimer();
@@ -445,35 +563,59 @@
 
   // ------------------------------------------------------------------ vue d'ensemble
 
-  async function overviewPage(view) {
+  async function overviewPage(view, _params, query) {
+    const s = state.overview;
+    if (query.has('groupe')) s.group = query.get('groupe');
+    const groups = await groupsList(true);
+    if (s.group && !groups.some((g) => String(g.id) === s.group)) s.group = '';
+    /** Lien vers la liste des postes, avec le groupe affiché. */
+    const postes = (params = '') => `#/postes?${[params, s.group ? `groupe=${enc(s.group)}` : 'groupe='].filter(Boolean).join('&')}`;
+
     async function render() {
-      const f = await api('/fleet');
+      const f = await api(`/fleet${s.group ? `?group=${enc(s.group)}` : ''}`);
+      const group = groups.find((g) => String(g.id) === s.group);
+      const bootstrap = can('admin') && state.auth.accountCount === 0
+        ? `<div class="notice notice-warn">Aucun compte nominatif n'existe encore. <a href="#/comptes">Créez le premier compte Administrateur</a> :
+            chaque membre de l'équipe se connectera ensuite avec son propre compte, et le journal d'audit indiquera qui a fait quoi.
+            Le jeton administrateur reste utilisable pour les scripts et en secours.</div>` : '';
+      const filter = groups.length === 0 ? '' : `
+        <div class="actions"><label class="inline" for="o-group">Groupe
+          <select id="o-group">
+            <option value="">Tout le parc</option>
+            ${groups.map((g) => `<option value="${esc(g.id)}"${String(g.id) === s.group ? ' selected' : ''}>${esc(g.name)} (${esc(g.memberCount)})</option>`).join('')}
+          </select></label></div>`;
+      const head = (sub) => `
+        <div class="page-head">
+          <div><h1>Vue d'ensemble${group ? ` — ${esc(group.name)}` : ''}</h1>${sub}</div>
+          ${filter}
+        </div>`;
+      const bind = () => $('#o-group')?.addEventListener('change', async (e) => { s.group = e.target.value; await render(); });
       if (f.machineCount === 0) {
-        view.innerHTML = `
-          <div class="page-head"><div><h1>Vue d'ensemble</h1></div></div>
-          <div class="notice">Aucun poste n'a encore envoyé de rapport. Consultez la page
-            <a href="#/enrolement">Enrôlement</a> pour connecter les postes à cette console.</div>`;
+        view.innerHTML = `${bootstrap}${head('')}
+          <div class="notice">${group ? `Le groupe ${groupLink(group)} ne contient aucun poste pour l'instant.`
+            : 'Aucun poste n\'a encore envoyé de rapport. Consultez la page <a href="#/enrolement">Enrôlement</a> pour connecter les postes à cette console.'}</div>`;
+        bind();
         return;
       }
       const missingKinds = f.missingDrivers.length;
       const todo = f.toProcessMachines.slice(0, 12);
       view.innerHTML = `
-        <div class="page-head">
-          <div><h1>Vue d'ensemble</h1><p class="muted">${esc(plural(f.machineCount, 'poste', 'postes'))} ·
-            ${esc(plural(f.modelCount, 'modèle', 'modèles'))} · synthèse du ${esc(fmtDate(f.generatedAt))}</p></div>
-        </div>
+        ${bootstrap}
+        ${head(`<p class="muted">${esc(plural(f.machineCount, 'poste', 'postes'))} ·
+            ${esc(plural(f.modelCount, 'modèle', 'modèles'))} · synthèse du ${esc(fmtDate(f.generatedAt))}
+            ${group ? ` · <a href="#/groupes/${enc(group.id)}">fiche du groupe</a>` : ''}</p>`)}
         <div class="kpis">
-          ${kpi('Postes', f.machineCount, { href: '#/postes' })}
-          ${kpi('Sains', f.healthy, { kind: 'ok', href: '#/postes?statut=healthy' })}
-          ${kpi('À traiter', f.toProcess, { kind: f.toProcess ? 'warn' : 'ok', href: '#/postes?statut=todo' })}
-          ${kpi(`Non vus depuis ${f.staleDays} j`, f.stale, { kind: f.stale ? 'bad' : '', href: '#/postes?statut=stale' })}
-          ${kpi('Matériel sans pilote', missingKinds, { kind: missingKinds ? 'bad' : 'ok', href: '#/materiel', sub: `${plural(f.unresolved, 'périphérique', 'périphériques')} en tout` })}
-          ${kpi('Pannes matérielles', f.hardwareFaults, { kind: f.hardwareFaults ? 'warn' : '', href: '#/postes?statut=hardware', sub: 'aucun pilote ne peut les corriger' })}
+          ${kpi('Postes', f.machineCount, { href: postes() })}
+          ${kpi('Sains', f.healthy, { kind: 'ok', href: postes('statut=healthy') })}
+          ${kpi('À traiter', f.toProcess, { kind: f.toProcess ? 'warn' : 'ok', href: postes('statut=todo') })}
+          ${kpi(`Non vus depuis ${f.staleDays} j`, f.stale, { kind: f.stale ? 'bad' : '', href: postes('statut=stale') })}
+          ${kpi('Matériel sans pilote', missingKinds, { kind: missingKinds ? 'bad' : 'ok', href: group ? '' : '#/materiel', sub: `${plural(f.unresolved, 'périphérique', 'périphériques')} en tout` })}
+          ${kpi('Pannes matérielles', f.hardwareFaults, { kind: f.hardwareFaults ? 'warn' : '', href: postes('statut=hardware'), sub: 'aucun pilote ne peut les corriger' })}
           ${kpi('Pilotes proposés', f.proposed, { sub: f.blocked ? `${f.blocked} bloqué(s) par la politique` : 'aucun bloqué' })}
-          ${kpi('Échecs d\'installation', f.failed, { kind: f.failed ? 'bad' : '', href: '#/postes?statut=failed', sub: `${f.installed} pilote(s) installé(s)` })}
+          ${kpi('Échecs d\'installation', f.failed, { kind: f.failed ? 'bad' : '', href: postes('statut=failed'), sub: `${f.installed} pilote(s) installé(s)` })}
           ${f.averageHealth != null ? kpi('Santé moyenne', `${String(f.averageHealth).replace('.', ',')}/100`,
-            { kind: scoreKind(f.averageHealth), href: '#/postes?tri=health', sub: `${plural(f.healthMachines, 'poste évalué', 'postes évalués')}` }) : ''}
-          ${f.dangerousDrivers > 0 ? kpi('Pilotes dangereux', f.dangerousDrivers, { kind: 'bad', href: '#/postes?statut=dangerous', sub: 'postes concernés' }) : ''}
+            { kind: scoreKind(f.averageHealth), href: postes('tri=health'), sub: `${plural(f.healthMachines, 'poste évalué', 'postes évalués')}` }) : ''}
+          ${f.dangerousDrivers > 0 ? kpi('Pilotes dangereux', f.dangerousDrivers, { kind: 'bad', href: postes('statut=dangerous'), sub: 'postes concernés' }) : ''}
           ${kpi('Tâches à distance', f.pendingJobs + f.runningJobs, { href: '#/taches?etat=active',
             sub: `${f.pendingJobs} en attente · ${f.runningJobs} en cours` })}
           ${f.failedJobs24h > 0 ? kpi('Tâches échouées (24 h)', f.failedJobs24h, { kind: 'bad', href: '#/taches?etat=failed', sub: 'voir le détail et le journal' }) : ''}
@@ -481,7 +623,7 @@
 
         <section class="section">
           <div class="section-head"><h2>Postes à traiter</h2>
-            ${f.toProcess > todo.length ? `<a href="#/postes?statut=todo">Voir les ${esc(f.toProcess)} postes</a>` : ''}</div>
+            ${f.toProcess > todo.length ? `<a href="${postes('statut=todo')}">Voir les ${esc(f.toProcess)} postes</a>` : ''}</div>
           ${todo.length === 0 ? '<div class="card empty">Tous les postes sont sains.</div>' : `
           <div class="table-wrap"><table>
             <thead><tr><th>Poste</th><th>Modèle</th><th class="num">Pilotes en erreur</th><th class="num">Sans solution</th>
@@ -526,6 +668,7 @@
               <td class="wrap">${esc(m.model)}</td><td>${esc(fmtDate(m.lastSeen))} <span class="muted">(${esc(fmtAgo(m.lastSeen))})</span></td></tr>`).join('')}</tbody>
           </table></div>
         </section>`}`;
+      bind();
     }
     await render();
     return { refresh: render };
@@ -562,40 +705,73 @@
 
   async function machinesPage(view, _params, query) {
     const s = state.machines;
+    const operate = can('operate');
     if (query.get('statut') && STATUS_FILTERS[query.get('statut')]) s.status = query.get('statut');
     if (query.get('tri') && SORTS[query.get('tri')]) { s.sort = query.get('tri'); s.dir = 'asc'; }
+    // Lien depuis la vue d'ensemble ou un groupe : le filtre de groupe suit le lien (vide = tous les groupes).
+    if (query.has('groupe')) s.group = query.get('groupe');
     let rows = await api('/machines');
     const types = await jobTypes();
+    let groups = await groupsList(true);
+    let groupById = new Map(groups.map((g) => [g.id, g]));
+    if (s.group && s.group !== 'none' && !groupById.has(Number(s.group))) s.group = '';
     const hasHealth = () => rows.some((m) => m.healthScore != null || m.healthGrade);
+    const currentGroup = () => (s.group && s.group !== 'none' ? groupById.get(Number(s.group)) : null);
+    const groupOptions = () => groups.map((g) => `<option value="${esc(g.id)}">${esc(g.name)}</option>`).join('');
 
     view.innerHTML = `
       <div class="page-head"><div><h1>Postes</h1><p class="muted">Dernier rapport reçu de chaque poste enrôlé.
-        Cochez des postes pour leur envoyer une action à distance.</p></div></div>
+        ${operate ? 'Cochez des postes pour leur envoyer une action à distance ou les ranger dans un groupe.' : ''}</p></div></div>
       <div class="toolbar">
         <input id="m-search" type="search" placeholder="Rechercher un poste, un modèle, un n° de série…" aria-label="Rechercher" value="${esc(s.search)}">
         <select id="m-status" aria-label="Filtrer par état">
-          ${Object.entries(STATUS_FILTERS).map(([k, [label]]) => `<option value="${k}"${k === s.status ? ' selected' : ''}>${esc(label)}</option>`).join('')}
+          ${Object.entries(STATUS_FILTERS).filter(([k]) => operate || k !== 'selected')
+            .map(([k, [label]]) => `<option value="${k}"${k === s.status ? ' selected' : ''}>${esc(label)}</option>`).join('')}
         </select>
+        <select id="m-group" aria-label="Filtrer par groupe"${groups.length ? '' : ' hidden'}></select>
         <span id="m-count" class="muted small count"></span>
       </div>
-      <div class="bulkbar card">
-        <span id="m-selected" class="small"></span>
-        <select id="m-action" aria-label="Action à distance">
-          ${types.map((t) => `<option value="${esc(t.id)}">${esc(t.label)}</option>`).join('')}
-        </select>
-        <button id="m-run-selection" class="btn btn-primary btn-sm" type="button">Lancer sur la sélection</button>
-        <button id="m-run-todo" class="btn btn-sm" type="button" title="Tous les postes actuellement « à traiter », sélectionnés ou non">Lancer sur tous les postes à traiter</button>
-        <button id="m-clear" class="btn btn-ghost btn-sm" type="button">Vider la sélection</button>
-      </div>
+      ${operate ? `<div class="bulkbar card">
+        <div class="bulk-row">
+          <span id="m-selected" class="small"></span>
+          <select id="m-action" aria-label="Action à distance">
+            ${types.map((t) => `<option value="${esc(t.id)}">${esc(t.label)}</option>`).join('')}
+          </select>
+          <button id="m-run-selection" class="btn btn-primary btn-sm" type="button">Lancer sur la sélection</button>
+          <button id="m-run-group" class="btn btn-sm" type="button" hidden></button>
+          <button id="m-run-todo" class="btn btn-sm" type="button" title="Tous les postes actuellement « à traiter », sélectionnés ou non">Lancer sur tous les postes à traiter</button>
+          <button id="m-clear" class="btn btn-ghost btn-sm" type="button">Vider la sélection</button>
+        </div>
+        <div class="bulk-row">
+          <label class="bulk-label" for="m-target-group">Groupe de la sélection</label>
+          <select id="m-target-group"${groups.length ? '' : ' hidden'}></select>
+          <button id="m-add-group" class="btn btn-sm" type="button"${groups.length ? '' : ' hidden'}>Ajouter au groupe</button>
+          <button id="m-remove-group" class="btn btn-sm" type="button"${groups.length ? '' : ' hidden'}>Retirer du groupe</button>
+          <a href="#/groupes" class="small">${groups.length ? 'Gérer les groupes' : 'Créer un groupe de postes'}</a>
+        </div>
+      </div>` : ''}
       <div class="table-wrap"><table class="table-compact">
         <thead id="m-head"></thead>
         <tbody id="m-body"></tbody>
       </table></div>`;
 
+    function fillGroupSelects() {
+      $('#m-group').innerHTML = `<option value="">Tous les groupes</option>
+        ${groups.map((g) => `<option value="${esc(g.id)}"${String(g.id) === s.group ? ' selected' : ''}>${esc(g.name)} (${esc(g.memberCount)})</option>`).join('')}
+        <option value="none"${s.group === 'none' ? ' selected' : ''}>Sans groupe</option>`;
+      $('#m-group').hidden = groups.length === 0;
+      if (operate) {
+        const target = $('#m-target-group');
+        const keep = target.value || s.group;
+        target.innerHTML = groupOptions();
+        if (groupById.has(Number(keep))) target.value = keep;
+      }
+    }
+
     let visibleNames = [];
     function head() {
       $('#m-head').innerHTML = `<tr>
-          <th class="check-col"><input id="m-all" type="checkbox" aria-label="Sélectionner les postes affichés"></th>
+          ${operate ? '<th class="check-col"><input id="m-all" type="checkbox" aria-label="Sélectionner les postes affichés"></th>' : ''}
           <th class="sortable" data-sort="name">Poste</th>
           <th class="sortable" data-sort="model">Modèle</th>
           <th class="sortable" data-sort="os">Windows</th>
@@ -612,7 +788,7 @@
         else { s.sort = th.dataset.sort; s.dir = ['name', 'model', 'os', 'status', 'health'].includes(s.sort) ? 'asc' : 'desc'; }
         draw();
       }));
-      $('#m-all').addEventListener('change', (e) => {
+      $('#m-all')?.addEventListener('change', (e) => {
         visibleNames.forEach((n) => (e.target.checked ? s.selected.add(n) : s.selected.delete(n)));
         draw();
       });
@@ -626,8 +802,10 @@
       const filter = STATUS_FILTERS[s.status][1];
       const key = SORTS[s.sort];
       const health = hasHealth();
+      const inGroup = (m) => (s.group === 'none' ? m.groups.length === 0 : !s.group || m.groups.includes(Number(s.group)));
       const list = rows
         .filter(filter)
+        .filter(inGroup)
         .filter((m) => !needle || [m.name, m.model, m.serialNumber, m.os].some((v) => (v || '').toLowerCase().includes(needle)))
         .sort((a, b) => {
           const x = key(a), y = key(b);
@@ -638,21 +816,34 @@
         th.classList.toggle('sorted-asc', th.dataset.sort === s.sort && s.dir === 'asc');
         th.classList.toggle('sorted-desc', th.dataset.sort === s.sort && s.dir === 'desc');
       });
-      $('#m-all').checked = list.length > 0 && list.every((m) => s.selected.has(m.name));
       $('#m-count').textContent = `${list.length} / ${plural(rows.length, 'poste', 'postes')}`;
-      const todo = rows.filter((m) => !m.healthy).length;
-      $('#m-selected').textContent = s.selected.size ? `${plural(s.selected.size, 'poste sélectionné', 'postes sélectionnés')}` : 'Aucun poste sélectionné';
-      $('#m-run-selection').disabled = s.selected.size === 0;
-      $('#m-clear').disabled = s.selected.size === 0;
-      $('#m-run-todo').disabled = todo === 0;
-      $('#m-run-todo').textContent = `Lancer sur tous les postes à traiter (${todo})`;
-      const cols = health ? 11 : 10;
+      if (operate) {
+        $('#m-all').checked = list.length > 0 && list.every((m) => s.selected.has(m.name));
+        const todo = rows.filter((m) => !m.healthy).length;
+        $('#m-selected').textContent = s.selected.size ? `${plural(s.selected.size, 'poste sélectionné', 'postes sélectionnés')}` : 'Aucun poste sélectionné';
+        $('#m-run-selection').disabled = s.selected.size === 0;
+        $('#m-clear').disabled = s.selected.size === 0;
+        $('#m-add-group').disabled = s.selected.size === 0;
+        $('#m-remove-group').disabled = s.selected.size === 0;
+        $('#m-run-todo').disabled = todo === 0;
+        $('#m-run-todo').textContent = `Lancer sur tous les postes à traiter (${todo})`;
+        const g = currentGroup();
+        $('#m-run-group').hidden = !g;
+        if (g) {
+          const members = rows.filter((m) => m.groups.includes(g.id)).length;
+          $('#m-run-group').textContent = `Lancer sur le groupe « ${g.name} » (${members})`;
+          $('#m-run-group').disabled = members === 0;
+        }
+      }
+      const groupNames = (m) => m.groups.map((id) => groupById.get(id)?.name).filter(Boolean);
+      const cols = (health ? 11 : 10) - (operate ? 0 : 1);
       $('#m-body').innerHTML = list.length === 0
         ? `<tr><td colspan="${cols}" class="empty">${rows.length === 0 ? 'Aucun poste enrôlé pour l\'instant (voir <a href="#/enrolement">Enrôlement</a>).' : 'Aucun poste ne correspond à ces critères.'}</td></tr>`
         : list.map((m) => `
           <tr class="clickable${s.selected.has(m.name) ? ' is-selected' : ''}" data-href="#/postes/${enc(m.name)}">
-            <td class="check-col"><input type="checkbox" data-select="${esc(m.name)}" aria-label="Sélectionner ${esc(m.name)}"${s.selected.has(m.name) ? ' checked' : ''}></td>
-            <td class="nowrap"><div class="cell-title">${machineLink(m.name)}</div>${m.serialNumber ? `<div class="cell-sub">S/N ${esc(m.serialNumber)}</div>` : ''}</td>
+            ${operate ? `<td class="check-col"><input type="checkbox" data-select="${esc(m.name)}" aria-label="Sélectionner ${esc(m.name)}"${s.selected.has(m.name) ? ' checked' : ''}></td>` : ''}
+            <td class="nowrap"><div class="cell-title">${machineLink(m.name)}</div>${m.serialNumber ? `<div class="cell-sub">S/N ${esc(m.serialNumber)}</div>` : ''}
+              ${groupNames(m).length ? `<div class="cell-sub" title="Groupes">${esc(groupNames(m).join(', '))}</div>` : ''}</td>
             <td class="wrap">${esc(m.model)}</td>
             <td>${esc(shortOs(m.os))}<div class="cell-sub">${esc(m.osVersion || '')} ${esc(m.architecture || '')}</div></td>
             <td>${machineBadges(m)}</td>
@@ -666,21 +857,46 @@
       }));
     }
 
-    const selectedType = () => types.find((t) => t.id === $('#m-action').value);
     $('#m-search').addEventListener('input', (e) => { s.search = e.target.value; draw(); });
     $('#m-status').addEventListener('change', (e) => { s.status = e.target.value; draw(); });
-    $('#m-clear').addEventListener('click', () => { s.selected.clear(); draw(); });
-    $('#m-run-selection').addEventListener('click', async () => {
-      if (await requestJob(selectedType(), { machines: [...s.selected] })) { s.selected.clear(); await refresh(); }
-    });
-    $('#m-run-todo').addEventListener('click', async () => {
-      if (await requestJob(selectedType(), { target: 'to-process', count: rows.filter((m) => !m.healthy).length })) await refresh();
-    });
+    $('#m-group').addEventListener('change', (e) => { s.group = e.target.value; draw(); });
+    if (operate) {
+      const selectedType = () => types.find((t) => t.id === $('#m-action').value);
+      $('#m-clear').addEventListener('click', () => { s.selected.clear(); draw(); });
+      $('#m-run-selection').addEventListener('click', async () => {
+        if (await requestJob(selectedType(), { machines: [...s.selected] })) { s.selected.clear(); await refresh(); }
+      });
+      $('#m-run-todo').addEventListener('click', async () => {
+        if (await requestJob(selectedType(), { target: 'to-process', count: rows.filter((m) => !m.healthy).length })) await refresh();
+      });
+      $('#m-run-group').addEventListener('click', async () => {
+        const g = currentGroup();
+        if (g && await requestJob(selectedType(), { group: g, count: rows.filter((m) => m.groups.includes(g.id)).length })) await refresh();
+      });
+      const changeMembers = async (add) => {
+        const g = groupById.get(Number($('#m-target-group').value));
+        if (!g || s.selected.size === 0) return;
+        const names = [...s.selected];
+        try {
+          const res = await api(`/groups/${enc(g.id)}/members`, { method: 'POST', body: JSON.stringify(add ? { add: names } : { remove: names }) });
+          toast(res.changes === 0
+            ? (add ? `Ces postes font déjà partie du groupe « ${g.name} ».` : `Aucun de ces postes n'avait été ajouté à la main au groupe « ${g.name} ».`)
+            : `${plural(res.changes, 'poste', 'postes')} ${add ? 'ajouté(s) au' : 'retiré(s) du'} groupe « ${g.name} ».`);
+          await refresh();
+        } catch (e) { fail(e); }
+      };
+      $('#m-add-group').addEventListener('click', () => changeMembers(true));
+      $('#m-remove-group').addEventListener('click', () => changeMembers(false));
+    }
     let healthShown = hasHealth();
+    fillGroupSelects();
     head();
     draw();
     async function refresh() {
       rows = await api('/machines');
+      groups = await groupsList(true);
+      groupById = new Map(groups.map((g) => [g.id, g]));
+      fillGroupSelects();
       if (hasHealth() !== healthShown) { healthShown = hasHealth(); head(); }
       draw();
     }
@@ -767,10 +983,11 @@
           <p class="muted">${esc(m.model)}${m.serialNumber ? ` · S/N ${esc(m.serialNumber)}` : ''}</p>
           <div class="badges section-tight">${machineBadges({ ...m, healthy: r.healthy, hardwareFaults: r.hardwareFaults, rebootRequired: r.rebootRequired })}
             ${r.health ? healthBadge(r.health.score, r.health.grade) : ''}</div>
+          ${data.groups.length ? `<p class="small section-tight">Groupes : ${data.groups.map((g) => `${groupLink(g)}${g.manual ? '' : ' <span class="muted">(règle)</span>'}`).join(', ')}</p>` : ''}
         </div>
         <div class="actions">
           <button id="d-raw" class="btn" type="button" title="Rapport complet du dernier envoi, utilisable avec « spokapilote pack »">Rapport complet (JSON)</button>
-          <button id="d-delete" class="btn btn-danger" type="button">Supprimer le poste</button>
+          ${can('admin') ? '<button id="d-delete" class="btn btn-danger" type="button">Supprimer le poste</button>' : ''}
         </div>
       </div>
 
@@ -789,12 +1006,12 @@
       <section class="section">
         <div class="section-head"><h2>Actions à distance</h2>
           <span class="small">${agentInfo(m)}</span></div>
-        <div class="card card-pad">
+        ${can('operate') ? `<div class="card card-pad">
           <div class="actions">${types.map((t) => `<button class="btn${t.changesSystem ? '' : ' btn-primary'}" type="button" data-run-job="${esc(t.id)}"
             title="${esc(t.description)}">${esc(t.label)}</button>`).join('')}</div>
           <p class="hint">Chaque action est confirmée avant d'être envoyée, puis exécutée par l'agent du poste à son prochain passage.
             Liste fermée : aucune commande ni script libre ne peut être envoyé.</p>
-        </div>
+        </div>` : ''}
         <div id="d-jobs" class="section-tight">${jobsTable(data.jobs, { showMachine: false, emptyText: 'Aucune tâche à distance pour ce poste.' })}</div>
       </section>
 
@@ -873,7 +1090,7 @@
         download(`${m.name}.json`, new Blob([text], { type: 'application/json' }));
       } catch (e) { if (e.status !== 401) toast(e.message, true); }
     });
-    $('#d-delete').addEventListener('click', async () => {
+    $('#d-delete')?.addEventListener('click', async () => {
       if (!confirm(`Supprimer « ${m.name} » et tout son historique de la console ?\n\nLe poste réapparaîtra à son prochain rapport s'il est toujours enrôlé.`)) return;
       try {
         await api(`/machines/${enc(name)}`, { method: 'DELETE' });
@@ -992,6 +1209,7 @@
 
   async function documentPage(doc) {
     const view = $('#view');
+    const editable = can('admin');
     let saved = null;        // texte enregistré sur le serveur (null = aucun document)
     let updated = null;
 
@@ -999,6 +1217,7 @@
       <div class="page-head">
         <div><h1>${esc(doc.title)}</h1><p class="muted">${esc(doc.intro)}</p></div>
       </div>
+      ${editable ? '' : `<div class="notice">Consultation seule : seul un administrateur peut modifier ce document (votre rôle : ${esc(state.auth.roleLabel)}).</div>`}
       <div class="editor">
         <div class="toolbar">
           <button id="e-format" class="btn" type="button">Formater</button>
@@ -1008,7 +1227,7 @@
           <span class="count"></span>
           <button id="e-save" class="btn btn-primary" type="button">Enregistrer</button>
         </div>
-        <textarea id="e-text" spellcheck="false" autocapitalize="off" autocomplete="off" aria-label="${esc(doc.title)} (JSON)"></textarea>
+        <textarea id="e-text" spellcheck="false" autocapitalize="off" autocomplete="off" aria-label="${esc(doc.title)} (JSON)"${editable ? '' : ' readonly'}></textarea>
         <div id="e-status" class="editor-status" role="status"></div>
         <p id="e-meta" class="muted small"></p>
       </div>`;
@@ -1039,7 +1258,8 @@
       $('#e-save').disabled = !ok || !dirty();
       $('#e-revert').disabled = !dirty();
       $('#e-delete').disabled = saved === null;
-      $('#e-template').hidden = text.trim() !== '';
+      $('#e-template').hidden = text.trim() !== '' || !editable;
+      ['#e-save', '#e-revert', '#e-delete', '#e-format'].forEach((id) => { $(id).hidden = !editable; });
       if (dirty()) status.insertAdjacentHTML('beforeend', ` ${badge('modifié', 'accent')}`);
       return ok;
     }
@@ -1072,8 +1292,8 @@
 
     area.addEventListener('input', validate);
     area.addEventListener('keydown', (e) => {
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); save(); }
-      if (e.key === 'Tab' && !e.shiftKey && !e.ctrlKey) {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); if (editable) save(); }
+      if (editable && e.key === 'Tab' && !e.shiftKey && !e.ctrlKey) {
         // Tabulation = deux espaces (sans perdre l'annulation du navigateur).
         e.preventDefault();
         document.execCommand('insertText', false, '  ');
@@ -1414,14 +1634,718 @@ schtasks /Create /F /TN "SpokaPilote\\Analyse" /SC WEEKLY /D MON /ST 09:00 /RU S
     return {};
   }
 
+  // ------------------------------------------------------------------ groupes de postes (3.1)
+
+  const FIELD_HINTS = {
+    name: 'Ex. PC-COMPTA- ou PC-*-SIEGE',
+    manufacturer: 'Ex. Dell, HP, LENOVO',
+    model: 'Ex. Latitude 5440, ThinkPad',
+    os: 'Ex. Windows 11, 24H2',
+    subnet: 'Ex. 10.1.20.0/24, 192.168.5.0/24',
+  };
+  let groupFields = null;
+  async function groupFieldList() {
+    if (!groupFields) groupFields = await api('/group-fields');
+    return groupFields;
+  }
+  const rulesSummary = (g) => (g.rulesText ? esc(g.rulesText) : '<span class="muted">Aucune règle : membres ajoutés à la main</span>');
+
+  /** Création (g = null) ou modification d'un groupe ; renvoie true si enregistré. */
+  async function editGroup(g) {
+    const meta = await groupFieldList();
+    const rules = g?.rules || { match: 'all', conditions: [] };
+    const fieldOptions = (sel) => meta.fields.map((f) => `<option value="${esc(f.id)}"${f.id === sel ? ' selected' : ''}>${esc(f.label)}</option>`).join('');
+    const opsFor = (field) => meta.operators.filter((o) => (field === 'subnet' ? o.id === 'inSubnet' : o.id !== 'inSubnet'));
+    const opOptions = (field, sel) => opsFor(field).map((o) => `<option value="${esc(o.id)}"${o.id === sel ? ' selected' : ''}>${esc(o.label)}</option>`).join('');
+    let rowId = 0;
+    const condRow = (c) => {
+      rowId += 1;
+      return `<div class="cond-row" data-cond>
+        <select class="cond-field" aria-label="Champ de la condition ${rowId}">${fieldOptions(c.field)}</select>
+        <select class="cond-op" aria-label="Opérateur de la condition ${rowId}">${opOptions(c.field, c.operator)}</select>
+        <input class="cond-value" type="text" maxlength="200" value="${esc(c.value)}" placeholder="${esc(FIELD_HINTS[c.field] || '')}" aria-label="Valeur de la condition ${rowId}">
+        <button class="btn btn-sm btn-ghost cond-remove" type="button" aria-label="Retirer la condition ${rowId}">Retirer</button>
+      </div>`;
+    };
+    const collect = (body) => ({
+      match: $('input[name=match]:checked', body)?.value || 'all',
+      conditions: $$('[data-cond]', body).map((row) => ({
+        field: $('.cond-field', row).value, operator: $('.cond-op', row).value, value: $('.cond-value', row).value.trim(),
+      })),
+    });
+    let previewTimer;
+    const form = await openModal({
+      title: g ? `Modifier le groupe « ${g.name} »` : 'Nouveau groupe de postes',
+      confirmLabel: g ? 'Enregistrer' : 'Créer le groupe',
+      wide: true,
+      body: `
+        <label class="field">Nom <input type="text" name="name" maxlength="80" required value="${esc(g?.name || '')}" placeholder="Ex. Comptabilité — siège"></label>
+        <label class="field">Description <span class="muted">(facultative)</span>
+          <textarea name="description" rows="2" maxlength="300">${esc(g?.description || '')}</textarea></label>
+        <fieldset class="section">
+          <legend>Règles automatiques <span class="muted">(facultatives)</span></legend>
+          <p class="hint">Les postes qui remplissent les règles font partie du groupe, en plus de ceux ajoutés à la main (liste des postes).
+            Majuscules indifférentes ; dans un motif, <code>*</code> remplace n'importe quelle suite de caractères et <code>?</code> un caractère.
+            Le sous-réseau est celui de l'adresse d'envoi du dernier rapport, vue par la console (plusieurs sous-réseaux séparés par des virgules).</p>
+          <div class="days">
+            <label class="check"><input type="radio" name="match" value="all"${rules.match !== 'any' ? ' checked' : ''}> Toutes les conditions</label>
+            <label class="check"><input type="radio" name="match" value="any"${rules.match === 'any' ? ' checked' : ''}> Au moins une condition</label>
+          </div>
+          <div class="cond-list" id="g-conds">${rules.conditions.map(condRow).join('')}</div>
+          <button id="g-add-cond" class="btn btn-sm" type="button">Ajouter une condition</button>
+          <div id="g-preview" class="preview" role="status" aria-live="polite"></div>
+        </fieldset>`,
+      onOpen: (body) => {
+        const preview = async () => {
+          const r = collect(body);
+          const out = $('#g-preview', body);
+          if (!out) return;
+          if (r.conditions.length === 0) { out.textContent = 'Aucune règle : le groupe ne contiendra que les postes ajoutés à la main.'; return; }
+          if (r.conditions.some((c) => !c.value)) { out.textContent = 'Complétez les conditions pour voir les postes concernés.'; return; }
+          try {
+            const res = await api('/groups/preview', { method: 'POST', body: JSON.stringify({ rules: r }) });
+            out.innerHTML = res.count === 0 ? 'Aucun poste ne remplit ces règles actuellement.'
+              : `<b>${esc(plural(res.count, 'poste remplit', 'postes remplissent'))}</b> ces règles : ${esc(res.machines.join(', '))}${res.count > res.machines.length ? '…' : ''}`;
+          } catch (e) {
+            if (e.status !== 401) out.innerHTML = `<span class="bad">${esc(e.message)}</span>`;
+          }
+        };
+        const later = () => { clearTimeout(previewTimer); previewTimer = setTimeout(preview, 350); };
+        body.addEventListener('input', later);
+        body.addEventListener('change', (e) => {
+          const field = e.target.closest('.cond-field');
+          if (field) {
+            const row = field.closest('[data-cond]');
+            $('.cond-op', row).innerHTML = opOptions(field.value, $('.cond-op', row).value);
+            $('.cond-value', row).placeholder = FIELD_HINTS[field.value] || '';
+          }
+          later();
+        });
+        body.addEventListener('click', (e) => {
+          const remove = e.target.closest('.cond-remove');
+          if (!remove) return;
+          remove.closest('[data-cond]').remove();
+          $('#g-add-cond', body).focus();
+          later();
+        });
+        $('#g-add-cond', body).addEventListener('click', () => {
+          $('#g-conds', body).insertAdjacentHTML('beforeend', condRow({ field: 'name', operator: 'startsWith', value: '' }));
+          $('#g-conds [data-cond]:last-child .cond-value', body).focus();
+          later();
+        });
+        preview();
+      },
+      onConfirm: async (f) => {
+        const payload = {
+          name: f.elements.name.value.trim(),
+          description: f.elements.description.value.trim() || null,
+          rules: collect($('#modal-body')),
+        };
+        if (!payload.name) return 'Le nom du groupe est obligatoire.';
+        if (payload.rules.conditions.some((c) => !c.value)) return 'Chaque condition doit avoir une valeur (ou retirez-la).';
+        const saved = await api(g ? `/groups/${enc(g.id)}` : '/groups', { method: g ? 'PUT' : 'POST', body: JSON.stringify(payload) });
+        state.groups = null;
+        toast(g ? 'Groupe enregistré.' : `Groupe « ${saved.name} » créé.`);
+        return null;
+      },
+    });
+    clearTimeout(previewTimer);
+    return !!form;
+  }
+
+  async function deleteGroup(g) {
+    if (g.scheduleCount > 0) {
+      toast(`Le groupe « ${g.name} » est utilisé par ${plural(g.scheduleCount, 'planification', 'planifications')} : modifiez-les ou supprimez-les d'abord.`, true);
+      return false;
+    }
+    const form = await openModal({
+      title: `Supprimer le groupe « ${g.name} » ?`,
+      body: '<p>Les postes ne sont pas supprimés : seul le regroupement disparaît.</p>',
+      confirmLabel: 'Supprimer le groupe', danger: true,
+    });
+    if (!form) return false;
+    try {
+      await api(`/groups/${enc(g.id)}`, { method: 'DELETE' });
+      state.groups = null;
+      toast('Groupe supprimé.');
+      return true;
+    } catch (e) {
+      fail(e);
+      return false;
+    }
+  }
+
+  async function groupsPage(view) {
+    const operate = can('operate');
+    async function render() {
+      const groups = await groupsList(true);
+      view.innerHTML = `
+        <div class="page-head"><div><h1>Groupes de postes</h1>
+          <p class="muted">Rangez les postes par site, service ou matériel : à la main (cases à cocher de la liste des postes) et/ou par
+            règles automatiques (nom, constructeur, modèle, Windows, sous-réseau). Filtrez ensuite la vue d'ensemble et la liste des postes
+            par groupe, lancez une action sur tout un groupe ou planifiez-la.</p></div>
+          ${operate ? '<div class="actions"><button id="g-new" class="btn btn-primary" type="button">Nouveau groupe</button></div>' : ''}
+        </div>
+        ${groups.length === 0 ? `<div class="card empty">Aucun groupe.${operate ? ' Créez-en un avec « Nouveau groupe ».' : ''}</div>` : `
+        <div class="table-wrap"><table>
+          <thead><tr><th>Groupe</th><th>Règles automatiques</th><th class="num">Postes</th><th class="num">Ajoutés à la main</th>
+            <th class="num">Planifications</th><th>Modifié le</th>${operate ? '<th><span class="visually-hidden">Actions</span></th>' : ''}</tr></thead>
+          <tbody>${groups.map((g) => `
+            <tr class="clickable" data-href="#/groupes/${enc(g.id)}">
+              <td class="wrap"><div class="cell-title">${groupLink(g)}</div>${g.description ? `<div class="cell-sub">${esc(g.description)}</div>` : ''}</td>
+              <td class="wrap small">${rulesSummary(g)}</td>
+              <td class="num">${esc(g.memberCount)}</td><td class="num">${esc(g.manualCount)}</td><td class="num">${esc(g.scheduleCount)}</td>
+              <td class="nowrap small">${esc(fmtDate(g.updatedAt))}</td>
+              ${operate ? `<td class="nowrap"><button class="btn btn-sm" type="button" data-group-edit="${esc(g.id)}">Modifier</button>
+                <button class="btn btn-sm btn-danger" type="button" data-group-delete="${esc(g.id)}">Supprimer</button></td>` : ''}
+            </tr>`).join('')}</tbody>
+        </table></div>`}`;
+      $('#g-new')?.addEventListener('click', async () => { if (await editGroup(null)) await render(); });
+      $$('[data-group-edit]', view).forEach((b) => b.addEventListener('click', async () => {
+        if (await editGroup(groups.find((g) => String(g.id) === b.dataset.groupEdit))) await render();
+      }));
+      $$('[data-group-delete]', view).forEach((b) => b.addEventListener('click', async () => {
+        if (await deleteGroup(groups.find((g) => String(g.id) === b.dataset.groupDelete))) await render();
+      }));
+    }
+    await render();
+    return {};
+  }
+
+  async function groupPage(view, [id]) {
+    const operate = can('operate');
+    const types = operate ? await jobTypes() : [];
+    async function render() {
+      const data = await api(`/groups/${enc(id)}`);
+      const g = data.group;
+      const members = data.members;
+      const machines = operate ? await api('/machines') : [];
+      const candidates = machines.map((m) => m.name).filter((n) => !members.some((x) => x.manual && x.name === n));
+      const todo = members.filter((m) => !m.healthy).length;
+      view.innerHTML = `
+        <p class="small"><a href="#/groupes">← Tous les groupes</a></p>
+        <div class="page-head">
+          <div><h1>${esc(g.name)}</h1>
+            ${g.description ? `<p class="muted">${esc(g.description)}</p>` : ''}
+            <p class="small">${g.rulesText ? `Règles automatiques : ${esc(g.rulesText)}` : 'Aucune règle automatique : membres ajoutés à la main uniquement.'}</p></div>
+          <div class="actions">
+            <a class="btn" href="#/?groupe=${enc(g.id)}">Vue d'ensemble du groupe</a>
+            <a class="btn" href="#/postes?groupe=${enc(g.id)}">Liste des postes</a>
+            ${operate ? '<button id="gd-edit" class="btn" type="button">Modifier</button><button id="gd-delete" class="btn btn-danger" type="button">Supprimer</button>' : ''}
+          </div>
+        </div>
+        <div class="kpis">
+          ${kpi('Postes', g.memberCount)}
+          ${kpi('Ajoutés à la main', g.manualCount)}
+          ${kpi('À traiter', todo, { kind: todo ? 'warn' : 'ok', href: `#/postes?statut=todo&groupe=${enc(g.id)}` })}
+          ${kpi('Planifications', g.scheduleCount, { href: '#/planifications' })}
+        </div>
+        ${operate ? `
+        <section class="section">
+          <div class="section-head"><h2>Action sur tout le groupe</h2></div>
+          <div class="card card-pad">
+            <div class="actions">
+              <label class="visually-hidden" for="gd-action">Action à distance</label>
+              <select id="gd-action">${types.map((t) => `<option value="${esc(t.id)}">${esc(t.label)}</option>`).join('')}</select>
+              <button id="gd-run" class="btn btn-primary" type="button"${g.memberCount ? '' : ' disabled'}>Lancer sur ${esc(plural(g.memberCount, 'poste', 'postes'))}</button>
+              <a class="btn" href="#/planifications?groupe=${enc(g.id)}">Planifier…</a>
+            </div>
+            <p class="hint">Sont visés les postes du groupe au moment du lancement : ajoutés à la main et désignés par les règles.</p>
+          </div>
+        </section>` : ''}
+        <section class="section">
+          <div class="section-head"><h2>Postes du groupe</h2><span class="muted small">${esc(plural(members.length, 'poste', 'postes'))}</span></div>
+          ${operate ? `<form id="gd-add" class="member-add" novalidate>
+              <label class="visually-hidden" for="gd-add-name">Poste à ajouter au groupe</label>
+              <input id="gd-add-name" type="text" list="gd-machines" placeholder="Nom du poste à ajouter à la main" autocomplete="off" spellcheck="false">
+              <datalist id="gd-machines">${candidates.map((n) => `<option value="${esc(n)}"></option>`).join('')}</datalist>
+              <button class="btn btn-sm" type="submit">Ajouter</button>
+              <span class="hint">ou cochez des postes dans la <a href="#/postes">liste des postes</a>.</span>
+            </form>` : ''}
+          ${members.length === 0 ? '<div class="card empty section-tight">Aucun poste dans ce groupe.</div>' : `
+          <div class="table-wrap section-tight"><table class="table-compact">
+            <thead><tr><th>Poste</th><th>Modèle</th><th>Windows</th><th>État</th><th>Appartenance</th><th>Adresse IP</th><th>Dernier rapport</th>
+              ${operate ? '<th><span class="visually-hidden">Actions</span></th>' : ''}</tr></thead>
+            <tbody>${members.map((m) => `<tr>
+              <td class="nowrap cell-title">${machineLink(m.name)}</td>
+              <td class="wrap">${esc(m.model)}</td>
+              <td>${esc(shortOs(m.os))}</td>
+              <td><div class="badges">${m.healthy ? badge('Sain', 'ok') : badge('À traiter', 'warn')}${m.stale ? badge('Non vu', 'bad') : ''}</div></td>
+              <td><div class="badges">${m.manual ? badge('ajouté à la main', 'accent') : ''}${m.byRule ? badge('règle') : ''}</div></td>
+              <td class="mono small">${esc(m.lastIp || '—')}</td>
+              <td class="nowrap">${esc(fmtDate(m.lastReport))}<div class="cell-sub">${esc(fmtAgo(m.lastReport))}</div></td>
+              ${operate ? `<td class="nowrap">${m.manual ? `<button class="btn btn-sm btn-danger" type="button" data-member-remove="${esc(m.name)}"
+                ${m.byRule ? 'title="Le poste restera dans le groupe tant qu\'il remplit les règles"' : ''}>Retirer</button>` : ''}</td>` : ''}
+            </tr>`).join('')}</tbody>
+          </table></div>`}
+        </section>
+        ${data.schedules.length ? `<section class="section"><div class="section-head"><h2>Planifications de ce groupe</h2></div>
+          <div class="card card-pad"><ul class="list-plain">${data.schedules.map((s) => `<li><a href="#/planifications">${esc(s.name)}</a>${s.enabled ? '' : ' <span class="muted">(désactivée)</span>'}</li>`).join('')}</ul></div>
+        </section>` : ''}`;
+
+      if (!operate) return;
+      const members$ = async (body, message) => {
+        try {
+          const res = await api(`/groups/${enc(g.id)}/members`, { method: 'POST', body: JSON.stringify(body) });
+          if (res.unknown.length) toast(`Poste inconnu de la console : ${res.unknown.join(', ')}`, true);
+          else toast(res.changes ? message : 'Rien à changer.');
+          state.groups = null;
+          await render();
+        } catch (e) { fail(e); }
+      };
+      $('#gd-add').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const name = $('#gd-add-name').value.trim();
+        if (name) await members$({ add: [name] }, `${name} ajouté au groupe.`);
+      });
+      $$('[data-member-remove]', view).forEach((b) => b.addEventListener('click', () =>
+        members$({ remove: [b.dataset.memberRemove] }, `${b.dataset.memberRemove} retiré du groupe.`)));
+      $('#gd-run').addEventListener('click', async () => {
+        const type = types.find((t) => t.id === $('#gd-action').value);
+        await requestJob(type, { group: g, count: g.memberCount });
+      });
+      $('#gd-edit').addEventListener('click', async () => { if (await editGroup(g)) await render(); });
+      $('#gd-delete').addEventListener('click', async () => { if (await deleteGroup(g)) location.hash = '#/groupes'; });
+    }
+    await render();
+    return {};
+  }
+
+  // ------------------------------------------------------------------ actions planifiées (3.1)
+
+  const DAYS = [[1, 'lundi'], [2, 'mardi'], [3, 'mercredi'], [4, 'jeudi'], [5, 'vendredi'], [6, 'samedi'], [7, 'dimanche']];
+  const WINDOWS = [30, 60, 120, 180, 240, 360, 480, 720];
+  const fmtWindow = (m) => (m < 60 ? `${m} min` : m % 60 === 0 ? `${m / 60} h` : `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, '0')}`);
+
+  /** Création (s = null) ou modification d'une planification ; renvoie true si enregistrée. */
+  async function editSchedule(s, types, groups, timeZone, defaults = {}) {
+    const v = s || { name: '', type: 'scan', dryRun: false, groupId: defaults.groupId ?? null, frequency: 'weekly', days: [1], time: '22:00', windowMinutes: null, enabled: true };
+    const form = await openModal({
+      title: s ? `Modifier « ${s.name} »` : 'Nouvelle planification',
+      confirmLabel: s ? 'Enregistrer' : 'Créer la planification',
+      wide: true,
+      body: `
+        <label class="field">Nom <input type="text" name="name" maxlength="80" required value="${esc(v.name)}" placeholder="Ex. Analyse hebdomadaire du siège"></label>
+        <div class="field-row">
+          <label class="field">Action
+            <select name="type">${types.map((t) => `<option value="${esc(t.id)}"${t.id === v.type ? ' selected' : ''}>${esc(t.label)}</option>`).join('')}</select></label>
+          <label class="field">Postes visés
+            <select name="group"><option value="">Tous les postes</option>
+              ${groups.map((g) => `<option value="${esc(g.id)}"${g.id === v.groupId ? ' selected' : ''}>Groupe « ${esc(g.name)} » (${esc(g.memberCount)})</option>`).join('')}</select></label>
+        </div>
+        <label class="check block" id="se-dry"><input type="checkbox" name="dryRun"${v.dryRun ? ' checked' : ''}> Simulation : montrer ce qui serait fait, sans rien modifier</label>
+        <div id="se-warn" class="notice notice-warn" hidden>Cette action <b>modifie les postes</b> : elle sera exécutée par l'agent SpokaPilote
+          (compte SYSTEM), sans intervention de l'utilisateur. Une fenêtre de maintenance évite qu'elle s'exécute en pleine journée.</div>
+        <fieldset class="section-tight">
+          <legend>Fréquence</legend>
+          <div class="days">
+            <label class="check"><input type="radio" name="frequency" value="daily"${v.frequency === 'daily' ? ' checked' : ''}> Chaque jour</label>
+            <label class="check"><input type="radio" name="frequency" value="weekly"${v.frequency === 'weekly' ? ' checked' : ''}> Certains jours de la semaine</label>
+          </div>
+          <div id="se-days" class="days" role="group" aria-label="Jours de la semaine">
+            ${DAYS.map(([n, label]) => `<label class="check"><input type="checkbox" name="day" value="${n}"${v.days.includes(n) ? ' checked' : ''}> ${label}</label>`).join('')}
+          </div>
+        </fieldset>
+        <div class="field-row">
+          <label class="field">Heure <span class="muted">(heure du serveur : ${esc(timeZone)})</span>
+            <input type="time" name="time" required value="${esc(v.time)}"></label>
+          <label class="field">Fenêtre de maintenance
+            <select name="window"><option value="">Aucune</option>
+              ${WINDOWS.map((m) => `<option value="${m}"${m === v.windowMinutes ? ' selected' : ''}>${esc(fmtWindow(m))}</option>`).join('')}</select></label>
+        </div>
+        <p class="hint">Avec une fenêtre de maintenance, une tâche que le poste n'a pas récupérée avant la fin de la fenêtre expire au lieu de
+          s'exécuter plus tard. Sans fenêtre, elle attend le poste jusqu'à 7 jours. Un poste qui a déjà une tâche du même type en attente
+          n'en reçoit pas une seconde.</p>
+        <label class="check block"><input type="checkbox" name="enabled"${v.enabled ? ' checked' : ''}> Planification active</label>`,
+      onOpen: (body) => {
+        const sync = () => {
+          const f = $('#modal-form');
+          const type = types.find((t) => t.id === f.elements.type.value);
+          $('#se-dry', body).hidden = !type?.supportsDryRun;
+          if (!type?.supportsDryRun) f.elements.dryRun.checked = false;
+          $('#se-warn', body).hidden = !type?.changesSystem || f.elements.dryRun.checked;
+          $('#se-days', body).hidden = f.elements.frequency.value !== 'weekly';
+        };
+        body.addEventListener('change', sync);
+        sync();
+      },
+      onConfirm: async (f) => {
+        const weekly = f.elements.frequency.value === 'weekly';
+        const days = $$('input[name=day]:checked', f).map((c) => Number(c.value));
+        if (!f.elements.name.value.trim()) return 'Le nom est obligatoire.';
+        if (weekly && days.length === 0) return 'Choisissez au moins un jour de la semaine.';
+        if (!f.elements.time.value) return 'Indiquez l\'heure d\'exécution.';
+        const payload = {
+          name: f.elements.name.value.trim(),
+          type: f.elements.type.value,
+          dryRun: f.elements.dryRun.checked,
+          groupId: f.elements.group.value ? Number(f.elements.group.value) : null,
+          frequency: weekly ? 'weekly' : 'daily',
+          days: weekly ? days : [],
+          time: f.elements.time.value.slice(0, 5),
+          windowMinutes: f.elements.window.value ? Number(f.elements.window.value) : null,
+          enabled: f.elements.enabled.checked,
+        };
+        await api(s ? `/schedules/${enc(s.id)}` : '/schedules', { method: s ? 'PUT' : 'POST', body: JSON.stringify(payload) });
+        toast(s ? 'Planification enregistrée.' : 'Planification créée.');
+        return null;
+      },
+    });
+    return !!form;
+  }
+
+  async function schedulesPage(view, _params, query) {
+    const operate = can('operate');
+    const types = await jobTypes();
+    let data;
+    let groups;
+    async function render() {
+      data = await api('/schedules');
+      groups = await groupsList(true);
+      const list = data.schedules;
+      view.innerHTML = `
+        <div class="page-head"><div><h1>Actions planifiées</h1>
+          <p class="muted">Une action de la liste fermée, lancée automatiquement chaque jour ou certains jours, sur un groupe de postes ou tout le
+            parc. Les tâches suivent ensuite le circuit habituel (vue <a href="#/taches">Tâches</a>). Heures du serveur : ${esc(data.timeZone)}.</p></div>
+          ${operate ? '<div class="actions"><button id="sc-new" class="btn btn-primary" type="button">Nouvelle planification</button></div>' : ''}
+        </div>
+        ${list.length === 0 ? `<div class="card empty">Aucune planification.${operate ? ' Créez-en une avec « Nouvelle planification ».' : ''}</div>` : `
+        <div class="table-wrap"><table>
+          <thead><tr><th>Planification</th><th>Action</th><th>Postes visés</th><th>Quand</th><th>Prochaine exécution</th>
+            <th>Dernière exécution</th><th>État</th>${operate ? '<th><span class="visually-hidden">Actions</span></th>' : ''}</tr></thead>
+          <tbody>${list.map((s) => `
+            <tr>
+              <td class="wrap"><div class="cell-title">${esc(s.name)}</div><div class="cell-sub">créée par ${esc(s.createdBy)}</div></td>
+              <td class="wrap">${esc(s.typeLabel)}${s.dryRun ? ` ${badge('simulation', 'accent')}` : ''}</td>
+              <td class="wrap">${s.groupId ? (s.groupName ? groupLink({ id: s.groupId, name: s.groupName }) : '<span class="bad">groupe supprimé</span>') : 'Tous les postes'}</td>
+              <td class="wrap">${esc(s.description)}${s.windowMinutes ? `<div class="cell-sub">fenêtre de maintenance : ${esc(fmtWindow(s.windowMinutes))}</div>` : ''}</td>
+              <td class="nowrap">${s.enabled && s.nextRun ? esc(fmtDate(s.nextRun)) : '<span class="muted">—</span>'}</td>
+              <td class="wrap small">${s.lastRun ? `${esc(fmtDate(s.lastRun))}<div class="cell-sub">${esc(s.lastResult || '')}</div>` : '<span class="muted">jamais</span>'}</td>
+              <td>${s.enabled ? badge('Active', 'ok') : badge('Désactivée')}</td>
+              ${operate ? `<td class="nowrap">
+                <button class="btn btn-sm" type="button" data-sc-edit="${esc(s.id)}">Modifier</button>
+                <button class="btn btn-sm" type="button" data-sc-toggle="${esc(s.id)}">${s.enabled ? 'Désactiver' : 'Activer'}</button>
+                <button class="btn btn-sm btn-danger" type="button" data-sc-delete="${esc(s.id)}">Supprimer</button></td>` : ''}
+            </tr>`).join('')}</tbody>
+        </table></div>`}
+        <p class="muted small">Le planificateur vérifie les échéances toutes les 30 secondes. Changement d'heure : une heure qui n'existe pas
+          (passage à l'heure d'été) est reportée à la première minute qui existe ; une heure qui existe deux fois ne déclenche qu'une exécution.
+          Une échéance manquée pendant un arrêt de la console est rattrapée une fois au redémarrage, sauf si sa fenêtre de maintenance est terminée.</p>`;
+      if (!operate) return;
+      const find = (id) => list.find((s) => String(s.id) === id);
+      $('#sc-new').addEventListener('click', async () => { if (await editSchedule(null, types, groups, data.timeZone)) await render(); });
+      $$('[data-sc-edit]', view).forEach((b) => b.addEventListener('click', async () => {
+        if (await editSchedule(find(b.dataset.scEdit), types, groups, data.timeZone)) await render();
+      }));
+      $$('[data-sc-toggle]', view).forEach((b) => b.addEventListener('click', async () => {
+        const s = find(b.dataset.scToggle);
+        try {
+          await api(`/schedules/${enc(s.id)}`, {
+            method: 'PUT',
+            body: JSON.stringify({ name: s.name, type: s.type, dryRun: s.dryRun, groupId: s.groupId, frequency: s.frequency, days: s.days,
+              time: s.time, windowMinutes: s.windowMinutes, enabled: !s.enabled }),
+          });
+          toast(s.enabled ? 'Planification désactivée.' : 'Planification activée.');
+          await render();
+        } catch (e) { fail(e); }
+      }));
+      $$('[data-sc-delete]', view).forEach((b) => b.addEventListener('click', async () => {
+        const s = find(b.dataset.scDelete);
+        const form = await openModal({
+          title: `Supprimer « ${s.name} » ?`,
+          body: '<p>Les tâches déjà créées par cette planification ne sont pas annulées.</p>',
+          confirmLabel: 'Supprimer', danger: true,
+        });
+        if (!form) return;
+        try {
+          await api(`/schedules/${enc(s.id)}`, { method: 'DELETE' });
+          toast('Planification supprimée.');
+          await render();
+        } catch (e) { fail(e); }
+      }));
+    }
+    await render();
+    // Lien « Planifier… » depuis la fiche d'un groupe : formulaire prérempli.
+    if (operate && query.get('groupe')) {
+      history.replaceState(null, '', '#/planifications');
+      currentHash = location.hash;
+      if (await editSchedule(null, types, groups, data.timeZone, { groupId: Number(query.get('groupe')) })) await render();
+    }
+    return { refresh: render };
+  }
+
+  // ------------------------------------------------------------------ comptes (3.1, Administrateur)
+
+  /** Mot de passe aléatoire (16 caractères, sans caractère ambigu). */
+  function generatePassword() {
+    const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789-_!?';
+    const bytes = new Uint32Array(16);
+    crypto.getRandomValues(bytes);
+    return Array.from(bytes, (b) => alphabet[b % alphabet.length]).join('');
+  }
+
+  async function editUser(u, data) {
+    const self = u && state.auth.mode === 'session' && u.login === state.auth.login;
+    const form = await openModal({
+      title: u ? `Modifier le compte « ${u.login} »` : 'Nouveau compte',
+      confirmLabel: u ? 'Enregistrer' : 'Créer le compte',
+      wide: true,
+      body: `
+        <div class="field-row">
+          <label class="field">Identifiant <input type="text" name="login" maxlength="64" autocomplete="off" spellcheck="false" autocapitalize="off"
+            value="${esc(u?.login || '')}" ${u ? 'disabled' : 'required'} placeholder="Ex. jdupont"></label>
+          <label class="field">Nom affiché <span class="muted">(facultatif)</span>
+            <input type="text" name="displayName" maxlength="80" value="${esc(u?.displayName || '')}" placeholder="Ex. Jeanne Dupont"></label>
+        </div>
+        ${u ? '' : '<p class="hint">Identifiant : lettres minuscules, chiffres et . _ - @ (2 à 64 caractères).</p>'}
+        <fieldset class="section-tight">
+          <legend>Rôle</legend>
+          <div class="radio-list">${data.roles.map((r) => `<label class="check"><input type="radio" name="role" value="${esc(r.id)}"
+            ${(u ? u.role : (data.users.length === 0 ? 'admin' : 'technician')) === r.id ? ' checked' : ''}${self ? ' disabled' : ''}>
+            <span><b>${esc(r.label)}</b><br><span class="small muted">${esc(r.description)}</span></span></label>`).join('')}</div>
+          ${self ? '<p class="hint">Vous ne pouvez ni changer votre propre rôle ni désactiver votre compte.</p>' : ''}
+        </fieldset>
+        <div class="field">
+          <label for="ue-pass">${u ? 'Nouveau mot de passe <span class="muted">(laisser vide pour ne pas le changer)</span>' : 'Mot de passe'}</label>
+          <div class="password-row">
+            <input id="ue-pass" name="password" type="password" autocomplete="new-password" ${u ? '' : 'required'} minlength="${esc(data.passwordMinLength)}" maxlength="256">
+            <button id="ue-gen" class="btn btn-sm" type="button">Générer</button>
+            <button id="ue-copy" class="btn btn-sm" type="button" hidden>Copier</button>
+          </div>
+          <p class="hint">${esc(data.passwordMinLength)} caractères au moins. Transmettez-le à la personne par un canal sûr : elle pourra le changer
+            depuis « Mon compte ».${u ? ' Une réinitialisation ferme ses sessions ouvertes.' : ''}</p>
+        </div>
+        <label class="check block"><input type="checkbox" name="enabled"${!u || u.enabled ? ' checked' : ''}${self ? ' disabled' : ''}> Compte actif</label>`,
+      onOpen: (body) => {
+        $('#ue-gen', body).addEventListener('click', () => {
+          const input = $('#ue-pass', body);
+          input.value = generatePassword();
+          input.type = 'text';
+          $('#ue-copy', body).hidden = false;
+          input.select();
+        });
+        $('#ue-copy', body).addEventListener('click', () => copyText($('#ue-pass', body).value));
+      },
+      onConfirm: async (f) => {
+        const password = f.elements.password.value;
+        if (!u && !f.elements.login.value.trim()) return 'L\'identifiant est obligatoire.';
+        if (!u && !password) return 'Le mot de passe est obligatoire.';
+        if (password && password.length < data.passwordMinLength) return `Le mot de passe doit contenir au moins ${data.passwordMinLength} caractères.`;
+        const payload = {
+          login: u ? u.login : f.elements.login.value.trim().toLowerCase(),
+          displayName: f.elements.displayName.value.trim() || null,
+          role: self ? u.role : ($('input[name=role]:checked', f)?.value || 'readonly'),
+          password: password || null,
+          enabled: self ? true : f.elements.enabled.checked,
+        };
+        const saved = await api(u ? `/users/${enc(u.id)}` : '/users', { method: u ? 'PUT' : 'POST', body: JSON.stringify(payload) });
+        toast(u ? 'Compte enregistré.' : `Compte « ${saved.login} » créé (${saved.roleLabel}).`);
+        return null;
+      },
+    });
+    return !!form;
+  }
+
+  async function accountsPage(view) {
+    async function render() {
+      const data = await api('/users');
+      state.auth.accountCount = data.users.length;
+      const me = state.auth.mode === 'session' ? state.auth.login : null;
+      view.innerHTML = `
+        <div class="page-head"><div><h1>Comptes</h1>
+          <p class="muted">Chaque membre de l'équipe se connecte avec son propre compte : les actions lui sont attribuées dans l'historique des
+            tâches et le journal d'audit. Le jeton administrateur reste valable pour les scripts et en secours.</p></div>
+          <div class="actions"><button id="u-new" class="btn btn-primary" type="button">Nouveau compte</button></div>
+        </div>
+        ${data.users.length === 0 ? `<div class="notice notice-warn">Aucun compte nominatif. Créez d'abord <b>votre</b> compte avec le rôle
+          <b>Administrateur</b>, déconnectez-vous puis reconnectez-vous avec ce compte pour créer ceux de l'équipe.</div>` : ''}
+        ${state.auth.mode === 'token' && data.users.length ? `<div class="notice">Vous êtes connecté avec le <b>jeton administrateur</b> : vos
+          actions sont consignées sous ce nom. Préférez votre compte nominatif au quotidien.</div>` : ''}
+        <div class="roles section-tight">${data.roles.map((r) => `<div class="card card-pad"><h3>${esc(r.label)}</h3><p class="small muted">${esc(r.description)}</p></div>`).join('')}</div>
+        <section class="section">
+          ${data.users.length === 0 ? '' : `
+          <div class="table-wrap"><table>
+            <thead><tr><th>Identifiant</th><th>Nom affiché</th><th>Rôle</th><th>État</th><th>Dernière connexion</th><th>Mot de passe changé le</th>
+              <th><span class="visually-hidden">Actions</span></th></tr></thead>
+            <tbody>${data.users.map((u) => `
+              <tr>
+                <td class="nowrap cell-title">${esc(u.login)}${u.login === me ? ` ${badge('vous', 'accent')}` : ''}</td>
+                <td class="wrap">${esc(u.displayName || '')}</td>
+                <td>${badge(u.roleLabel, u.role === 'admin' ? 'accent' : '')}</td>
+                <td>${u.enabled ? badge('Actif', 'ok') : badge('Désactivé', 'bad')}</td>
+                <td class="nowrap">${u.lastLogin ? `${esc(fmtDate(u.lastLogin))}<div class="cell-sub">${esc(fmtAgo(u.lastLogin))}</div>` : '<span class="muted">jamais</span>'}</td>
+                <td class="nowrap">${esc(fmtDate(u.passwordChangedAt))}</td>
+                <td class="nowrap"><button class="btn btn-sm" type="button" data-user-edit="${esc(u.id)}">Modifier</button>
+                  ${u.login === me ? '' : `<button class="btn btn-sm btn-danger" type="button" data-user-delete="${esc(u.id)}">Supprimer</button>`}</td>
+              </tr>`).join('')}</tbody>
+          </table></div>`}
+        </section>`;
+      const find = (id) => data.users.find((u) => String(u.id) === id);
+      $('#u-new').addEventListener('click', async () => { if (await editUser(null, data)) await render(); });
+      $$('[data-user-edit]', view).forEach((b) => b.addEventListener('click', async () => {
+        if (await editUser(find(b.dataset.userEdit), data)) await render();
+      }));
+      $$('[data-user-delete]', view).forEach((b) => b.addEventListener('click', async () => {
+        const u = find(b.dataset.userDelete);
+        const form = await openModal({
+          title: `Supprimer le compte « ${u.login} » ?`,
+          body: '<p>Ses sessions ouvertes sont fermées. Son nom reste dans le journal d\'audit et l\'historique des tâches. '
+            + 'Pour suspendre temporairement un accès, préférez « Modifier » › Compte actif.</p>',
+          confirmLabel: 'Supprimer le compte', danger: true,
+        });
+        if (!form) return;
+        try {
+          await api(`/users/${enc(u.id)}`, { method: 'DELETE' });
+          toast('Compte supprimé.');
+          await render();
+        } catch (e) { fail(e); }
+      }));
+    }
+    await render();
+    return {};
+  }
+
+  // ------------------------------------------------------------------ journal d'audit (3.1, Administrateur)
+
+  async function auditPage(view) {
+    const s = state.audit;
+    let data = null;
+    const params = () => {
+      const p = new URLSearchParams();
+      if (s.category) p.set('category', s.category);
+      if (s.search.trim()) p.set('q', s.search.trim());
+      return p.toString();
+    };
+    view.innerHTML = `
+      <div class="page-head"><div><h1>Journal d'audit</h1>
+        <p class="muted">Qui a fait quoi et quand : connexions, comptes, actions à distance, planifications, groupes, paramètres et alertes,
+          politique de pilotes et profil d'imprimantes, suppression de postes.</p></div>
+        <div class="actions"><button id="a-csv" class="btn" type="button">Exporter (CSV)</button></div>
+      </div>
+      <div class="toolbar">
+        <input id="a-search" type="search" placeholder="Rechercher un compte, une cible, une adresse IP…" aria-label="Rechercher dans le journal" value="${esc(s.search)}">
+        <select id="a-category" aria-label="Filtrer par catégorie"><option value="">Toutes les actions</option></select>
+        <span id="a-count" class="muted small count" role="status"></span>
+      </div>
+      <div id="a-table"></div>
+      <p id="a-retention" class="muted small"></p>`;
+
+    function draw() {
+      const select = $('#a-category');
+      if (select.options.length === 1) {
+        select.insertAdjacentHTML('beforeend', data.categories.map((c) => `<option value="${esc(c.id)}"${c.id === s.category ? ' selected' : ''}>${esc(c.label)}</option>`).join(''));
+      }
+      $('#a-count').textContent = `${data.entries.length}${data.entries.length === 500 ? '+' : ''} / ${plural(data.total, 'entrée', 'entrées')}`;
+      $('#a-retention').textContent = `Conservation : ${data.retention.maxEntries.toLocaleString('fr-FR')} entrées au plus, ${data.retention.days} jours au plus `
+        + '(SPOKAPILOTE_AUDIT_MAX_ENTRIES, SPOKAPILOTE_AUDIT_DAYS). Les 500 plus récentes correspondant aux filtres sont affichées ; l\'export les contient toutes.';
+      $('#a-table').innerHTML = data.entries.length === 0 ? '<div class="card empty">Aucune entrée.</div>' : `
+        <div class="table-wrap"><table class="table-compact">
+          <thead><tr><th>Date</th><th>Compte</th><th>Action</th><th>Cible</th><th>Détail</th><th>Adresse IP</th></tr></thead>
+          <tbody>${data.entries.map((e) => `
+            <tr${e.success ? '' : ' class="is-failure"'}>
+              <td class="nowrap">${esc(fmtDate(e.at))}<div class="cell-sub">${esc(fmtAgo(e.at))}</div></td>
+              <td class="wrap"><div class="cell-title">${esc(e.actor)}</div>${e.roleLabel ? `<div class="cell-sub">${esc(e.roleLabel)}</div>` : ''}</td>
+              <td>${e.success ? esc(e.actionLabel) : `${badge('échec', 'bad')} ${esc(e.actionLabel)}`}<div class="cell-sub"><code>${esc(e.action)}</code></div></td>
+              <td class="wrap">${esc(e.target || '')}</td>
+              <td class="wrap small">${esc(e.detail || '')}</td>
+              <td class="mono small">${esc(e.ip || '')}</td>
+            </tr>`).join('')}</tbody>
+        </table></div>`;
+    }
+    async function load() {
+      data = await api(`/audit?${params()}&limit=500`);
+      draw();
+    }
+    let timer;
+    $('#a-search').addEventListener('input', (e) => {
+      s.search = e.target.value;
+      clearTimeout(timer);
+      timer = setTimeout(() => load().catch(fail), 300);
+    });
+    $('#a-category').addEventListener('change', (e) => { s.category = e.target.value; load().catch(fail); });
+    $('#a-csv').addEventListener('click', async () => {
+      try {
+        const blob = await api(`/audit/export?${params()}`, { blob: true });
+        download(`spokapilote-audit-${new Date().toISOString().slice(0, 10)}.csv`, blob);
+      } catch (e) { fail(e); }
+    });
+    await load();
+    return { refresh: load };
+  }
+
+  // ------------------------------------------------------------------ mon compte (3.1)
+
+  async function mePage(view) {
+    if (state.auth.mode !== 'session') {
+      view.innerHTML = `<div class="page-head"><div><h1>Mon compte</h1></div></div>
+        <div class="notice">Vous êtes connecté avec le <b>jeton administrateur</b> : il n'a ni compte ni mot de passe.
+          ${can('admin') ? 'Créez votre compte nominatif dans <a href="#/comptes">Comptes</a>, puis reconnectez-vous avec lui.' : ''}</div>`;
+      return {};
+    }
+    const me = await api('/session');
+    view.innerHTML = `
+      <div class="page-head"><div><h1>Mon compte</h1></div></div>
+      <div class="card card-pad"><dl class="facts">
+        <div><dt>Identifiant</dt><dd>${esc(me.login)}</dd></div>
+        <div><dt>Nom affiché</dt><dd>${esc(me.displayName || '—')}</dd></div>
+        <div><dt>Rôle</dt><dd>${esc(me.roleLabel)}</dd></div>
+        <div><dt>Session</dt><dd>se ferme après une période d'inactivité (sans action avant le ${esc(fmtDate(me.expiresAt))}) ou à la fermeture du navigateur</dd></div>
+      </dl></div>
+      <section class="section">
+        <div class="section-head"><h2>Changer de mot de passe</h2></div>
+        <form id="me-form" class="card card-pad form-narrow" novalidate>
+          <label for="me-current">Mot de passe actuel</label>
+          <input id="me-current" type="password" autocomplete="current-password" required>
+          <label for="me-new">Nouveau mot de passe</label>
+          <input id="me-new" type="password" autocomplete="new-password" required minlength="10" maxlength="256" aria-describedby="me-hint">
+          <label for="me-confirm">Confirmation du nouveau mot de passe</label>
+          <input id="me-confirm" type="password" autocomplete="new-password" required>
+          <p id="me-error" class="form-error" role="alert" hidden></p>
+          <p id="me-hint" class="hint">10 caractères au moins, sans votre identifiant. Vos sessions ouvertes dans d'autres navigateurs seront fermées.</p>
+          <div><button class="btn btn-primary" type="submit">Changer le mot de passe</button></div>
+        </form>
+      </section>`;
+    $('#me-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const err = $('#me-error');
+      const show = (message) => { err.textContent = message; err.hidden = !message; };
+      const current = $('#me-current').value;
+      const next = $('#me-new').value;
+      if (!current || !next) { show('Renseignez le mot de passe actuel et le nouveau.'); return; }
+      if (next !== $('#me-confirm').value) { show('La confirmation ne correspond pas au nouveau mot de passe.'); return; }
+      try {
+        await api('/session/password', { method: 'PUT', body: JSON.stringify({ currentPassword: current, newPassword: next }) });
+        show('');
+        e.target.reset();
+        toast('Mot de passe changé.');
+      } catch (ex) {
+        if (ex.status !== 401) show(ex.message);
+      }
+    });
+    return {};
+  }
+
   // ------------------------------------------------------------------ démarrage
 
-  function init() {
+  async function init() {
     $('#login-form').addEventListener('submit', (e) => {
       e.preventDefault();
-      const token = $('#login-token').value.trim();
-      if (token) login(token);
+      if (loginMode() === 'token') {
+        const token = $('#login-token').value.trim();
+        if (!token) { showLogin('Collez le jeton administrateur.'); return; }
+        loginWithToken(token);
+      } else {
+        const login = $('#login-user').value.trim();
+        const password = $('#login-password').value;
+        if (!login || !password) { showLogin('Saisissez votre identifiant et votre mot de passe.'); return; }
+        $('#login-password').value = '';
+        loginWithPassword(login, password);
+      }
     });
+    $$('#login-form input[name=mode]').forEach((radio) => radio.addEventListener('change', () => {
+      $('#login-error').hidden = true;
+      setLoginMode(radio.value);
+    }));
     $('#logout').addEventListener('click', () => { if (!state.page?.canLeave || state.page.canLeave()) logout(); });
     $('#refresh').addEventListener('click', () => route());
     $('#menu-toggle').addEventListener('click', () => {
@@ -1437,13 +2361,16 @@ schtasks /Create /F /TN "SpokaPilote\\Analyse" /SC WEEKLY /D MON /ST 09:00 /RU S
       const target = params.get('vue') || '/';
       history.replaceState(null, '', `${location.pathname}${location.search}#${target}`);
       currentHash = location.hash;
-      if (token) { login(token); return; }
+      if (token) { loginWithToken(token); return; }
     }
 
     let saved = null;
     try { saved = sessionStorage.getItem(TOKEN_KEY); } catch { /* stockage indisponible */ }
-    if (saved) login(saved);
-    else showLogin();
+    if (saved) { loginWithToken(saved); return; }
+    // Session de compte déjà ouverte (cookie) ?
+    const { info, error } = await fetchSession();
+    if (info) enterApp(info);
+    else showLogin(error);
   }
 
   init();
