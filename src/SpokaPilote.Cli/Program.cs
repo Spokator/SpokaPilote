@@ -301,7 +301,7 @@ internal static partial class Program
 
     private static async Task<int> ExportAsync(Args a, CancellationToken ct)
     {
-        var target = a.Positional(0) ?? throw new ArgumentException("Usage : spokapilote export <dossier-du-dépôt>");
+        var target = a.Positional(0) ?? AppPaths.DefaultRepository ?? throw new ArgumentException("Usage : spokapilote export <dossier-du-dépôt>");
         Banner();
         WriteLine("Export des pilotes de ce poste de référence...", ConsoleColor.Gray);
         var (ok, _, msg) = await DriverExporter.ExportAsync(target, ct);
@@ -312,7 +312,7 @@ internal static partial class Program
     private static async Task<int> ImportAsync(Args a, CancellationToken ct)
     {
         var source = a.Positional(0);
-        var repo = a.Positional(1) ?? LoadSettings(a).RepositoryPaths.FirstOrDefault();
+        var repo = a.Positional(1) ?? LoadSettings(a).EffectiveRepositoryPaths().FirstOrDefault();
         if (source is null || repo is null)
         {
             WriteLine("Usage : spokapilote import <archive.zip|dossier> [dossier-du-dépôt]", ConsoleColor.Yellow);
@@ -555,7 +555,7 @@ internal static partial class Program
     private static async Task<int> SelfUpdateAsync(Args a, CancellationToken ct)
     {
         var current = UpdateChecker.CurrentVersion;
-        WriteLine($"Version installée : {current.ToString(3)}", ConsoleColor.White);
+        WriteLine($"Version {(AppPaths.IsPortable ? "portable" : "installée")} : {current.ToString(3)}", ConsoleColor.White);
         var update = await UpdateChecker.CheckAsync(current, ct);
         if (update is null)
         {
@@ -563,11 +563,36 @@ internal static partial class Program
             return ExitOk;
         }
         WriteLine($"Nouvelle version disponible : {update.Version.ToString(3)} ({update.ReleaseUrl})", ConsoleColor.Cyan);
+        if (AppPaths.IsPortable) return await PortableUpdateAsync(a, update, ct);
         if (!a.Flag("yes") && !Confirm("Installer la mise à jour ?")) return ExitOk;
         var file = await UpdateChecker.DownloadAsync(update, null, ct);
         WriteLine("Installeur téléchargé et vérifié (taille + SHA-256). Installation silencieuse lancée.", ConsoleColor.Green);
         UpdateChecker.LaunchInstaller(file, relaunch: false);
         return ExitOk;
+    }
+
+    /// <summary>
+    /// Mode portable : aucun installeur n'est lancé. Avec accord (ou --yes), l'archive portable est téléchargée sur la
+    /// clé et vérifiée (taille + SHA-256 publiés par GitHub) ; le technicien l'extrait ensuite lui-même.
+    /// </summary>
+    private static async Task<int> PortableUpdateAsync(Args a, UpdateInfo update, CancellationToken ct)
+    {
+        WriteLine($"Mode portable : téléchargez la nouvelle version ({update.ReleaseUrl}).", ConsoleColor.Yellow);
+        if (update.PortableUrl is not null) WriteLine($"  Archive : {update.PortableUrl}", ConsoleColor.Gray);
+        if (!a.Flag("yes") && !Confirm("Télécharger et vérifier l'archive portable sur la clé ?")) return ExitOk;
+        try
+        {
+            var file = await UpdateChecker.DownloadPortableAsync(update, AppPaths.Updates, null, ct);
+            WriteLine($"Archive téléchargée et vérifiée (taille + SHA-256) : {file}", ConsoleColor.Green);
+            WriteLine($"Fermez SpokaPilote puis extrayez-la à la racine de la clé, par-dessus l'ancienne version : " +
+                      $"les dossiers « {AppPaths.PortableDataFolderName} » et « {AppPaths.PortableRepositoryFolderName} » sont conservés.", ConsoleColor.Gray);
+            return ExitOk;
+        }
+        catch (UpdateIntegrityException ex)
+        {
+            WriteLine(ex.Message, ConsoleColor.Red);
+            return ExitError;
+        }
     }
 
     // ------------------------------------------------------------------ configuration
@@ -601,6 +626,13 @@ internal static partial class Program
                 settings.Save();
                 break;
         }
+        WriteLine(AppPaths.Describe(), AppPaths.IsPortable ? ConsoleColor.Cyan : ConsoleColor.Gray);
+        if (AppPaths.Layout.Mode == DataLocationMode.Portable)
+            WriteLine($"Données de ce poste (journaux, historique, sauvegardes) : {AppPaths.MachineRoot}", ConsoleColor.Gray);
+        if (AppPaths.IsPortable)
+            WriteLine(AppPaths.DefaultRepository is { } depot
+                ? $"Dépôt de la clé (utilisé automatiquement) : {depot}"
+                : $"Dépôt de la clé : absent (créez {Path.Combine(AppPaths.PortableHome!, AppPaths.PortableRepositoryFolderName)} pour l'utiliser)", ConsoleColor.Gray);
         WriteLine($"Fichier : {AppPaths.SettingsFile}", ConsoleColor.Gray);
         Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(settings, new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
         return ExitOk;
@@ -769,9 +801,15 @@ internal static partial class Program
 
             CONFIGURATION
               spokapilote config [show | set <clé> <valeur> | add-repo <chemin> | remove-repo <chemin>]
+                                   « show » indique aussi l'emplacement des données (installé ou mode portable)
+
+            MODE PORTABLE (clé USB, voir docs/MODE-PORTABLE.md)
+              Archive SpokaPilote-Portable-<version>-<arch>.zip : données dans <clé>\SpokaPilote\Data (un dossier par
+              poste pour journaux, historique et sauvegardes), dépôt <clé>\SpokaPilote\Depot utilisé automatiquement ;
+              pas de tâche planifiée ; « self-update » télécharge l'archive portable vérifiée au lieu de l'installeur.
 
             Codes de sortie : 0 OK · 1 erreur · 2 échec partiel · 3010 redémarrage requis
-            Journaux : %ProgramData%\SpokaPilote\Logs
+            Journaux : %ProgramData%\SpokaPilote\Logs (mode portable : Data\Postes\<POSTE>\Logs sur la clé)
             """);
         return ExitUsage;
     }

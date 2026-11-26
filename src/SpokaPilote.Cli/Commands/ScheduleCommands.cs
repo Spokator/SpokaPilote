@@ -18,6 +18,11 @@ internal static partial class Program
         {
             case "enable" or "activer":
             {
+                if (AppPaths.IsPortable)
+                {
+                    WriteLine(MaintenanceScheduler.PortableRefusal, ConsoleColor.Red);
+                    return ExitError;
+                }
                 var (options, error) = ParseMaintenanceOptions(a);
                 if (options is null)
                 {

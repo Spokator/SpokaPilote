@@ -48,6 +48,7 @@ public static class AgentScheduler
     {
         if (everyMinutes is < MinIntervalMinutes or > MaxIntervalMinutes)
             return (false, $"Intervalle invalide : {everyMinutes} min ({MinIntervalMinutes} à {MaxIntervalMinutes}).");
+        if (AppPaths.IsPortable) return (false, MaintenanceScheduler.PortableRefusal);
         if (MaintenanceScheduler.ValidateExecutable(executable) is { } error) return (false, error);
         if (!Elevation.IsAdministrator()) return (false, "La création de la tâche planifiée nécessite une console administrateur.");
 

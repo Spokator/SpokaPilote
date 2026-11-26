@@ -232,9 +232,15 @@ public static class MaintenanceScheduler
     private static string RandomLabel(MaintenanceOptions o) =>
         o.RandomDelay > TimeSpan.Zero ? $" (+ jusqu'à {o.RandomDelay.TotalMinutes:0} min aléatoires)" : "";
 
+    /// <summary>Refus des tâches planifiées en mode portable (clé USB).</summary>
+    public const string PortableRefusal =
+        "Mode portable : les tâches planifiées (maintenance, agent) ne sont pas disponibles. Elles pointeraient vers la clé USB, " +
+        "absente une fois le technicien parti. Installez SpokaPilote sur le poste pour planifier la maintenance.";
+
     /// <summary>
     /// La tâche tourne en SYSTEM : l'exécutable doit être la version installée, dans Program Files (non modifiable
-    /// par un utilisateur standard). Un dossier temporaire ou de compilation est refusé.
+    /// par un utilisateur standard). Un dossier temporaire ou de compilation est refusé, de même qu'une copie
+    /// portable (fichier témoin SpokaPilote.portable à côté de l'exécutable).
     /// </summary>
     public static string? ValidateExecutable(string? path)
     {
@@ -243,6 +249,8 @@ public static class MaintenanceScheduler
         try { full = Path.GetFullPath(path); } catch (Exception ex) { return $"Chemin de l'exécutable invalide : {ex.Message}"; }
         if (!Path.GetFileName(full).Equals("spokapilote.exe", StringComparison.OrdinalIgnoreCase))
             return $"La tâche doit lancer spokapilote.exe (exécutable actuel : {full}).";
+        if (Path.GetDirectoryName(full) is { } dir && AppPaths.IsPortableDirectory(dir))
+            return PortableRefusal;
 
         static bool Under(string file, string? folder) =>
             !string.IsNullOrWhiteSpace(folder) &&
@@ -267,6 +275,7 @@ public static class MaintenanceScheduler
 
     public static async Task<(bool Ok, string Message)> EnableAsync(MaintenanceOptions options, string executable, CancellationToken ct = default)
     {
+        if (AppPaths.IsPortable) return (false, PortableRefusal);
         if (ValidateExecutable(executable) is { } error) return (false, error);
         if (!Elevation.IsAdministrator()) return (false, "La création de la tâche planifiée nécessite une console administrateur.");
 
@@ -323,7 +332,7 @@ public static class MaintenanceScheduler
     {
         var r = await ProcessRunner.RunAsync(SchTasks, $"/Run /TN \"{taskName}\"", timeout: TimeSpan.FromMinutes(1), ct: ct).ConfigureAwait(false);
         return r.ExitCode == 0
-            ? (true, $"Tâche « {taskName} » démarrée. Journal : {Path.Combine(AppPaths.Root, "Logs")}")
+            ? (true, $"Tâche « {taskName} » démarrée. Journal : {AppPaths.Logs}")
             : (false, $"Démarrage impossible (code {r.ExitCode}) : {r.Combined.Trim()}");
     }
 

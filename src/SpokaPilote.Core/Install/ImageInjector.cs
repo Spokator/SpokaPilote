@@ -465,7 +465,7 @@ public static class ImageInjector
         if (dryRun)
             return Finish(report, watch, true, $"Simulation : {report.Accepted.Count()} INF seraient injectés, {report.Refused.Count()} refusés. Image non modifiée.");
 
-        var mountDir = Path.Combine(AppPaths.Ensure(Path.Combine(AppPaths.Root, "Mount")), $"{DateTime.Now:yyyyMMdd-HHmmss}-{index}");
+        var mountDir = Path.Combine(AppPaths.Mount, $"{DateTime.Now:yyyyMMdd-HHmmss}-{index}");
         Directory.CreateDirectory(mountDir);
         var mounted = false;
         try

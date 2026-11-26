@@ -33,7 +33,7 @@ public static class PrinterDriverResolver
         }
 
         // 2. Dépôts internes (INF de classe Printer).
-        foreach (var root in settings.RepositoryPaths)
+        foreach (var root in settings.EffectiveRepositoryPaths())
         {
             var repo = new DriverRepository(root);
             await repo.IndexAsync(ct: ct).ConfigureAwait(false);

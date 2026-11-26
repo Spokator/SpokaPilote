@@ -8,7 +8,13 @@ namespace SpokaPilote.Core.Online;
 
 /// <param name="Size">Taille de l'installeur annoncée par GitHub (0 = inconnue).</param>
 /// <param name="Sha256">SHA-256 de l'installeur annoncé par GitHub (champ « digest »), en minuscules, ou null.</param>
-public sealed record UpdateInfo(Version Version, string Tag, string DownloadUrl, string ReleaseUrl, string Notes, long Size = 0, string? Sha256 = null);
+public sealed record UpdateInfo(Version Version, string Tag, string DownloadUrl, string ReleaseUrl, string Notes, long Size = 0, string? Sha256 = null)
+{
+    /// <summary>Archive portable de cette architecture (SpokaPilote-Portable-X.Y.Z-arch.zip), ou null si la Release n'en a pas.</summary>
+    public string? PortableUrl { get; init; }
+    public long PortableSize { get; init; }
+    public string? PortableSha256 { get; init; }
+}
 
 /// <summary>L'installeur téléchargé ne correspond pas à ce que GitHub annonce : il est supprimé et jamais exécuté.</summary>
 public sealed class UpdateIntegrityException(string message) : Exception(message);
@@ -17,6 +23,15 @@ public sealed class UpdateIntegrityException(string message) : Exception(message
 public static class UpdateChecker
 {
     public const string Repository = "Spokator/SpokaPilote";
+    /// <summary>Préfixe des archives portables. Ne contient jamais « Setup » ni « Installer » (voir <see cref="PortableAssetName"/>).</summary>
+    public const string PortablePrefix = "SpokaPilote-Portable-";
+
+    /// <summary>
+    /// Nom de l'archive portable publiée (scripts\build-installer.ps1) : « SpokaPilote-Portable-3.1.0-x64.zip ».
+    /// Contrat : ni « Setup » ni « Installer » dans le nom (les versions 1.0.x prennent le premier « Setup* » venu
+    /// comme installeur) et extension .zip (jamais retenue comme installeur par <see cref="Parse(JsonElement, Version, string)"/>).
+    /// </summary>
+    public static string PortableAssetName(string version, string architecture) => $"{PortablePrefix}{version}-{architecture}.zip";
     public static string ReleasesPage => $"https://github.com/{Repository}/releases/latest";
 
     public static Version CurrentVersion
@@ -59,22 +74,30 @@ public static class UpdateChecker
         string? url = null;
         long size = 0;
         string? sha256 = null;
+        string? portableUrl = null;
+        long portableSize = 0;
+        string? portableSha256 = null;
         if (release.TryGetProperty("assets", out var assets))
         {
             foreach (var asset in assets.EnumerateArray())
             {
                 var name = asset.GetProperty("name").GetString() ?? "";
                 var isArm = name.Contains("arm64", StringComparison.OrdinalIgnoreCase);
+                var isPortable = name.StartsWith(PortablePrefix, StringComparison.OrdinalIgnoreCase);
                 // x64 : « SpokaPilote-Setup-X.exe » ; ARM64 : « SpokaPilote-Installer-X-arm64.exe ». L'installeur ARM64 ne
                 // contient volontairement pas « Setup » : les versions 1.0.x prennent le premier « Setup*.exe » venu.
-                var isInstaller = name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) &&
+                // Une archive portable (.zip) n'est jamais un installeur.
+                var isInstaller = !isPortable && name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) &&
                                   (name.Contains("Setup", StringComparison.OrdinalIgnoreCase) || name.Contains("Installer", StringComparison.OrdinalIgnoreCase));
-                if (isInstaller && isArm == (architecture == "arm64"))
+                if (isInstaller && url == null && isArm == (architecture == "arm64"))
                 {
                     url = asset.GetProperty("browser_download_url").GetString();
-                    if (asset.TryGetProperty("size", out var s) && s.ValueKind == JsonValueKind.Number) size = s.GetInt64();
-                    sha256 = ParseDigest(asset.TryGetProperty("digest", out var d) && d.ValueKind == JsonValueKind.String ? d.GetString() : null);
-                    break;
+                    (size, sha256) = SizeAndDigest(asset);
+                }
+                else if (isPortable && portableUrl == null && name.EndsWith($"-{architecture}.zip", StringComparison.OrdinalIgnoreCase))
+                {
+                    portableUrl = asset.GetProperty("browser_download_url").GetString();
+                    (portableSize, portableSha256) = SizeAndDigest(asset);
                 }
             }
         }
@@ -82,8 +105,17 @@ public static class UpdateChecker
 
         var page = release.TryGetProperty("html_url", out var html) ? html.GetString() ?? ReleasesPage : ReleasesPage;
         var notes = release.TryGetProperty("body", out var body) ? body.GetString() ?? "" : "";
-        return new UpdateInfo(version, tag, url, page, notes, size, sha256);
+        return new UpdateInfo(version, tag, url, page, notes, size, sha256)
+        {
+            PortableUrl = portableUrl,
+            PortableSize = portableSize,
+            PortableSha256 = portableSha256,
+        };
     }
+
+    private static (long Size, string? Sha256) SizeAndDigest(JsonElement asset) =>
+        (asset.TryGetProperty("size", out var s) && s.ValueKind == JsonValueKind.Number ? s.GetInt64() : 0,
+         ParseDigest(asset.TryGetProperty("digest", out var d) && d.ValueKind == JsonValueKind.String ? d.GetString() : null));
 
     /// <summary>« sha256:ABCD… » → « abcd… » ; tout autre format → null.</summary>
     internal static string? ParseDigest(string? digest)
@@ -95,11 +127,14 @@ public static class UpdateChecker
     }
 
     /// <summary>null si l'installeur correspond à ce que GitHub annonce, sinon la raison.</summary>
-    internal static string? CheckIntegrity(UpdateInfo update, long length, string sha256Hex)
+    internal static string? CheckIntegrity(UpdateInfo update, long length, string sha256Hex) =>
+        CheckIntegrity(update.Size, update.Sha256, length, sha256Hex);
+
+    internal static string? CheckIntegrity(long expectedSize, string? expectedSha256, long length, string sha256Hex)
     {
-        if (update.Size > 0 && length != update.Size)
-            return $"fichier incomplet ({length:N0} octets reçus sur {update.Size:N0})";
-        if (update.Sha256 != null && !string.Equals(update.Sha256, sha256Hex, StringComparison.OrdinalIgnoreCase))
+        if (expectedSize > 0 && length != expectedSize)
+            return $"fichier incomplet ({length:N0} octets reçus sur {expectedSize:N0})";
+        if (expectedSha256 != null && !string.Equals(expectedSha256, sha256Hex, StringComparison.OrdinalIgnoreCase))
             return "l'empreinte du fichier ne correspond pas à celle publiée sur GitHub";
         return null;
     }
@@ -108,20 +143,43 @@ public static class UpdateChecker
     /// Télécharge l'installeur dans un « .part », contrôle taille et SHA-256, puis seulement lui donne son nom
     /// définitif. En cas d'échec, le fichier partiel est supprimé : un installeur abîmé ou altéré n'est jamais lancé.
     /// </summary>
-    public static async Task<string> DownloadAsync(UpdateInfo update, IProgress<double>? progress, CancellationToken ct = default)
+    public static Task<string> DownloadAsync(UpdateInfo update, IProgress<double>? progress, CancellationToken ct = default)
     {
-        var uri = new Uri(update.DownloadUrl);
+        if (AppPaths.IsPortable)
+            throw new InvalidOperationException("Mode portable : l'installeur n'est pas téléchargé (utilisez l'archive portable).");
+        var target = Path.Combine(Path.GetTempPath(), "SpokaPilote", $"SpokaPilote-Setup-{update.Version}.exe");
+        return DownloadVerifiedAsync(update.DownloadUrl, update.Size, update.Sha256, target, progress, ct);
+    }
+
+    /// <summary>
+    /// Mode portable : télécharge l'archive portable de la nouvelle version dans <paramref name="folder"/> (sur la clé),
+    /// contrôle taille et SHA-256 (empreinte publiée par GitHub obligatoire) et renvoie son chemin. Rien n'est extrait
+    /// ni exécuté : le technicien remplace lui-même la copie portable, SpokaPilote fermé.
+    /// </summary>
+    public static Task<string> DownloadPortableAsync(UpdateInfo update, string folder, IProgress<double>? progress, CancellationToken ct = default)
+    {
+        if (update.PortableUrl is null)
+            throw new UpdateIntegrityException($"La version {update.Version.ToString(3)} ne publie pas d'archive portable pour {HostArchitecture} : voir {update.ReleaseUrl}.");
+        if (update.PortableSha256 is null)
+            throw new UpdateIntegrityException($"GitHub n'annonce pas l'empreinte SHA-256 de l'archive portable : téléchargez-la depuis {update.ReleaseUrl}.");
+        var target = Path.Combine(folder, PortableAssetName(update.Version.ToString(3), HostArchitecture));
+        return DownloadVerifiedAsync(update.PortableUrl, update.PortableSize, update.PortableSha256, target, progress, ct);
+    }
+
+    private static async Task<string> DownloadVerifiedAsync(string url, long expectedSize, string? expectedSha256, string target,
+        IProgress<double>? progress, CancellationToken ct)
+    {
+        var uri = new Uri(url);
         if (uri.Scheme != Uri.UriSchemeHttps || !uri.Host.EndsWith("github.com", StringComparison.OrdinalIgnoreCase))
             throw new UpdateIntegrityException("Adresse de mise à jour inattendue : seule une Release GitHub de SpokaPilote est acceptée.");
 
-        var target = Path.Combine(Path.GetTempPath(), "SpokaPilote", $"SpokaPilote-Setup-{update.Version}.exe");
         var part = target + ".part";
         Directory.CreateDirectory(Path.GetDirectoryName(target)!);
         try
         {
             using var response = await Http.Client.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
             response.EnsureSuccessStatusCode();
-            var total = response.Content.Headers.ContentLength ?? update.Size;
+            var total = response.Content.Headers.ContentLength ?? expectedSize;
             using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
             long done = 0;
             await using (var source = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false))
@@ -137,8 +195,8 @@ public static class UpdateChecker
                     if (total > 0) progress?.Report(done * 100.0 / total);
                 }
             }
-            var problem = CheckIntegrity(update, done, Convert.ToHexString(hash.GetHashAndReset()));
-            if (problem != null) throw new UpdateIntegrityException("Installeur refusé : " + problem + ".");
+            var problem = CheckIntegrity(expectedSize, expectedSha256, done, Convert.ToHexString(hash.GetHashAndReset()));
+            if (problem != null) throw new UpdateIntegrityException((target.EndsWith(".zip", StringComparison.OrdinalIgnoreCase) ? "Archive portable refusée : " : "Installeur refusé : ") + problem + ".");
             File.Move(part, target, true);
             return target;
         }
@@ -155,6 +213,8 @@ public static class UpdateChecker
     /// </summary>
     public static void LaunchInstaller(string installerPath, bool relaunch)
     {
+        if (AppPaths.IsPortable)
+            throw new InvalidOperationException("Mode portable : l'installeur n'est jamais lancé depuis une copie portable.");
         var args = relaunch
             ? "/SILENT /SUPPRESSMSGBOXES /NORESTART /RELAUNCH=1"
             : "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART";

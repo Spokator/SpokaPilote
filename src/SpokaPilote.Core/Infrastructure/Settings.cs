@@ -3,7 +3,10 @@ using System.Text.Json.Serialization;
 
 namespace SpokaPilote.Core.Infrastructure;
 
-/// <summary>Configuration persistée dans %ProgramData%\SpokaPilote\settings.json (déployable par GPO / Intune).</summary>
+/// <summary>
+/// Configuration persistée dans %ProgramData%\SpokaPilote\settings.json (déployable par GPO / Intune) ; en mode
+/// portable, dans Data\settings.json sur la clé (voir <see cref="AppPaths"/>).
+/// </summary>
 public sealed class Settings
 {
     /// <summary>Dépôts de pilotes locaux ou réseau (ex. \serveur\pilotes) indexés en priorité.</summary>
@@ -44,6 +47,27 @@ public sealed class Settings
     /// reçoivent toujours le pilote RTX Enterprise servi par NVIDIA.
     /// </summary>
     public string NvidiaBranch { get; set; } = "studio";
+
+    /// <summary>
+    /// Dépôts réellement indexés : en mode portable, le dépôt de la clé (&lt;dossier de l'exe&gt;\Depot, s'il existe) en
+    /// premier, puis les dépôts configurés (un chemin relatif l'est par rapport au dossier de la copie portable).
+    /// Calculé à chaque appel et jamais enregistré : la lettre de la clé change d'un poste à l'autre.
+    /// </summary>
+    public List<string> EffectiveRepositoryPaths() => EffectiveRepositoryPaths(AppPaths.DefaultRepository, AppPaths.PortableHome);
+
+    internal List<string> EffectiveRepositoryPaths(string? defaultRepository, string? portableHome)
+    {
+        var list = new List<string>();
+        void Add(string path)
+        {
+            if (!string.IsNullOrWhiteSpace(path) &&
+                !list.Any(p => string.Equals(Path.TrimEndingDirectorySeparator(p), Path.TrimEndingDirectorySeparator(path), StringComparison.OrdinalIgnoreCase)))
+                list.Add(path);
+        }
+        if (defaultRepository is not null) Add(defaultRepository);
+        foreach (var path in RepositoryPaths) Add(AppPaths.ResolveRepositoryPath(path, portableHome));
+        return list;
+    }
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {

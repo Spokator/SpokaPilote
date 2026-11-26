@@ -1,5 +1,6 @@
 using System.Text.Json;
 using SpokaPilote.Core.Infrastructure;
+using SpokaPilote.Core.Inventory;
 
 namespace SpokaPilote.Core.Install;
 
@@ -32,6 +33,8 @@ public sealed class Intervention
     public string Id { get; set; } = DateTime.Now.ToString("yyyyMMdd-HHmmss");
     public DateTime Timestamp { get; set; } = DateTime.Now;
     public string ComputerName { get; set; } = Environment.MachineName;
+    /// <summary>MachineGuid du poste (absent des historiques antérieurs) : l'annulation n'est permise que sur ce poste.</summary>
+    public string? MachineId { get; set; }
     /// <summary>Type d'intervention (<see cref="InterventionKinds"/>) ; absent dans les historiques antérieurs = installation.</summary>
     public string? Kind { get; set; }
     public List<InterventionItem> Items { get; set; } = new();
@@ -63,7 +66,7 @@ public static class InterventionHistory
 {
     private static readonly JsonSerializerOptions Json = new() { WriteIndented = true };
 
-    public static string Folder => AppPaths.Ensure(Path.Combine(AppPaths.Root, "History"));
+    public static string Folder => AppPaths.History;
 
     /// <summary>Noms publiés des pilotes tiers présents dans le magasin (%windir%\INF\oem*.inf).</summary>
     public static HashSet<string> SnapshotDriverStore()
@@ -85,6 +88,7 @@ public static class InterventionHistory
     {
         try
         {
+            intervention.MachineId ??= SystemInfoProvider.ReadMachineId();
             File.WriteAllText(Path.Combine(Folder, intervention.Id + ".json"), JsonSerializer.Serialize(intervention, Json));
         }
         catch (Exception ex)
@@ -117,6 +121,8 @@ public static class InterventionHistory
     {
         if (!Elevation.IsAdministrator()) return (false, "L'annulation nécessite les droits administrateur.");
         if (!intervention.CanRollback) return (false, "Cette intervention n'a rien à annuler (aucun paquet ajouté, ou déjà annulée).");
+        if (CheckSameMachine(intervention, Environment.MachineName, SystemInfoProvider.ReadMachineId(),
+                sharedHistory: AppPaths.Layout.Mode == DataLocationMode.Portable) is { } otherMachine) return (false, otherMachine);
 
         var errors = new List<string>();
         foreach (var package in intervention.AddedDriverPackages)
@@ -136,6 +142,24 @@ public static class InterventionHistory
             : $"Annulation partielle : échec pour {string.Join(", ", errors)}.";
         Log.Info(message);
         return (errors.Count == 0, message);
+    }
+
+    /// <summary>
+    /// null si l'intervention a été faite sur ce poste, sinon la raison du refus. Les paquets à retirer (oemNN.inf) sont
+    /// numérotés par chaque poste : annuler l'intervention d'un autre poste supprimerait d'autres pilotes. Garde-fou
+    /// indispensable en mode portable, où une même clé conserve l'historique de nombreux postes.
+    /// Sans MachineGuid enregistré (historiques antérieurs), le nom du poste fait foi pour un historique partagé
+    /// (<paramref name="sharedHistory"/> : clé portable) ; un historique local (%ProgramData%) est par nature celui du poste.
+    /// </summary>
+    public static string? CheckSameMachine(Intervention intervention, string machineName, string? machineId, bool sharedHistory)
+    {
+        if (intervention.MachineId is { } recorded && machineId is not null)
+            return string.Equals(recorded, machineId, StringComparison.OrdinalIgnoreCase)
+                ? null
+                : $"Cette intervention a été réalisée sur un autre poste ({intervention.ComputerName}) : elle ne peut être annulée que sur ce poste.";
+        return !sharedHistory || string.Equals(intervention.ComputerName, machineName, StringComparison.OrdinalIgnoreCase)
+            ? null
+            : $"Cette intervention a été réalisée sur le poste {intervention.ComputerName} (poste actuel : {machineName}) : elle ne peut être annulée que sur ce poste.";
     }
 
     /// <summary>Réinstalle tous les pilotes d'une sauvegarde (dossier produit avant chaque intervention).</summary>
