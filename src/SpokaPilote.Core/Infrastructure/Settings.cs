@@ -40,6 +40,15 @@ public sealed class Settings
     /// Si null et qu'une console centrale est configurée : {ServerUrl}/api/policy.
     /// </summary>
     public string? PolicySource { get; set; }
+    /// <summary>
+    /// Cache de pilotes et de catalogues de la console centrale (consoles 4.0 et ultérieures) : « auto » (défaut) = utilisé
+    /// quand une console est configurée avec un jeton et que son cache est actif ; « on » = idem, avec un avertissement
+    /// dans le journal à chaque repli sur le téléchargement direct ; « off » = jamais. La console n'est qu'un transport :
+    /// le poste refait toutes ses vérifications, et télécharge directement si la console est injoignable.
+    /// </summary>
+    public string UseConsoleCache { get; set; } = "auto";
+    /// <summary>Demander aussi les catalogues (Microsoft Update Catalog, Dell, HP, Lenovo, NVIDIA) à la console.</summary>
+    public bool ConsoleCacheCatalogs { get; set; } = true;
     public bool UseGpuVendorSources { get; set; } = true;
     /// <summary>
     /// Branche des pilotes NVIDIA GeForce : « studio » (défaut, publiée moins souvent et validée pour la stabilité,
@@ -100,6 +109,7 @@ public sealed class Settings
         try
         {
             File.WriteAllText(AppPaths.SettingsFile, JsonSerializer.Serialize(this, JsonOptions));
+            Online.ConsoleCache.Configure(this);
         }
         catch (Exception ex)
         {

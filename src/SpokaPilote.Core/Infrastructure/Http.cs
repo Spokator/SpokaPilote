@@ -39,12 +39,31 @@ public static class Http
         return await response.Content.ReadAsStringAsync(cts.Token).ConfigureAwait(false);
     }
 
-    /// <summary>Télécharge un fichier de catalogue/métadonnées en cache disque, rafraîchi après <paramref name="maxAge"/>.</summary>
+    /// <summary>
+    /// Télécharge un fichier de catalogue/métadonnées en cache disque, rafraîchi après <paramref name="maxAge"/>. Avec une
+    /// console 4.0 (cache actif), le catalogue est d'abord demandé à la console : la date du fichier local est alors celle à
+    /// laquelle la console l'a obtenu de la source, pour que l'âge maximal compte depuis la source. Un catalogue absent de
+    /// la source (404) lève HttpRequestException comme en accès direct.
+    /// </summary>
     public static async Task<string> GetCachedFileAsync(string url, string cacheName, TimeSpan maxAge, CancellationToken ct = default)
     {
         var path = Path.Combine(AppPaths.Cache, cacheName);
         if (File.Exists(path) && DateTime.UtcNow - File.GetLastWriteTimeUtc(path) < maxAge && new FileInfo(path).Length > 0)
             return path;
+
+        if (Online.ConsoleCache.Current is { Catalogs: true } console && Uri.TryCreate(url, UriKind.Absolute, out var official))
+        {
+            var viaConsole = path + ".console";
+            var result = await console.TryCatalogFileAsync(official, viaConsole, ct).ConfigureAwait(false);
+            if (result is { Status: Online.ConsoleCatalogStatus.Ok })
+            {
+                File.Move(viaConsole, path, overwrite: true);
+                if (result.FetchedAt is { } fetched && fetched.UtcDateTime <= DateTime.UtcNow) File.SetLastWriteTimeUtc(path, fetched.UtcDateTime);
+                return path;
+            }
+            if (result is { Status: Online.ConsoleCatalogStatus.NotFoundAtSource })
+                throw new HttpRequestException($"{official.Host} : {Path.GetFileName(official.AbsolutePath)} introuvable (404).", null, HttpStatusCode.NotFound);
+        }
 
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         cts.CancelAfter(TimeSpan.FromMinutes(10));
