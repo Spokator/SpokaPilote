@@ -22,6 +22,8 @@ installations, et l'équipe IT suit le parc en temps réel depuis un navigateur.
 - **Politique de pilotes** et **profil d'imprimantes** : éditeurs JSON (validation, enregistrement) ; les postes les
   récupèrent avec leur jeton.
 - **Enrôlement** : commandes et script prêts à copier pour connecter les postes.
+- **Déploiement** (4.0) : diffusion des nouvelles versions de pilotes par **anneaux** (Pilote, Précoce, Général…) avec
+  délai et validation, et **suspension automatique** sur tout le parc d'une version qui échoue trop (§ 5).
 - **Grands parcs** (3.2) : listes paginées et filtrées par le serveur, indicateurs précalculés, rapports compressés,
   afflux de postes maîtrisés (`503` + `Retry-After`), supervision (`/api/metrics`, Prometheus), sauvegarde à chaud ;
   mesuré sur 20 000 postes × 20 rapports (§ 11).
@@ -414,6 +416,34 @@ le code de sortie, le **journal d'exécution** du poste et le lien vers le **rap
   lire ni compléter la tâche d'un autre poste.
 - Codes de sortie : `0` réussie, `3010` réussie (redémarrage requis), `2` échec partiel, `1` erreur.
 
+### Déploiement : anneaux et suspension automatique (4.0)
+
+La page **Déploiement** diffuse les nouvelles versions de pilotes progressivement, anneau par anneau, et suspend
+automatiquement celles qui échouent. Fonctionnement détaillé (première détection, règles servies aux postes, postes 3.x,
+disjoncteur, régressions, limites) : [POLITIQUE.md, « Anneaux de déploiement et suspension automatique »](POLITIQUE.md#anneaux-de-déploiement-et-suspension-automatique).
+
+- **Mise en route** (Administrateur) : « Créer les anneaux suggérés » (Pilote 0 jour, Précoce 3 jours, Général 10 jours),
+  associez des **groupes** à chaque anneau (« Modifier »), puis « Activer la diffusion par anneaux ». Avant l'activation,
+  rien ne change pour les postes, hormis les suspensions (manuelles ou du disjoncteur, toujours appliquées) ; les versions proposées sont déjà suivies depuis la mise à jour de la console, pour que
+  les délais soient justes dès l'activation.
+- **Anneaux** : ordre de diffusion (flèches), délai, validation exigée dans l'anneau précédent (installations réussies au
+  moins, échecs tolérés), groupes, nombre de postes. Un poste dans plusieurs anneaux reçoit le **plus tardif** ; un poste
+  sans groupe d'anneau, l'**anneau par défaut** (le dernier). L'indicateur « Dans plusieurs anneaux » compte ces postes.
+- **Réglages** : activation, anneau par défaut, pilotes manquants soumis ou non aux délais, disjoncteur (au moins 3 postes
+  en échec et 20 % des tentatives en 48 h par défaut, régressions comptées ou non), mémoire des familles de pilotes.
+- **Pilotes en cours de diffusion** : tableau paginé et calculé par le serveur (recherche, filtres « en cours et
+  suspendus », « suspensions à examiner », « diffusion terminée », « tous les pilotes vus ») : pilote, source, première
+  détection, **état par anneau** (« en attente jusqu'au 08/12/2026 à 09:00 », « validation en attente (2/3 réussies) »,
+  « autorisé », « validé », « suspendu ») et installations réussies / en échec par anneau. La fiche d'un pilote détaille
+  les anneaux, les derniers échecs (poste, message, régression) et l'historique.
+- **Actions** : **Suspendre** / **Reprendre** / **Maintenir le blocage** (Technicien et Administrateur), **Diffuser
+  partout** et l'annuler (Administrateur). Lecture seule : consultation. Tout est consigné dans le journal d'audit
+  (catégorie « Déploiement ») et dans l'**historique** de la page.
+- **Suspension automatique** : pastille rouge sur « Déploiement » dans le menu, encart sur la vue d'ensemble et en tête de
+  la page, ligne surlignée ; alerte « Pilote suspendu automatiquement » (§ 6).
+- **Aperçu** : `GET /api/rollout/preview?machine=NOM` renvoie la politique exacte que reçoit un poste (anneau, retenues,
+  familles, taille).
+
 ## 6. Alertes
 
 La console prévient l'équipe IT par **e-mail** et/ou **webhook** (Microsoft Teams, Discord, Slack, ou JSON générique pour
@@ -427,6 +457,7 @@ d'environnement (une variable définie **prime** sur la console : le champ y app
 | Tâche à distance échouée | Une tâche se termine en échec, ou reste « en cours » sans résultat |
 | Poste non vu | Aucun rapport depuis N jours (7 par défaut ; vérification tous les quarts d'heure) — une alerte groupée par période d'absence |
 | Pilote dangereux détecté | Le rapport signale un pilote connu pour provoquer des pannes (constat `critical` de code `known-bad-driver`, § 9) |
+| Pilote suspendu automatiquement (4.0) | Le disjoncteur de la diffusion vient de suspendre une version sur tout le parc (une alerte par version et par 24 h) |
 | Résumé quotidien (facultatif) | Chaque jour à l'heure choisie : postes à traiter, non vus, échecs, tâches, santé moyenne |
 
 **Anti-spam** : une même alerte (même poste, même motif) n'est jamais envoyée deux fois en moins de 24 heures. Aucune
@@ -607,6 +638,18 @@ conservés). Sauvegardez le volume avant une mise à jour majeure.
   creuse : `POST /api/admin/vacuum` (17 s et 2,2 Go → 0,9 Go mesurés sur 20 000 postes). Sans lui, SQLite réutilise la
   place libérée pour les nouveaux rapports, mais le fichier ne diminue pas.
 
+### Passage de la 3.2 à la 4.0 (diffusion par anneaux)
+
+- **Automatique et instantané** : la migration ajoute des tables (anneaux, versions vues, installations par anneau,
+  historique) sans réécrire aucune donnée existante. La diffusion par anneaux est **désactivée** après la mise à jour :
+  les postes reçoivent leur politique exactement comme avant tant qu'aucun anneau n'est activé (le disjoncteur, lui, est
+  actif, mais ne compte que les installations rapportées après la mise à jour).
+- Un serveur 3.2 ne sait pas relire une base 4.0 : sauvegardez avant la mise à jour (§ 8).
+- **Postes 3.x** : rien à faire, ils restent compatibles (règles du format 1 uniquement, anneau le plus prudent) ; mettez
+  au moins les postes pilotes en 4.0 pour qu'ils reçoivent leur propre anneau (voir POLITIQUE.md).
+- **Scripts** : `GET /api/policy` avec le jeton administrateur ou un compte renvoie toujours le document enregistré ; seul
+  le jeton d'enrôlement reçoit la politique effective.
+
 ## 9. API
 
 Toutes les routes sont sous `/api` ; réponses JSON (camelCase).
@@ -635,7 +678,7 @@ requêtes POST, PUT et DELETE exigent l'en-tête `X-SpokaPilote-CSRF` (§ 2.1).
 | `GET /api/machines/{nom}/raw` | lecture | Dernier rapport complet tel qu'envoyé (pour `spokapilote pack`) |
 | `DELETE /api/machines/{nom}` | admin | Retire le poste et son historique |
 | `GET /api/enrollment` | admin | Jeton d'enrôlement et réglages de rétention |
-| `GET /api/policy` | poste ou lecture | Politique de pilotes (JSON brut ; `204` si aucune) |
+| `GET /api/policy` | poste ou lecture | Politique de pilotes (JSON brut ; `204` si aucune). (4.0) Avec le jeton d'enrôlement : politique **effective** du poste (retenues et suspensions de la diffusion en tête ; en-têtes facultatifs `X-SpokaPilote-Machine-Id`, `X-SpokaPilote-Machine` ; section `rollout` si `X-SpokaPilote-Rollout: 1` ; réponse compressée si `Accept-Encoding: gzip` ; en-tête de réponse `X-SpokaPilote-Ring`) ; sans anneau actif ni suspension, le document tel quel |
 | `PUT /api/policy` / `DELETE /api/policy` | admin | Enregistre (JSON valide exigé, 1 Mo max) / supprime la politique |
 | `GET`, `PUT`, `DELETE /api/printer-profile` | idem | Profil d'imprimantes (même fonctionnement) |
 | `GET /api/job-types` | lecture | Actions à distance autorisées (liste fermée) |
@@ -667,6 +710,19 @@ requêtes POST, PUT et DELETE exigent l'en-tête `X-SpokaPilote-CSRF` (§ 2.1).
 | `GET /api/admin/backups` | admin | (3.2) Sauvegardes présentes et résultat de la dernière |
 | `POST /api/admin/backup?wait=` | admin | (3.2) Sauvegarde à chaud (`202` en arrière-plan, `wait=true` : attend et renvoie le résultat ; `409` si une sauvegarde est en cours) |
 | `POST /api/admin/vacuum` | admin | (3.2) Compactage de la base (bloque les écritures pendant sa durée : période creuse) |
+| `GET /api/rollout/summary` | lecture | (4.0) `{ enabled, active, rings, inRollout, suspended, attention }` |
+| `GET /api/rollout` | lecture | (4.0) Réglages, anneaux (groupes, postes, anneau par défaut), postes dans plusieurs anneaux, compteurs |
+| `PUT /api/rollout/settings` | admin | (4.0) `{ "enabled", "defaultRingId", "applyToMissingDrivers", "familyRetentionDays", "breaker": { "enabled", "minFailures", "minFailureRatePercent", "windowHours", "countRegressions" } }` |
+| `POST /api/rollout/rings` / `PUT /api/rollout/rings/{id}` | admin | (4.0) `{ "name", "delayDays", "requireValidation", "minSuccesses", "maxFailures", "description", "groups": [id…] }` |
+| `DELETE /api/rollout/rings/{id}` | admin | (4.0) Supprime un anneau (ses postes passent dans l'anneau par défaut) |
+| `PUT /api/rollout/rings/order` | admin | (4.0) `{ "ids": [premier, …, dernier] }` (tous les anneaux) |
+| `POST /api/rollout/rings/suggested` | admin | (4.0) Crée Pilote (0 j), Précoce (3 j), Général (10 j) s'il n'y a encore aucun anneau |
+| `GET /api/rollout/versions?status=&q=&offset=&limit=` | lecture | (4.0) Versions vues, avec l'état par anneau ; `status` : `active` (défaut), `rollout`, `suspended`, `attention`, `completed`, `all` ; 500 au plus par page |
+| `GET /api/rollout/versions/{id}` | lecture | (4.0) Fiche : état par anneau, derniers échecs, historique |
+| `POST /api/rollout/versions/{id}/suspend` · `/resume` · `/acknowledge` | tech | (4.0) Suspendre (`{ "reason" }`), reprendre, maintenir le blocage (`{ "comment" }`) |
+| `POST /api/rollout/versions/{id}/approve` · `/unapprove` | admin | (4.0) Diffuser partout maintenant / revenir à la diffusion progressive |
+| `GET /api/rollout/history?offset=&limit=` | lecture | (4.0) Historique (suspensions, reprises, diffusions forcées, activation) |
+| `GET /api/rollout/preview?machine=` | lecture | (4.0) Politique effective d'un poste (anneau, nombre de retenues et de familles, taille, document) |
 
 `POST /api/reports` renvoie aussi `reportId` (à indiquer dans le résultat d'une tâche) et `renamedFrom` (ancien nom si le
 poste, reconnu par son identifiant, a été renommé).
@@ -794,6 +850,13 @@ d'agent/s, 5 rapports/s, 5 utilisateurs, dont les routes complètes historiques)
 vue d'ensemble 728 / 1 544 ms et matériel sans pilote 794 / 1 727 ms (recalculés à chaque nouveau rapport) ; liste
 complète historique (69 Mo) 1,0 / 1,4 s ; export CSV de tout le parc (28 Mo) 1,7 / 2,2 s ; afflux de 200 envois
 simultanés : 620 rapports/s, p99 0,68 s ; création d'un groupe par règle : 0,3 s ; mémoire 1,6 Go (dont cache disque).
+
+**Diffusion par anneaux (4.0)**, mesurée par le test `RolloutPerformanceTests` (serveur en mémoire, poste de développement,
+20 000 postes, 3 anneaux par groupes, 300 versions de 60 familles en cours de diffusion) : politique effective servie à
+2 000 postes pris au hasard **p50 0,33 ms, p95 0,78 ms, p99 1,2 ms** (un document par anneau, en cache ; une requête ne
+fait que chercher l'anneau du poste) ; document de l'anneau le plus tardif 146 Ko, **7 Ko compressés** (anneau pilote :
+0,5 Ko) ; recalcul complet de l'état de diffusion 2 ms ; enregistrement d'un rapport de 15 propositions et
+5 installations p50 1,9 ms, p95 3,5 ms (coût proportionnel au rapport, pas au parc).
 
 ### Dimensionnement
 
