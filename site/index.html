@@ -102,8 +102,9 @@
       <div class="card">
         <div class="icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg></div>
         <h3>Console centrale</h3>
-        <p>Une console web auto-hébergée (Docker) : état du parc, postes à traiter, matériel sans pilote, politique de
-          pilotes et profil d'imprimantes diffusés aux postes. <a href="{{ROOT}}console.html">En savoir plus</a></p>
+        <p>Une console web auto-hébergée (Docker, HTTPS automatique) : état et santé du parc, postes à traiter, matériel
+          sans pilote, <strong>actions à distance</strong> et <strong>alertes</strong> par e-mail, Teams, Discord ou Slack.
+          <a href="{{ROOT}}console.html">En savoir plus</a></p>
       </div>
       <div class="card">
         <div class="icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8l-9-5-9 5v8l9 5z"/><path d="M3.3 7.5 12 12l8.7-4.5M12 22V12"/></svg></div>
@@ -116,6 +117,30 @@
         <h3>Ligne de commande</h3>
         <p>La commande <code>spokapilote</code> fait tout ce que fait l'interface, pour les scripts de déploiement,
           Intune ou un outil de télémaintenance. Codes de sortie documentés.</p>
+      </div>
+      <div class="card">
+        <div class="icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg></div>
+        <h3>Santé des pilotes</h3>
+        <p>Une note de A à E pour chaque poste : pilotes manquants, en erreur, non signés, très anciens, et surtout
+          <strong>pilotes dangereux déjà installés</strong> (versions signalées par Microsoft pour des écrans bleus).</p>
+      </div>
+      <div class="card">
+        <div class="icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.6 2.6-2.4-.6-.6-2.4z"/></svg></div>
+        <h3>Réparation et nettoyage</h3>
+        <p>Réparation guidée des périphériques en erreur (redémarrer, réactiver, réinstaller), avec diagnostic des pannes
+          matérielles ; nettoyage des vieilles versions de pilotes inutilisées, sauvegardées avant suppression.</p>
+      </div>
+      <div class="card">
+        <div class="icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="14" rx="2"/><path d="M8 21h8M12 18v3"/></svg></div>
+        <h3>Surface, NVIDIA et images Windows</h3>
+        <p>Packs officiels Microsoft Surface, pilotes graphiques NVIDIA automatiques, et injection d'un dépôt de pilotes
+          dans une image d'installation Windows (validée sur l'image officielle Windows 11).</p>
+      </div>
+      <div class="card">
+        <div class="icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15 15 0 0 1 0 20M12 2a15 15 0 0 0 0 20"/></svg></div>
+        <h3>Accessible, en français et en anglais</h3>
+        <p>Assistant de premier lancement, raccourcis clavier (F5, Ctrl+1 à 8), compatible lecteurs d'écran, thème clair
+          ou sombre de Windows, interface en français ou en anglais.</p>
       </div>
     </div>
   </div>

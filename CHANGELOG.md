@@ -1,5 +1,41 @@
 # Journal des versions
 
+## 3.0.0 — 26/11/2026
+
+SpokaPilote devient la boîte à outils complète du technicien, et la console pilote le parc à distance.
+
+**Console centrale**
+- **Actions à distance** depuis la fiche d'un poste, une sélection ou les postes à traiter : analyser, installer les
+  pilotes manquants ou les mises à jour, déployer les imprimantes, annuler la dernière intervention, mettre à jour
+  SpokaPilote. Liste blanche d'actions, jamais de commande arbitraire. Vue « Tâches » avec l'état et le résultat.
+- **Agent du poste** : tâche planifiée `\SpokaPilote\Agent` (compte SYSTEM) qui récupère et exécute les actions ;
+  `spokapilote agent enable|status|run|run-now|disable`, et dans l'interface (Paramètres).
+- **Alertes** par e-mail (SMTP), Microsoft Teams, Discord, Slack ou webhook : poste critique, pilote dangereux installé,
+  échec d'installation, poste silencieux ; une seule alerte par sujet et par 24 heures ; bouton de test.
+- **Note de santé** de chaque poste dans la liste du parc et sur sa fiche.
+- Postes identifiés par leur identifiant machine Windows (un poste renommé ou réinstallé n'est plus dupliqué) ;
+  migration automatique de la base 2.0.
+- Blocage temporaire après des essais de jetons répétés ; profil **HTTPS automatique** (Caddy, Let's Encrypt) dans
+  `docker-compose.yml`.
+
+**Poste**
+- **Santé des pilotes** : note de A à E (pilotes manquants, en erreur, non signés, très anciens, pilotes dangereux déjà
+  installés), dans l'interface, le rapport HTML et `spokapilote health`.
+- **Réparation guidée** des périphériques en erreur : redémarrer, désactiver / réactiver, réinstaller le pilote,
+  rechercher un pilote ; diagnostic des pannes matérielles ; `spokapilote device list|repair`.
+- **Nettoyage du magasin de pilotes** : anciennes versions inutilisées, sauvegardées avant suppression, simulation
+  par défaut ; `spokapilote driverstore list|clean`.
+- **Packs Microsoft Surface** (Centre de téléchargement Microsoft), à côté de Dell, HP et Lenovo ; firmwares UEFI
+  distingués et installés uniquement sur demande (`--include-firmware`).
+- **Injection dans une image Windows** validée sur l'image officielle Windows 11 Entreprise (WIM et Windows hors
+  ligne) : la mention expérimentale est retirée ; option `--no-firmware`, diagnostic clair de l'erreur DISM 87.
+- **Interface en anglais** (Paramètres ou `--lang en`), **assistant de premier lancement**, raccourcis clavier (F5,
+  F1, Ctrl+1 à 8), noms accessibles pour les lecteurs d'écran, dernier onglet mémorisé.
+
+**Distribution**
+- Signature de code facultative (exe, dll, installeurs) dès qu'un certificat est fourni ; MSIX x64, ARM64 et bundle ;
+  manifestes winget générés à chaque version ; site web https://spokator.github.io/SpokaPilote/.
+
 ## 2.0.1 — 26/11/2026
 
 - Mise à jour automatique : l'installeur ARM64 s'appelle désormais `SpokaPilote-Installer-<version>-arm64.exe`, pour

@@ -1,4 +1,4 @@
-﻿# SpokaPilote
+# SpokaPilote
 
 [![CI](https://github.com/Spokator/SpokaPilote/actions/workflows/ci.yml/badge.svg)](https://github.com/Spokator/SpokaPilote/actions/workflows/ci.yml)
 [![Version](https://img.shields.io/github/v/release/Spokator/SpokaPilote?label=version)](https://github.com/Spokator/SpokaPilote/releases/latest)
@@ -51,16 +51,22 @@ Une chaîne de contrôle stricte, **non désactivable** :
 | **Imprimantes** | Découverte SNMP/IPP, modèle exact, pilote vérifié (WHQL exact, universel constructeur, IPP Windows), file d'impression |
 | **Historique** | Chaque intervention est tracée ; annulation = retour aux pilotes précédents ; sauvegardes réinstallables |
 | **Maintenance automatique** | Tâche planifiée (SYSTEM) : pilotes manquants, mises à jour ou analyse seule, chaque semaine / jour / au démarrage |
+| **Santé des pilotes** | Note de A à E : pilotes manquants, en erreur, non signés, très anciens, pilotes dangereux déjà installés |
+| **Réparation guidée** | Périphérique en erreur : redémarrer, réactiver, réinstaller le pilote ; diagnostic des pannes matérielles |
+| **Nettoyage du magasin** | Anciennes versions de pilotes inutilisées, sauvegardées avant suppression (simulation par défaut) |
+| **Accessibilité** | Assistant de premier lancement, raccourcis clavier, lecteurs d'écran, interface en français ou en anglais |
 
 ### Pour le parc
 | Fonction | Détail |
 |---|---|
-| **Console centrale** | Les postes envoient leurs rapports ; vue d'ensemble, postes à traiter, matériel sans pilote sur tout le parc, historique |
+| **Console centrale** | Les postes envoient leurs rapports ; vue d'ensemble, note de santé, postes à traiter, matériel sans pilote sur tout le parc, historique |
+| **Actions à distance** | Depuis la console : analyser, installer, déployer les imprimantes, annuler, mettre à jour ; exécutées par l'agent du poste |
+| **Alertes** | E-mail, Teams, Discord, Slack ou webhook : poste critique, pilote dangereux, échec d'installation, poste silencieux |
 | **Politique de pilotes** | `driver-policy.json` : bloquer un pilote / une version / un matériel, figer une version, limiter les sources ; diffusée par la console, un partage ou une URL |
-| **Packs constructeur** | Le pack de déploiement officiel Dell / HP / Lenovo d'un modèle, vérifié et rangé dans le dépôt : plus besoin de poste de référence |
+| **Packs constructeur** | Le pack de déploiement officiel Dell / HP / Lenovo / Microsoft Surface d'un modèle, vérifié et rangé dans le dépôt : plus besoin de poste de référence |
 | **Profils d'imprimantes** | Exporter les imprimantes d'un poste, déployer sur les autres (conditions par sous-réseau ou nom de poste), idempotent |
 | **Postes sans réseau** | Pack hors ligne préparé ailleurs à partir du rapport du poste (carte réseau sans pilote) |
-| **Images Windows** *(expérimental)* | Injection d'un dépôt de pilotes dans un `install.wim` ou un Windows hors ligne (DISM) |
+| **Images Windows** | Injection d'un dépôt de pilotes dans un `install.wim` ou un Windows hors ligne (DISM), validée sur Windows 11 |
 | **Rapports** | HTML/JSON par poste, rapport de parc consolidé, CSV depuis la console |
 
 ## Démarrage rapide
@@ -85,6 +91,10 @@ spokapilote printers export-profile imprimantes.json    # puis : printers deploy
 spokapilote schedule enable --weekly lundi --time 12:30 --mode missing --output-dir \\srv\rapports
 spokapilote policy test --policy driver-policy.json     # ce que la politique bloquerait sur ce poste
 spokapilote server status                               # connexion à la console centrale
+spokapilote agent enable                                # accepter les actions à distance de la console
+spokapilote health                                      # note de santé des pilotes de ce poste
+spokapilote device repair <id> --action restart         # réparation guidée d'un périphérique
+spokapilote driverstore clean --dry-run                 # aperçu ; --yes --backup pour supprimer
 spokapilote help                                        # toutes les commandes
 ```
 Codes de sortie : `0` OK · `1` erreur · `2` échec partiel · `3010` redémarrage requis.
@@ -111,7 +121,10 @@ sur un poste connecté, puis `spokapilote install --repo E:\pack --yes`.
 - [Packs constructeur et images](docs/PACKS-ET-IMAGES.md)
 - [Imprimantes et maintenance planifiée](docs/IMPRIMANTES-ET-PLANIFICATION.md)
 - [Pilotes graphiques](docs/PILOTES-GRAPHIQUES.md)
+- [Boîte à outils du technicien](docs/OUTILS-TECHNICIEN.md) — santé, réparation guidée, nettoyage du magasin
+- [Signature de code](docs/SIGNATURE.md) et [distribution / winget](docs/DISTRIBUTION.md)
 - [Publication sur le Microsoft Store](docs/PUBLICATION-STORE.md)
+- Site : https://spokator.github.io/SpokaPilote/
 
 ## Architecture
 
@@ -128,7 +141,7 @@ src/SpokaPilote.Core/         moteur (aucune dépendance UI)
 src/SpokaPilote.Cli/          spokapilote.exe (Commands/ : une commande par fichier)
 src/SpokaPilote.App/          SpokaPilote.App.exe (WPF .NET 10, thème Fluent)
 server/SpokaPilote.Server/    console centrale (ASP.NET Core, SQLite, Docker)
-tests/                        ~400 tests (cœur + serveur)
+tests/                        ~600 tests (cœur + serveur)
 installer/ packaging/ scripts/  Inno Setup x64/ARM64, MSIX Store, build et publication
 ```
 
@@ -141,23 +154,25 @@ dotnet test SpokaPilote.sln                           # tests
 ```
 Version : `Directory.Build.props`. Visuels : `tools\make-assets.ps1`.
 
-## État et limites connues (v2.0)
+## État et limites connues (v3.0)
 
 - **Validé en réel** (Windows 11 25H2) : installeur, mise à jour automatique, installation de pilotes Windows Update,
-  installation depuis un dépôt puis annulation, pack hors ligne, packs officiels Dell / HP / Lenovo (téléchargés,
-  vérifiés, extraits, indexés), NVIDIA (recherche + téléchargement + signature, en simulation), politique de pilotes,
-  console centrale en conteneur Docker, profils d'imprimantes et tâche planifiée (avec une imprimante de test).
+  installation depuis un dépôt puis annulation, pack hors ligne, packs officiels Dell / HP / Lenovo / Surface
+  (téléchargés, vérifiés, extraits, indexés), NVIDIA (recherche + téléchargement + signature, en simulation), politique
+  de pilotes, console centrale en conteneur Docker avec actions à distance et alertes e-mail, profils d'imprimantes et
+  tâche planifiée (avec une imprimante de test), santé des pilotes, nettoyage du magasin (simulation), injection dans
+  l'image officielle Windows 11 Entreprise (machine virtuelle).
 - **Pas encore validé sur matériel** : catalogues Dell / HP / Lenovo « par modèle » sur un vrai poste de ces marques,
   vraie imprimante réseau, version ARM64 (compilée et vérifiée, pas exécutée), installation réelle d'un pilote NVIDIA.
-- **Expérimental** : injection de pilotes dans une image Windows (l'étape d'ajout n'a pas été validée sur un vrai
-  `install.wim`).
+- L'injection d'images (DISM) peut échouer sur un PC où un anti-triche noyau (ex. Riot Vanguard) bloque le
+  chargement des registres hors ligne : la faire depuis un poste ou une machine virtuelle dédiés.
 - Intel et AMD ne publient pas de source exploitable automatiquement : SpokaPilote donne le lien officiel.
-- Les installeurs ne sont pas signés (SmartScreen peut avertir au premier lancement) ; la version Store le serait.
+- Les installeurs ne sont signés que si un certificat est fourni (voir [docs/SIGNATURE.md](docs/SIGNATURE.md)) ;
+  sans cela, SmartScreen peut avertir au premier lancement.
 
 ## Feuille de route
 
-- Validation terrain sur parcs Dell, HP et Lenovo ; injection d'images validée sur `install.wim`
-- Signature de code des installeurs
-- Console : actions à distance (lancer une analyse / installation depuis la console), alertes par e-mail
-- Pilotes Microsoft Surface (packs MSI officiels), firmware Thunderbolt / stations d'accueil
-- Interface en anglais pour le Microsoft Store international
+- Validation terrain sur parcs Dell, HP et Lenovo, et sur un PC ARM64
+- Firmware Thunderbolt / stations d'accueil (Dell WD, HP, Lenovo)
+- Console : comptes nominatifs et rôles, groupes de postes, actions planifiées par groupe
+- Publication winget et Microsoft Store

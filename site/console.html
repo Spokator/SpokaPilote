@@ -51,6 +51,14 @@
         et modèles concernés ; export CSV.</p></div>
       <div class="card"><h3>Politique et imprimantes</h3><p>La politique de pilotes et le profil d'imprimantes se modifient
         en ligne ; les postes les récupèrent automatiquement avec leur jeton.</p></div>
+      <div class="card"><h3>Actions à distance</h3><p>Depuis la fiche d'un poste ou une sélection : analyser, installer les
+        pilotes manquants ou les mises à jour, déployer les imprimantes, annuler la dernière intervention, mettre à jour
+        SpokaPilote. L'agent du poste exécute l'action et renvoie le résultat.</p></div>
+      <div class="card"><h3>Note de santé</h3><p>Chaque poste reçoit une note de A à E ; le parc se trie par note, et les
+        pilotes dangereux déjà installés sont signalés en priorité.</p></div>
+      <div class="card"><h3>Alertes</h3><p>E-mail (SMTP), Microsoft Teams, Discord, Slack ou webhook générique : poste
+        devenu critique, pilote dangereux, échec d'installation, poste silencieux. Une seule alerte par sujet et par
+        24 heures.</p></div>
     </div>
     <div class="gallery" style="margin-top:28px">
       <figure>
@@ -101,6 +109,10 @@ spokapilote server status</code></pre>
         données isolées dans un volume.</li>
       <li><strong>Vos données restent chez vous</strong> : base SQLite locale, aucune télémétrie, aucun service externe.</li>
       <li><strong>Taille des rapports limitée</strong> et historique borné par poste (réglables).</li>
+      <li><strong>Actions à distance sur liste blanche</strong> : la console ne peut demander que des actions SpokaPilote
+        prédéfinies, jamais une commande arbitraire.</li>
+      <li><strong>Protection contre les essais de jetons</strong> : blocage temporaire après des échecs répétés, et
+        profil HTTPS automatique (Caddy) dans le fichier Docker Compose.</li>
     </ul>
   </div>
 </section>
