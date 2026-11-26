@@ -14,7 +14,7 @@
   </PropertyGroup>
   <ItemGroup>
     <!-- Seule dépendance : le fournisseur SQLite officiel de Microsoft (stockage embarqué, sans serveur de base de données). -->
-    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.15" />
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="11.0.0" />
   </ItemGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="SpokaPilote.Server.Tests" />
