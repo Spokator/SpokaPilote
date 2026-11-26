@@ -722,12 +722,12 @@ public sealed class DriverCacheStore : IDisposable
 
     /// <summary>
     /// Reste-t-il assez de place sur le volume pour <paramref name="incoming"/> octets ? Le cache n'entame jamais l'espace
-    /// libre minimal (MinFreeGb, et au moins 10 % du volume) : la base, ses sauvegardes et son compactage en ont besoin.
+    /// libre minimal (MinFreeGb, et au moins 5 % du volume) : la base, ses sauvegardes et son compactage en ont besoin.
     /// </summary>
     private bool HasRoomFor(long incoming, DriverCacheSettings settings)
     {
         var (free, total) = SafeDisk();
-        var reserve = Math.Max(settings.MinFreeBytes, total / 10);
+        var reserve = Reserve(settings, total);
         var ok = free - incoming >= reserve;
         if (!ok && !_diskWarned)
         {
@@ -738,6 +738,9 @@ public sealed class DriverCacheStore : IDisposable
         else if (ok) _diskWarned = false;
         return ok;
     }
+
+    /// <summary>Espace que le cache laisse toujours libre : MinFreeGb, et au moins 5 % du volume.</summary>
+    internal static long Reserve(DriverCacheSettings settings, long volumeBytes) => Math.Max(settings.MinFreeBytes, volumeBytes / 20);
 
     private (long Free, long Total) SafeDisk()
     {
@@ -837,7 +840,7 @@ public sealed class DriverCacheStore : IDisposable
                 _entries.Values.Count(e => e.Kind == "file"), _entries.Values.Count(e => e.Kind == "catalog"), _blobs.Count,
                 _totals.FileHits, _totals.FileMisses, _totals.CatalogHits, _totals.CatalogMisses, _totals.BytesServedFromCache, _totals.BytesFromOrigin,
                 _totals.Refused, _totals.Bypassed, _totals.Errors, _totals.HashMismatches, _flights.Count, free, total,
-                free < Math.Max(settings.MinFreeBytes, total / 10),
+                free < Reserve(settings, total),
                 _msCatalogPausedUntil > Now ? _msCatalogPausedUntil : null);
         }
     }

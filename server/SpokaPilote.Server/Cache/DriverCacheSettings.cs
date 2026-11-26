@@ -17,8 +17,8 @@ public sealed class DriverCacheSettings
     public int CatalogTtlHours { get; set; } = 12;
     /// <summary>Un fichier téléchargé il y a plus de ce nombre de jours est retéléchargé à la demande suivante (l'empreinte de son contenu évite tout doublon).</summary>
     public int FileMaxAgeDays { get; set; } = 30;
-    /// <summary>Espace libre minimal du volume (Go, et au moins 10 % du volume) : en dessous, plus aucun fichier n'est mis en cache.</summary>
-    public double MinFreeGb { get; set; } = 5;
+    /// <summary>Espace libre minimal du volume (Go, et au moins 5 % du volume) : en dessous, plus aucun fichier n'est mis en cache.</summary>
+    public double MinFreeGb { get; set; } = 10;
 
     public long MaxBytes => (long)(MaxSizeGb * 1024 * 1024 * 1024);
     public long MinFreeBytes => (long)(MinFreeGb * 1024 * 1024 * 1024);
@@ -106,7 +106,7 @@ public sealed class DriverCacheSettingsService(ServerStore store, IConfiguration
         s.MaxSizeGb = Math.Clamp(double.IsFinite(s.MaxSizeGb) ? s.MaxSizeGb : 20, 0.01, 100_000);
         s.CatalogTtlHours = Math.Clamp(s.CatalogTtlHours, 1, 168);
         s.FileMaxAgeDays = Math.Clamp(s.FileMaxAgeDays, 1, 3650);
-        s.MinFreeGb = Math.Clamp(double.IsFinite(s.MinFreeGb) ? s.MinFreeGb : 5, 0, 100_000);
+        s.MinFreeGb = Math.Clamp(double.IsFinite(s.MinFreeGb) ? s.MinFreeGb : 10, 0, 100_000);
     }
 
     /// <summary>Enregistre une modification (les champs verrouillés par variable d'environnement sont refusés).</summary>

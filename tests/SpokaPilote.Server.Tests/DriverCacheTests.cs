@@ -402,7 +402,7 @@ public sealed class DriverCacheTests : IDisposable
     public async Task Disk_guard_stops_caching_when_the_volume_is_nearly_full()
     {
         _origin.Add(DellFile, Bytes(1000));
-        _disk = (3L * 1024 * 1024 * 1024, 100L * 1024 * 1024 * 1024); // 3 Go libres < 10 Go (10 % du volume)
+        _disk = (3L * 1024 * 1024 * 1024, 100L * 1024 * 1024 * 1024); // 3 Go libres < 10 Go (MinFreeGb par défaut)
         var r = await _host.Client(AgentToken).GetAsync(FileRoute(DellFile));
         Assert.Equal(HttpStatusCode.ServiceUnavailable, r.StatusCode);
         Assert.Equal("bypass", r.Headers.GetValues(DriverCacheEndpoints.CacheHeader).Single());
