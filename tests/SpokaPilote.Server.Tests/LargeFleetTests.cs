@@ -329,6 +329,39 @@ public sealed class FleetCacheTests : IDisposable
     }
 
     [Fact]
+    public void Summary_index_is_refreshed_incrementally_and_stays_identical_to_a_full_computation()
+    {
+        _host.Client(null);
+        var store = _host.Factory.Services.GetRequiredService<ServerStore>();
+        var now = FleetSeed.Now;
+        FleetSeed.Save(store, 30);
+        void Same() => Assert.Equal(FleetSeed.Serialize(FleetAggregator.Summarize(store.GetMachines(), now, 7)),
+            FleetSeed.Serialize(store.GetFleetSummary(null, now, 7)));
+        Same();
+        Assert.Equal(1, store.SummaryIndexStats.FullLoads);
+
+        // Nouveaux rapports (poste devenu sain, poste devenu à traiter), renommage : seuls ces postes sont relus.
+        foreach (var (name, json) in new[]
+                 {
+                     ("PC-RH-001", new ReportFixture("PC-RH-001", timestamp: now.AddMinutes(5)).WithMachineId(new Guid(2, 0, 0, new byte[8]).ToString()).Json()),
+                     ("PC-COMPTA-000", ReportFixture.Typical("PC-COMPTA-000", timestamp: now.AddMinutes(5)).WithMachineId(new Guid(1, 0, 0, new byte[8]).ToString()).Json()),
+                     ("PC-RENOMME", new ReportFixture("PC-RENOMME", timestamp: now.AddMinutes(6)).WithMachineId(new Guid(3, 0, 0, new byte[8]).ToString()).Json()),
+                 })
+        {
+            store.SaveReport(ReportParser.Parse(json), json, now.AddMinutes(10));
+            Same();
+        }
+        Assert.Equal(1, store.SummaryIndexStats.FullLoads);
+        Assert.True(store.SummaryIndexStats.IncrementalRows >= 3);
+        Assert.Null(store.GetMachine("PC-ATELIER-002"));                        // renommé en PC-RENOMME
+
+        // Suppression : détectée, rechargement complet.
+        Assert.True(store.DeleteMachine("PC-RENOMME"));
+        Same();
+        Assert.Equal(2, store.SummaryIndexStats.FullLoads);
+    }
+
+    [Fact]
     public async Task Subnet_rules_follow_the_address_of_the_latest_report()
     {
         var admin = _host.Client(AdminToken);
@@ -587,13 +620,14 @@ public sealed class MigrationFrom31Tests : IDisposable
             var name = $"PC-MIG-{i:D2}";
             using var insert = c.CreateCommand();
             insert.CommandText = """
-                INSERT INTO machines(name, machine_id, last_seen, last_report, summary_json, last_ip) VALUES($n, NULL, $seen, $at, $s, $ip) RETURNING id;
+                INSERT INTO machines(name, machine_id, last_seen, last_report, summary_json, raw_report, last_ip) VALUES($n, NULL, $seen, $at, $s, $raw, $ip) RETURNING id;
                 """;
             insert.Parameters.AddWithValue("$n", name);
             insert.Parameters.AddWithValue("$seen", ServerStore.Iso(latest.Report.Timestamp));
             insert.Parameters.AddWithValue("$at", ServerStore.Iso(latest.Report.Timestamp));
             insert.Parameters.AddWithValue("$s", latest.Summary.Replace(latest.Report.Name, name));
             insert.Parameters.AddWithValue("$ip", $"10.0.0.{i + 1}");
+            insert.Parameters.AddWithValue("$raw", GzipText(latest.Raw));
             var id = (long)insert.ExecuteScalar()!;
             foreach (var r in reports)
             {
@@ -612,6 +646,17 @@ public sealed class MigrationFrom31Tests : IDisposable
                 member.ExecuteNonQuery();
             }
         }
+        // Un poste supprimé en 3.1 (identifiant 13) : son identifiant ne doit jamais être réutilisé après la migration.
+        using var gone = c.CreateCommand();
+        gone.CommandText = "INSERT INTO machines(name, last_seen, last_report, summary_json) VALUES('PC-GONE', 'x', 'x', '{}'); DELETE FROM machines WHERE name = 'PC-GONE';";
+        gone.ExecuteNonQuery();
+    }
+
+    private static byte[] GzipText(string text)
+    {
+        using var output = new MemoryStream();
+        using (var gzip = new GZipStream(output, CompressionLevel.Optimal, leaveOpen: true)) gzip.Write(Encoding.UTF8.GetBytes(text));
+        return output.ToArray();
     }
 
     private object? Scalar(string sql)
@@ -639,7 +684,8 @@ public sealed class MigrationFrom31Tests : IDisposable
         Assert.Equal(FleetSeed.Serialize(FleetAggregator.Rows(machines, now, 7).Select(r => r.Name)),
             FleetSeed.Serialize(store.QueryMachines(new MachineQuery(), now, 7).Rows.Select(r => r.Name)));
         Assert.All(machines, m => Assert.Equal(3, m.ReportCount));
-        Assert.Equal(0L, Scalar("SELECT COUNT(*) FROM machines WHERE summary_gz IS NULL OR summary_json <> '';"));
+        Assert.Equal(FleetSeed.Json(30), store.GetRawReport("PC-MIG-03"));     // rapport brut 3.1 déplacé dans machine_data
+        Assert.Equal(0L, Scalar("SELECT COUNT(*) FROM machines m WHERE summary_json <> '' OR raw_report IS NOT NULL OR NOT EXISTS (SELECT 1 FROM machine_data d WHERE d.machine_ref = m.id AND d.summary_gz IS NOT NULL);"));
 
         // Groupes : membres par règle calculés pendant la migration, membres manuels conservés.
         var groups = store.GetGroups();
@@ -673,6 +719,8 @@ public sealed class MigrationFrom31Tests : IDisposable
         again.SaveReport(ReportParser.Parse(json), json, now);
         Assert.Equal(3, again.GetMachine("PC-MIG-00")!.ReportCount);
         Assert.Equal(2, again.GetMachine("PC-MIG-00")!.Report.DriverProblems);
+        var fresh = ReportFixture.Typical("PC-NOUVEAU", timestamp: now).Json();
+        Assert.Equal(14, again.SaveReport(ReportParser.Parse(fresh), fresh, now).MachineRef);   // séquence AUTOINCREMENT conservée
     }
 
     [Fact]

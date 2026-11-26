@@ -24,8 +24,30 @@ public sealed record MachineQuery(
 /// <summary>Page de la liste des postes : lignes demandées et nombre total de postes correspondant aux filtres.</summary>
 public sealed record MachinePage(int Total, List<MachineRow> Rows);
 
+/// <summary>Même classement que la collation NOCASE de SQLite (lettres ASCII sans distinction de casse, puis ordre des caractères).</summary>
+public sealed class SqliteNoCaseComparer : IComparer<string>
+{
+    public int Compare(string? x, string? y)
+    {
+        if (ReferenceEquals(x, y)) return 0;
+        if (x is null) return -1;
+        if (y is null) return 1;
+        var n = Math.Min(x.Length, y.Length);
+        for (var i = 0; i < n; i++)
+        {
+            int a = x[i], b = y[i];
+            if (a is >= 'A' and <= 'Z') a += 32;
+            if (b is >= 'A' and <= 'Z') b += 32;
+            if (a != b) return a - b;
+        }
+        return x.Length - y.Length;
+    }
+}
+
 public sealed partial class ServerStore
 {
+    internal static readonly SqliteNoCaseComparer NoCase = new();
+
     /// <summary>Filtres d'état de la liste des postes (mêmes définitions que la console).</summary>
     public static readonly IReadOnlyList<string> StatusFilters =
         ["all", "todo", "healthy", "stale", "unresolved", "hardware", "failed", "blocked", "dangerous", "jobs"];
@@ -136,11 +158,13 @@ public sealed partial class ServerStore
             }
         }
         using var cmd = c.CreateCommand();
-        cmd.CommandText = $"SELECT {SummaryColumns} FROM machines m {(groupId is null ? "" : $"WHERE m.id IN {GroupMembersOf}")} ORDER BY m.name;";
+        cmd.CommandText = $"SELECT {SummaryColumns} FROM machines m {(groupId is null ? "" : $"WHERE m.id IN {GroupMembersOf}")};";
         if (groupId is not null) cmd.Parameters.AddWithValue("$group", groupId);
         using var r = cmd.ExecuteReader();
         var result = new List<MachineSummary>();
         while (r.Read()) result.Add(ReadSummaryRow(r, missing.GetValueOrDefault(r.GetInt64(0))));
+        // Lecture dans l'ordre physique (séquentielle), puis tri par nom comme ORDER BY name (classement NOCASE de SQLite).
+        result.Sort((a, b) => NoCase.Compare(a.Name, b.Name));
         return result;
     }
 
@@ -226,6 +250,10 @@ public sealed partial class ServerStore
     /// </summary>
     public MachinePage QueryMachines(MachineQuery q, DateTimeOffset now, int staleDays)
     {
+        // Liste historique complète (tout le parc ou un groupe) : depuis l'index en mémoire, dernier contact des agents relu.
+        if (q.Limit is null && q.Sort is null && string.IsNullOrWhiteSpace(q.Search) && q.Status is null && !q.WithoutGroup)
+            return AllMachinesFromIndex(q.GroupId, now, staleDays);
+
         using var c = Open();
         List<MachineSummary> summaries;
         int total;
@@ -262,6 +290,35 @@ public sealed partial class ServerStore
             return row;
         });
         return new MachinePage(total, q.Sort is null && q.Limit is null ? FleetAggregator.DefaultOrder(rows).ToList() : rows.ToList());
+    }
+
+    private MachinePage AllMachinesFromIndex(long? groupId, DateTimeOffset now, int staleDays)
+    {
+        IEnumerable<MachineSummary> list = CurrentSummaries();
+        if (groupId is { } g)
+        {
+            var members = GroupMemberIds(g);
+            list = list.Where(m => members.Contains(m.Id));
+        }
+        using var c = Open();
+        var seen = new Dictionary<long, DateTimeOffset>();
+        using (var cmd = c.CreateCommand())
+        {
+            cmd.CommandText = "SELECT id, agent_seen FROM machines WHERE agent_seen IS NOT NULL;";
+            using var r = cmd.ExecuteReader();
+            while (r.Read()) seen[r.GetInt64(0)] = ParseIso(r.GetString(1));
+        }
+        var active = ActiveJobCounts(c, null);
+        var membership = Membership(c, null);
+        var rows = list.Select(m =>
+        {
+            var row = FleetAggregator.ToRow(m, now, staleDays);
+            row.AgentSeen = seen.TryGetValue(m.Id, out var s) ? s : null;
+            row.ActiveJobs = active.GetValueOrDefault(m.Id);
+            row.Groups = membership.GetValueOrDefault(m.Id) ?? new List<long>();
+            return row;
+        }).ToList();
+        return new MachinePage(rows.Count, FleetAggregator.DefaultOrder(rows).ToList());
     }
 
     /// <summary>Nombre de postes et de postes à traiter, de tout le parc ou d'un groupe.</summary>
@@ -445,18 +502,182 @@ public sealed partial class ServerStore
     public FleetSummary GetFleetSummary(long? groupId, DateTimeOffset now, int staleDays)
     {
         var key = groupId ?? 0;
-        var revision = FleetRevision();
-        if (_fleetCache.TryGetValue(key, out var cached) && cached.Revision == revision && cached.StaleDays == staleDays &&
-            (now - cached.ComputedAt).Duration() < FleetCacheMaxAge)
+        bool Fresh(out FleetSummary result, long revision)
+        {
+            if (_fleetCache.TryGetValue(key, out var cached) && cached.Revision == revision && cached.StaleDays == staleDays &&
+                (now - cached.ComputedAt).Duration() < FleetCacheMaxAge)
+            {
+                result = cached.Summary;
+                return true;
+            }
+            result = null!;
+            return false;
+        }
+        if (Fresh(out var hit, FleetRevision()))
         {
             Interlocked.Increment(ref _fleetCacheHits);
-            return cached.Summary;
+            return hit;
         }
-        Interlocked.Increment(ref _fleetCacheMisses);
-        var summary = FleetAggregator.SummarizeFleet(GetMachineSummaries(groupId, withMissing: true), now, staleDays);
-        if (_fleetCache.Count > 1000) _fleetCache.Clear();
-        _fleetCache[key] = new CachedFleet(revision, now, staleDays, summary);
-        return summary;
+        // Un seul calcul à la fois par synthèse : les requêtes simultanées attendent ce calcul au lieu d'en lancer d'autres.
+        lock (_fleetLocks.GetOrAdd(key, _ => new object()))
+        {
+            var revision = FleetRevision();
+            if (Fresh(out hit, revision))
+            {
+                Interlocked.Increment(ref _fleetCacheHits);
+                return hit;
+            }
+            Interlocked.Increment(ref _fleetCacheMisses);
+            var all = CurrentSummaries();
+            IReadOnlyCollection<MachineSummary> machines = all;
+            if (groupId is { } g)
+            {
+                var members = GroupMemberIds(g);
+                machines = all.Where(m => members.Contains(m.Id)).ToList();
+            }
+            var summary = FleetAggregator.SummarizeFleet(machines, now, staleDays);
+            if (_fleetCache.Count > 1000) _fleetCache.Clear();
+            _fleetCache[key] = new CachedFleet(revision, now, staleDays, summary);
+            return summary;
+        }
+    }
+
+    private readonly ConcurrentDictionary<long, object> _fleetLocks = new();
+
+    /// <summary>Membres d'un groupe (manuels et par règle).</summary>
+    private HashSet<long> GroupMemberIds(long groupId)
+    {
+        using var c = Open();
+        using var cmd = c.CreateCommand();
+        cmd.CommandText = $"SELECT machine_ref FROM {GroupMembersOf} x;";
+        cmd.Parameters.AddWithValue("$group", groupId);
+        using var r = cmd.ExecuteReader();
+        var set = new HashSet<long>();
+        while (r.Read()) set.Add(r.GetInt64(0));
+        return set;
+    }
+
+    // ------------------------------------------------------------------ index des indicateurs en mémoire (incrémental)
+
+    /// <summary>
+    /// Indicateurs de tous les postes gardés en mémoire (~600 octets par poste) et rafraîchis de façon incrémentale :
+    /// seuls les postes dont la révision (colonne rev, tenue par les triggers) a changé depuis le dernier passage sont
+    /// relus. Lire les 37 colonnes de 20 000 postes coûte ~200 ms ; après un rapport, la mise à jour n'en relit qu'un.
+    /// Une suppression est détectée par le nombre de postes (rechargement complet, rare).
+    /// </summary>
+    private sealed class SummaryIndex
+    {
+        public long Revision;
+        public long MaxRowRevision;
+        public readonly Dictionary<long, MachineSummary> ById = new();
+        public List<MachineSummary>? Sorted;
+    }
+
+    private readonly Lock _indexLock = new();
+    private SummaryIndex? _index;
+    private long _indexFullLoads;
+    private long _indexIncrementalRows;
+
+    /// <summary>Rechargements complets de l'index et postes relus de façon incrémentale (supervision, tests).</summary>
+    public (long FullLoads, long IncrementalRows) SummaryIndexStats => (Interlocked.Read(ref _indexFullLoads), Interlocked.Read(ref _indexIncrementalRows));
+
+    /// <summary>Indicateurs (avec le matériel sans pilote) de tous les postes, triés par nom ; liste partagée : ne pas modifier.</summary>
+    internal List<MachineSummary> CurrentSummaries()
+    {
+        lock (_indexLock)
+        {
+            using var c = Open();
+            using var tx = c.BeginTransaction(deferred: true);   // un seul instantané pour la révision, les postes et leur matériel
+            var revision = Convert.ToInt64(Scalar(c, "SELECT value FROM meta WHERE key = 'fleet_rev';") ?? 0L, CultureInfo.InvariantCulture);
+            if (_index is { Sorted: not null } current && current.Revision == revision) return current.Sorted;
+
+            var index = _index;
+            if (index is not null)
+            {
+                var changed = new List<MachineSummary>();
+                using (var cmd = c.CreateCommand())
+                {
+                    cmd.CommandText = $"SELECT {SummaryColumns}, m.rev FROM machines m WHERE m.rev > $rev;";
+                    cmd.Parameters.AddWithValue("$rev", index.MaxRowRevision);
+                    using var r = cmd.ExecuteReader();
+                    while (r.Read() && changed.Count <= 5000)
+                    {
+                        changed.Add(ReadSummaryRow(r));
+                        index.MaxRowRevision = Math.Max(index.MaxRowRevision, r.GetInt64(37));
+                    }
+                }
+                var count = Convert.ToInt32(Scalar(c, "SELECT COUNT(*) FROM machines;"), CultureInfo.InvariantCulture);
+                if (changed.Count > 5000) index = null;   // beaucoup de changements : rechargement complet
+                else
+                {
+                    var missing = LoadMissing(c, changed.Select(m => m.Id).ToList());
+                    foreach (var m in changed) index.ById[m.Id] = WithMissing(m, missing.GetValueOrDefault(m.Id));
+                    Interlocked.Add(ref _indexIncrementalRows, changed.Count);
+                    if (index.ById.Count != count) index = null;   // un poste a été supprimé
+                }
+            }
+            if (index is null)
+            {
+                index = new SummaryIndex();
+                var missing = LoadMissing(c, null);
+                using var cmd = c.CreateCommand();
+                cmd.CommandText = $"SELECT {SummaryColumns}, m.rev FROM machines m;";
+                using var r = cmd.ExecuteReader();
+                while (r.Read())
+                {
+                    var m = ReadSummaryRow(r, missing.GetValueOrDefault(r.GetInt64(0)));
+                    index.ById[m.Id] = m;
+                    index.MaxRowRevision = Math.Max(index.MaxRowRevision, r.GetInt64(37));
+                }
+                Interlocked.Increment(ref _indexFullLoads);
+            }
+            index.Revision = revision;
+            var sorted = index.ById.Values.ToList();
+            sorted.Sort((a, b) => NoCase.Compare(a.Name, b.Name));
+            index.Sorted = sorted;
+            _index = index;
+            return sorted;
+        }
+    }
+
+    private static MachineSummary WithMissing(MachineSummary m, IReadOnlyList<DeviceEntry>? missing) =>
+        missing is null || missing.Count == 0 ? m : new MachineSummary
+        {
+            Id = m.Id, Name = m.Name, MachineId = m.MachineId, LastSeen = m.LastSeen, AgentSeen = m.AgentSeen, LastIp = m.LastIp,
+            ReportCount = m.ReportCount, System = m.System, DisplayModel = m.DisplayModel, LastReport = m.LastReport, AppVersion = m.AppVersion,
+            DeviceCount = m.DeviceCount, DriverProblems = m.DriverProblems, HardwareFaults = m.HardwareFaults, Unresolved = m.Unresolved,
+            Proposed = m.Proposed, Blocked = m.Blocked, Installed = m.Installed, Failed = m.Failed, SourceErrors = m.SourceErrors,
+            AnalysisOnly = m.AnalysisOnly, RebootRequired = m.RebootRequired, Healthy = m.Healthy, HealthScore = m.HealthScore,
+            HealthGrade = m.HealthGrade, HealthCritical = m.HealthCritical, HealthWarnings = m.HealthWarnings, DangerousDriver = m.DangerousDriver,
+            Missing = missing,
+        };
+
+    /// <summary>Matériel sans pilote par poste (tous, ou les postes indiqués), dans l'ordre du rapport.</summary>
+    private static Dictionary<long, List<DeviceEntry>> LoadMissing(SqliteConnection c, IReadOnlyCollection<long>? ids)
+    {
+        var missing = new Dictionary<long, List<DeviceEntry>>();
+        if (ids is { Count: 0 }) return missing;
+        using var mc = c.CreateCommand();
+        mc.CommandText = $"""
+            SELECT mm.machine_ref, mm.hw_key, mm.name, mm.error_code, mm.status_text, mm.hint, mm.only_blocked FROM machine_missing mm
+            {(ids is null ? "" : $"WHERE mm.machine_ref IN ({string.Join(",", ids)})")}
+            ORDER BY mm.machine_ref, mm.ord;
+            """;
+        using var mr = mc.ExecuteReader();
+        while (mr.Read())
+        {
+            if (!missing.TryGetValue(mr.GetInt64(0), out var list)) missing[mr.GetInt64(0)] = list = new List<DeviceEntry>();
+            list.Add(new DeviceEntry
+            {
+                HardwareIds = [mr.GetString(1)],
+                Name = mr.GetString(2),
+                ErrorCode = mr.GetInt32(3),
+                StatusText = mr.IsDBNull(4) ? null : mr.GetString(4),
+                Hint = mr.IsDBNull(5) ? null : mr.GetString(5),
+                OnlyBlockedCandidates = mr.GetInt32(6) != 0,
+            });
+        }
+        return missing;
     }
 
     // ------------------------------------------------------------------ groupes : appartenance par règle (matérialisée)

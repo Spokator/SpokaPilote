@@ -104,7 +104,14 @@ public sealed class StorageMaintenance(ServerStore store, ServerOptions options,
         if (LegacyReportsConverted > 0)
         {
             log.LogInformation("Historique compressé : {Count} rapport(s) en {Seconds:0} s.", LegacyReportsConverted, sw.Elapsed.TotalSeconds);
-            try { store.Optimize(); } catch (Exception ex) { log.LogWarning(ex, "PRAGMA optimize en échec."); }
+            try
+            {
+                store.Optimize();
+                var stats = store.GetDatabaseStats();
+                log.LogInformation("Base : {Size:0} Mo dont {Free:0} % de pages libres ; POST /api/admin/vacuum (en période creuse) rend cette place au disque.",
+                    stats.FileBytes / 1048576.0, stats.FreeRatio * 100);
+            }
+            catch (Exception ex) { log.LogWarning(ex, "PRAGMA optimize en échec."); }
         }
 
         // 2. Entretien périodique.

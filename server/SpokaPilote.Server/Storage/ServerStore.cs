@@ -77,7 +77,7 @@ public sealed partial class ServerStore
         // synchronous=NORMAL : en mode WAL, la base reste toujours cohérente ; seule une coupure de courant peut faire perdre
         // les toutes dernières écritures (un rapport renvoyé au passage suivant). Gain d'écriture important.
         pragma.CommandText = $"PRAGMA foreign_keys = {(foreignKeys ? "ON" : "OFF")}; PRAGMA busy_timeout = 10000; " +
-                             "PRAGMA synchronous = NORMAL; PRAGMA cache_size = -8000; PRAGMA temp_store = MEMORY;";
+                             "PRAGMA synchronous = NORMAL; PRAGMA temp_store = MEMORY; PRAGMA journal_size_limit = 67108864;";
         pragma.ExecuteNonQuery();
         return connection;
     }
@@ -249,40 +249,60 @@ public sealed partial class ServerStore
     /// <summary>
     /// Version 4 (console 3.2, grands parcs) : indicateurs précalculés des postes et des rapports, rapports normalisés
     /// compressés, matériel sans pilote par poste, appartenance aux groupes par règle, compteur de révision du parc
-    /// (invalidation des synthèses mises en cache), index des requêtes fréquentes. Ajouts uniquement.
+    /// (invalidation des synthèses mises en cache), index des requêtes fréquentes.
+    /// <para>
+    /// La table machines est reconstruite (procédure de modification de table de SQLite : nouvelle table, copie, suppression,
+    /// renommage ; clés, identifiants et références conservés) : ses lignes ne contiennent plus que des colonnes courtes,
+    /// les données volumineuses (rapport brut, rapport normalisé) passent dans machine_data. Lire les indicateurs de
+    /// 20 000 postes ne parcourt ainsi que quelques Mo, au lieu de traverser les chaînes de débordement des rapports.
+    /// </para>
     /// </summary>
-    private const string SchemaV4Columns = """
-        ALTER TABLE machines ADD COLUMN summary_gz BLOB;
-        ALTER TABLE machines ADD COLUMN sys_machine_id TEXT;
-        ALTER TABLE machines ADD COLUMN report_ts TEXT;
-        ALTER TABLE machines ADD COLUMN manufacturer TEXT;
-        ALTER TABLE machines ADD COLUMN model TEXT;
-        ALTER TABLE machines ADD COLUMN friendly_model TEXT;
-        ALTER TABLE machines ADD COLUMN display_model TEXT NOT NULL DEFAULT '';
-        ALTER TABLE machines ADD COLUMN serial TEXT;
-        ALTER TABLE machines ADD COLUMN os_caption TEXT;
-        ALTER TABLE machines ADD COLUMN os_display TEXT;
-        ALTER TABLE machines ADD COLUMN os_version TEXT;
-        ALTER TABLE machines ADD COLUMN architecture TEXT;
-        ALTER TABLE machines ADD COLUMN app_version TEXT;
-        ALTER TABLE machines ADD COLUMN report_count INTEGER NOT NULL DEFAULT 0;
-        ALTER TABLE machines ADD COLUMN device_count INTEGER NOT NULL DEFAULT 0;
-        ALTER TABLE machines ADD COLUMN driver_problems INTEGER NOT NULL DEFAULT 0;
-        ALTER TABLE machines ADD COLUMN hardware_faults INTEGER NOT NULL DEFAULT 0;
-        ALTER TABLE machines ADD COLUMN unresolved INTEGER NOT NULL DEFAULT 0;
-        ALTER TABLE machines ADD COLUMN proposed INTEGER NOT NULL DEFAULT 0;
-        ALTER TABLE machines ADD COLUMN blocked INTEGER NOT NULL DEFAULT 0;
-        ALTER TABLE machines ADD COLUMN installed INTEGER NOT NULL DEFAULT 0;
-        ALTER TABLE machines ADD COLUMN failed INTEGER NOT NULL DEFAULT 0;
-        ALTER TABLE machines ADD COLUMN source_errors INTEGER NOT NULL DEFAULT 0;
-        ALTER TABLE machines ADD COLUMN analysis_only INTEGER NOT NULL DEFAULT 1;
-        ALTER TABLE machines ADD COLUMN reboot_required INTEGER NOT NULL DEFAULT 0;
-        ALTER TABLE machines ADD COLUMN healthy INTEGER NOT NULL DEFAULT 1;
-        ALTER TABLE machines ADD COLUMN health_score INTEGER;
-        ALTER TABLE machines ADD COLUMN health_grade TEXT;
-        ALTER TABLE machines ADD COLUMN health_critical INTEGER NOT NULL DEFAULT 0;
-        ALTER TABLE machines ADD COLUMN health_warnings INTEGER NOT NULL DEFAULT 0;
-        ALTER TABLE machines ADD COLUMN dangerous_driver INTEGER NOT NULL DEFAULT 0;
+    private const string MachinesV4 = """
+        CREATE TABLE machines_v4 (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            name            TEXT NOT NULL UNIQUE COLLATE NOCASE,
+            machine_id      TEXT UNIQUE,
+            last_seen       TEXT NOT NULL,
+            last_report     TEXT NOT NULL,
+            agent_seen      TEXT,
+            last_ip         TEXT,
+            report_ts       TEXT,
+            sys_machine_id  TEXT,
+            manufacturer    TEXT,
+            model           TEXT,
+            friendly_model  TEXT,
+            display_model   TEXT NOT NULL DEFAULT '',
+            serial          TEXT,
+            os_caption      TEXT,
+            os_display      TEXT,
+            os_version      TEXT,
+            architecture    TEXT,
+            app_version     TEXT,
+            report_count    INTEGER NOT NULL DEFAULT 0,
+            device_count    INTEGER NOT NULL DEFAULT 0,
+            driver_problems INTEGER NOT NULL DEFAULT 0,
+            hardware_faults INTEGER NOT NULL DEFAULT 0,
+            unresolved      INTEGER NOT NULL DEFAULT 0,
+            proposed        INTEGER NOT NULL DEFAULT 0,
+            blocked         INTEGER NOT NULL DEFAULT 0,
+            installed       INTEGER NOT NULL DEFAULT 0,
+            failed          INTEGER NOT NULL DEFAULT 0,
+            source_errors   INTEGER NOT NULL DEFAULT 0,
+            analysis_only   INTEGER NOT NULL DEFAULT 1,
+            reboot_required INTEGER NOT NULL DEFAULT 0,
+            healthy         INTEGER NOT NULL DEFAULT 1,
+            health_score    INTEGER,
+            health_grade    TEXT,
+            health_critical INTEGER NOT NULL DEFAULT 0,
+            health_warnings INTEGER NOT NULL DEFAULT 0,
+            dangerous_driver INTEGER NOT NULL DEFAULT 0,
+            rev             INTEGER NOT NULL DEFAULT 0,
+            summary_json    TEXT NOT NULL DEFAULT '',
+            raw_report      BLOB
+        );
+        """;
+
+    private const string SchemaV4Reports = """
         ALTER TABLE reports ADD COLUMN summary_gz BLOB;
         ALTER TABLE reports ADD COLUMN report_ts TEXT;
         ALTER TABLE reports ADD COLUMN app_version TEXT;
@@ -304,6 +324,11 @@ public sealed partial class ServerStore
             value         INTEGER NOT NULL
         );
         INSERT OR IGNORE INTO meta(key, value) VALUES('fleet_rev', 1);
+        CREATE TABLE IF NOT EXISTS machine_data (
+            machine_ref   INTEGER PRIMARY KEY REFERENCES machines(id) ON DELETE CASCADE,
+            summary_gz    BLOB,
+            raw_report    BLOB
+        );
         CREATE TABLE IF NOT EXISTS machine_missing (
             machine_ref   INTEGER NOT NULL REFERENCES machines(id) ON DELETE CASCADE,
             ord           INTEGER NOT NULL,
@@ -321,19 +346,31 @@ public sealed partial class ServerStore
             PRIMARY KEY (group_id, machine_ref)
         ) WITHOUT ROWID;
         CREATE INDEX IF NOT EXISTS ix_group_auto_members_machine ON group_auto_members(machine_ref);
-        CREATE INDEX IF NOT EXISTS ix_machines_last_seen ON machines(last_seen);
-        CREATE INDEX IF NOT EXISTS ix_machines_status ON machines(healthy, failed DESC, driver_problems DESC);
         CREATE INDEX IF NOT EXISTS ix_jobs_state_finished ON jobs(state, finished_at);
         CREATE INDEX IF NOT EXISTS ix_jobs_pending_window ON jobs(not_after) WHERE state = 'pending' AND not_after IS NOT NULL;
         CREATE INDEX IF NOT EXISTS ix_reports_at ON reports(report_at);
         CREATE INDEX IF NOT EXISTS ix_reports_legacy ON reports(id) WHERE report_ts IS NULL;
+        """;
+
+    /// <summary>Index et triggers de révision (créés après la reconstruction de la table machines).</summary>
+    private const string SchemaV4Triggers = """
+        CREATE INDEX IF NOT EXISTS ix_machines_last_seen ON machines(last_seen);
+        CREATE INDEX IF NOT EXISTS ix_machines_status ON machines(healthy, failed DESC, driver_problems DESC);
+        CREATE INDEX IF NOT EXISTS ix_machines_rev ON machines(rev);
+        -- Chaque poste modifié reçoit la nouvelle révision du parc (rev) : le cache des indicateurs ne relit que ces postes.
         CREATE TRIGGER IF NOT EXISTS trg_rev_machines_insert AFTER INSERT ON machines
-            BEGIN UPDATE meta SET value = value + 1 WHERE key = 'fleet_rev'; END;
+            BEGIN
+                UPDATE meta SET value = value + 1 WHERE key = 'fleet_rev';
+                UPDATE machines SET rev = (SELECT value FROM meta WHERE key = 'fleet_rev') WHERE id = NEW.id;
+            END;
         CREATE TRIGGER IF NOT EXISTS trg_rev_machines_delete AFTER DELETE ON machines
             BEGIN UPDATE meta SET value = value + 1 WHERE key = 'fleet_rev'; END;
         CREATE TRIGGER IF NOT EXISTS trg_rev_machines_update
-            AFTER UPDATE OF name, machine_id, last_seen, last_report, summary_gz, last_ip, report_count, healthy ON machines
-            BEGIN UPDATE meta SET value = value + 1 WHERE key = 'fleet_rev'; END;
+            AFTER UPDATE OF name, machine_id, last_seen, last_report, report_ts, last_ip, report_count, healthy ON machines
+            BEGIN
+                UPDATE meta SET value = value + 1 WHERE key = 'fleet_rev';
+                UPDATE machines SET rev = (SELECT value FROM meta WHERE key = 'fleet_rev') WHERE id = NEW.id;
+            END;
         CREATE TRIGGER IF NOT EXISTS trg_rev_groups_insert AFTER INSERT ON machine_groups
             BEGIN UPDATE meta SET value = value + 1 WHERE key = 'fleet_rev'; END;
         CREATE TRIGGER IF NOT EXISTS trg_rev_groups_update AFTER UPDATE ON machine_groups
@@ -397,12 +434,53 @@ public sealed partial class ServerStore
         }
         // Version 4 (console 3.2) : colonnes et tables ajoutées, indicateurs des postes calculés tout de suite (listes et
         // synthèse correctes dès le démarrage) ; l'historique des rapports est compressé ensuite, par lots, en arrière-plan.
-        Execute(c, SchemaV4Columns);
+        Execute(c, SchemaV4Reports);
         Execute(c, SchemaV4Tables);
+        RebuildMachinesTable(c);
+        Execute(c, SchemaV4Triggers);
         BackfillMachines(c);
         Execute(c, $"PRAGMA user_version = {SchemaVersion};");
         tx.Commit();
         MigrationDuration = sw.Elapsed;
+    }
+
+    /// <summary>
+    /// Migration 4 : reconstruit la table machines (colonnes courtes d'abord, mêmes identifiants), le rapport brut passant
+    /// dans machine_data. Les clés étrangères sont désactivées pendant la migration : rapports, tâches et groupes gardent
+    /// leurs références (même nom de table, mêmes identifiants) ; la séquence AUTOINCREMENT est conservée (un identifiant
+    /// de poste supprimé n'est jamais réutilisé).
+    /// </summary>
+    private static void RebuildMachinesTable(SqliteConnection c)
+    {
+        var sequence = Scalar(c, "SELECT seq FROM sqlite_sequence WHERE name = 'machines';");
+        Execute(c, MachinesV4);
+        Execute(c, "INSERT INTO machine_data(machine_ref, raw_report) SELECT id, raw_report FROM machines;");
+        // Chaque ligne est écrite complète (indicateurs calculés depuis son dernier rapport) avant la suivante, dans l'ordre
+        // des identifiants : la nouvelle table est compacte, sans fragmentation.
+        using (var read = c.CreateCommand())
+        {
+            read.CommandText = "SELECT id, name, machine_id, last_seen, last_report, agent_seen, last_ip, summary_json FROM machines ORDER BY id;";
+            using var r = read.ExecuteReader();
+            while (r.Read())
+            {
+                var id = r.GetInt64(0);
+                Execute(c, """
+                    INSERT INTO machines_v4(id, name, machine_id, last_seen, last_report, agent_seen, last_ip) VALUES($id, $n, $mid, $seen, $at, $agent, $ip);
+                    """, ("$id", id), ("$n", r.GetString(1)), ("$mid", r.IsDBNull(2) ? null : r.GetString(2)), ("$seen", r.GetString(3)),
+                    ("$at", r.GetString(4)), ("$agent", r.IsDBNull(5) ? null : r.GetString(5)), ("$ip", r.IsDBNull(6) ? null : r.GetString(6)));
+                var report = Deserialize(r.GetString(7));
+                WriteMachineSummary(c, id, report, CompressSummary(report), "machines_v4");
+            }
+        }
+        Execute(c, """
+            DROP TABLE machines;
+            ALTER TABLE machines_v4 RENAME TO machines;
+            """);
+        if (sequence is not null)
+            Execute(c, """
+                UPDATE sqlite_sequence SET seq = MAX(seq, $s) WHERE name = 'machines';
+                INSERT INTO sqlite_sequence(name, seq) SELECT 'machines', $s WHERE NOT EXISTS (SELECT 1 FROM sqlite_sequence WHERE name = 'machines');
+                """, ("$s", sequence));
     }
 
     /// <summary>Migration 4 : indicateurs, résumé compressé, matériel sans pilote et groupes par règle de chaque poste.</summary>
@@ -411,7 +489,7 @@ public sealed partial class ServerStore
         var rows = new List<(long Id, string Json)>();
         using (var cmd = c.CreateCommand())
         {
-            cmd.CommandText = "SELECT id, summary_json FROM machines WHERE summary_gz IS NULL;";
+            cmd.CommandText = "SELECT id, summary_json FROM machines WHERE summary_json <> '';";
             using var r = cmd.ExecuteReader();
             while (r.Read()) rows.Add((r.GetInt64(0), r.GetString(1)));
         }
@@ -452,9 +530,9 @@ public sealed partial class ServerStore
         if (machineRef is null)
         {
             machineRef = Convert.ToInt64(Scalar(c, """
-                INSERT INTO machines(name, machine_id, last_seen, last_report, summary_json, raw_report) VALUES($n, $mid, $seen, $at, '', $raw)
+                INSERT INTO machines(name, machine_id, last_seen, last_report, summary_json) VALUES($n, $mid, $seen, $at, '')
                 RETURNING id;
-                """, ("$n", report.Name), ("$mid", machineId), ("$seen", Iso(seen)), ("$at", reportAt), ("$raw", raw)),
+                """, ("$n", report.Name), ("$mid", machineId), ("$seen", Iso(seen)), ("$at", reportAt)),
                 CultureInfo.InvariantCulture);
             isLatest = true;
         }
@@ -463,11 +541,17 @@ public sealed partial class ServerStore
             var current = (string)Scalar(c, "SELECT last_report FROM machines WHERE id = $id;", ("$id", machineRef))!;
             isLatest = string.CompareOrdinal(reportAt, current) >= 0;
             if (isLatest)
-                Execute(c, "UPDATE machines SET last_report = $at, summary_json = '', raw_report = $raw WHERE id = $id;",
-                    ("$id", machineRef), ("$at", reportAt), ("$raw", raw));
+                Execute(c, "UPDATE machines SET last_report = $at, summary_json = '', raw_report = NULL WHERE id = $id;", ("$id", machineRef), ("$at", reportAt));
             Execute(c, "UPDATE machines SET last_seen = $seen WHERE id = $id AND last_seen < $seen;", ("$id", machineRef), ("$seen", Iso(seen)));
         }
-        if (isLatest) WriteMachineSummary(c, machineRef.Value, report, summaryGz);
+        if (isLatest)
+        {
+            Execute(c, """
+                INSERT INTO machine_data(machine_ref, raw_report) VALUES($id, $raw)
+                ON CONFLICT(machine_ref) DO UPDATE SET raw_report = excluded.raw_report;
+                """, ("$id", machineRef), ("$raw", raw));
+            WriteMachineSummary(c, machineRef.Value, report, summaryGz);
+        }
         // Adresse d'envoi du rapport le plus récent : sert aux règles de groupe « sous-réseau » (jamais transmise aux postes).
         if (remoteIp is not null && isLatest)
             Execute(c, "UPDATE machines SET last_ip = $ip WHERE id = $id AND last_ip IS NOT $ip;", ("$id", machineRef), ("$ip", remoteIp));
@@ -499,11 +583,12 @@ public sealed partial class ServerStore
     }
 
     /// <summary>Colonnes d'indicateurs d'un poste et son matériel sans pilote (dernier rapport).</summary>
-    private static void WriteMachineSummary(SqliteConnection c, long machineRef, MachineReport r, byte[] summaryGz)
+    private static void WriteMachineSummary(SqliteConnection c, long machineRef, MachineReport r, byte[] summaryGz, string table = "machines")
     {
         var s = r.System;
-        Execute(c, """
-            UPDATE machines SET summary_json = '', summary_gz = $gz, sys_machine_id = $smid, report_ts = $ts, manufacturer = $man, model = $mod,
+        Execute(c, $"""
+            INSERT INTO machine_data(machine_ref, summary_gz) VALUES($id, $gz) ON CONFLICT(machine_ref) DO UPDATE SET summary_gz = excluded.summary_gz;
+            UPDATE {table} SET summary_json = '', sys_machine_id = $smid, report_ts = $ts, manufacturer = $man, model = $mod,
                 friendly_model = $fm, display_model = $dm, serial = $sn, os_caption = $osc, os_display = $osd, os_version = $osv,
                 architecture = $arch, app_version = $app, device_count = $dc, driver_problems = $dp, hardware_faults = $hf, unresolved = $un,
                 proposed = $pr, blocked = $bl, installed = $in, failed = $fa, source_errors = $se, analysis_only = $ao, reboot_required = $rr,
@@ -536,7 +621,10 @@ public sealed partial class ServerStore
         string? machineId, string reportAt)
     {
         if (machineId is not null &&
-            Row(c, "SELECT id, name, last_report, summary_json, summary_gz FROM machines WHERE machine_id = $mid;", ("$mid", machineId)) is { } byId)
+            Row(c, """
+                SELECT m.id, m.name, m.last_report, m.summary_json, d.summary_gz FROM machines m LEFT JOIN machine_data d ON d.machine_ref = m.id
+                WHERE m.machine_id = $mid;
+                """, ("$mid", machineId)) is { } byId)
         {
             var (id, currentName, lastReport) = ((long)byId[0]!, (string)byId[1]!, (string)byId[2]!);
             string? renamed = null;
@@ -551,7 +639,10 @@ public sealed partial class ServerStore
             }
             return (id, renamed, ReadSummary(byId[4] as byte[], byId[3] as string), displaced);
         }
-        if (Row(c, "SELECT id, machine_id, summary_json, summary_gz FROM machines WHERE name = $n;", ("$n", name)) is { } byName)
+        if (Row(c, """
+                SELECT m.id, m.machine_id, m.summary_json, d.summary_gz FROM machines m LEFT JOIN machine_data d ON d.machine_ref = m.id
+                WHERE m.name = $n;
+                """, ("$n", name)) is { } byName)
         {
             var id = (long)byName[0]!;
             if (machineId is not null && !string.Equals(byName[1] as string, machineId, StringComparison.Ordinal))
@@ -562,7 +653,8 @@ public sealed partial class ServerStore
     }
 
     private const string MachineColumns = """
-        m.name, m.last_seen, m.summary_json, m.summary_gz, m.report_count, m.id, m.machine_id, m.agent_seen, m.last_ip
+        m.name, m.last_seen, m.summary_json, (SELECT d.summary_gz FROM machine_data d WHERE d.machine_ref = m.id), m.report_count, m.id,
+        m.machine_id, m.agent_seen, m.last_ip
         """;
 
     /// <summary>Tous les postes avec leur dernier rapport normalisé complet (coûteux sur un grand parc : réservé aux tests et outils).</summary>
@@ -648,7 +740,9 @@ public sealed partial class ServerStore
     public string? GetRawReport(string name)
     {
         using var c = Open();
-        return Scalar(c, "SELECT raw_report FROM machines WHERE name = $n;", ("$n", name)) is byte[] raw ? Decompress(raw) : null;
+        return Scalar(c, """
+            SELECT COALESCE((SELECT d.raw_report FROM machine_data d WHERE d.machine_ref = m.id), m.raw_report) FROM machines m WHERE m.name = $n;
+            """, ("$n", name)) is byte[] raw ? Decompress(raw) : null;
     }
 
     public bool DeleteMachine(string name)
@@ -722,12 +816,19 @@ public sealed partial class ServerStore
 
     internal static string Iso(DateTimeOffset d) => d.ToUniversalTime().ToString("yyyy-MM-dd'T'HH:mm:ss.fffffff'Z'", CultureInfo.InvariantCulture);
 
-    internal static DateTimeOffset ParseIso(string s) => DateTimeOffset.Parse(s, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal);
+    internal static DateTimeOffset ParseIso(string s) =>
+        // Format écrit par Iso() : lecture exacte (bien plus rapide), lecture tolérante sinon.
+        DateTimeOffset.TryParseExact(s, "yyyy-MM-dd'T'HH:mm:ss.fffffff'Z'", CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var exact)
+            ? exact
+            : DateTimeOffset.Parse(s, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal);
 
     /// <summary>Horodatage du rapport avec son décalage d'origine (l'API le renvoie tel que le poste l'a envoyé).</summary>
     internal static string TimestampText(DateTimeOffset d) => d.ToString("O", CultureInfo.InvariantCulture);
 
-    internal static DateTimeOffset ParseTimestamp(string s) => DateTimeOffset.Parse(s, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind);
+    internal static DateTimeOffset ParseTimestamp(string s) =>
+        DateTimeOffset.TryParseExact(s, "O", CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var exact)
+            ? exact
+            : DateTimeOffset.Parse(s, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind);
 
     private static int Execute(SqliteConnection c, string sql, params (string Name, object? Value)[] parameters)
     {
