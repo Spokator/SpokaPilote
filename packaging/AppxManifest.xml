@@ -2,8 +2,8 @@
 <!--
   Manifeste MSIX de SpokaPilote.
   Avant la soumission au Microsoft Store, remplacez Identity/Name, Identity/Publisher et PublisherDisplayName
-  par les valeurs fournies par Partner Center (Produit > Identité du produit). build-msix.ps1 peut le faire :
-    .\packaging\build-msix.ps1 -IdentityName "12345Editeur.SpokaPilote" -Publisher "CN=XXXXXXXX-XXXX-..." -PublisherDisplayName "Votre nom"
+  par les valeurs fournies par Partner Center (Produit > Identité du produit). scripts\build-store.ps1 le fait :
+    .\scripts\build-store.ps1 -Arch all -IdentityName "12345Editeur.SpokaPilote" -Publisher "CN=XXXXXXXX-XXXX-..." -PublisherDisplayName "Votre nom"
 -->
 <Package
   xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
