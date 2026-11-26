@@ -296,7 +296,9 @@ public sealed class DriverCacheTests : IDisposable
             var r = await _host.Client(AgentToken).GetAsync(FileRoute(DellFile, wrong));
             complete = r.StatusCode == HttpStatusCode.OK && (await r.Content.ReadAsByteArrayAsync()).Length == data.Length;
         }
-        catch (Exception ex) when (ex is HttpRequestException or IOException)
+        // Selon le moment où la console coupe la connexion, l'hôte de test le signale par une erreur d'E/S ou par
+        // « The application aborted the request » (OperationCanceledException) : les deux sont le comportement attendu.
+        catch (Exception ex) when (ex is HttpRequestException or IOException or OperationCanceledException)
         {
         }
         Assert.False(complete);
