@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Net;
 using System.Text.Json;
 using SpokaPilote.Core.Infrastructure;
 using SpokaPilote.Core.Install;
@@ -14,7 +15,8 @@ public sealed record DriverPackDownloadResult(
     int InfCount = 0,
     int SignedInfCount = 0,
     IReadOnlyList<string>? Rejected = null,
-    bool AlreadyPresent = false);
+    bool AlreadyPresent = false,
+    int FirmwareInfCount = 0);
 
 public sealed class DriverPackDownloadOptions
 {
@@ -28,6 +30,8 @@ public sealed class DriverPackDownloadOptions
 /// Télécharge un pack officiel dans le dépôt : &lt;dépôt&gt;\&lt;Fabricant&gt;\&lt;Modèle&gt;\&lt;WinXX-arch&gt;\.
 /// Chaîne de contrôle : hôte officiel HTTPS (Downloader), empreinte du catalogue, signature Authenticode et éditeur
 /// approuvé pour les .exe, extraction sans installation, puis contrôle des catalogues (.cat) des INF extraits.
+/// Surface (MSI sans empreinte publiée) : lien relu sur la page officielle, taille annoncée vérifiée, signature
+/// Authenticode « Microsoft Corporation » obligatoire, extraction par installation administrative (msiexec /a).
 /// La source « Dépôt local » indexe ensuite automatiquement ces INF.
 /// </summary>
 public static class OemDriverPackDownloader
@@ -49,13 +53,30 @@ public static class OemDriverPackDownloader
         var pack = match.Pack;
         var folder = TargetFolder(repositoryRoot, match);
 
-        if (!pack.HasHash)
+        if (!pack.HasHash && !pack.RequiresMicrosoftSignature)
             return new(false, folder, "Pack refusé : le catalogue ne fournit aucune empreinte pour ce fichier.");
-        if (pack.Format is not ("cab" or "exe" or "zip"))
+        if (pack.Format is not ("cab" or "exe" or "zip") && !(pack.Format == "msi" && pack.RequiresMicrosoftSignature))
             return new(false, folder, $"Format de pack non pris en charge : .{pack.Format}");
 
+        if (pack.RequiresMicrosoftSignature)
+        {
+            // Le MSI Surface est remplacé à chaque mise à jour : le lien est relu sur la page officielle.
+            progress?.Report($"Vérification du lien sur la page officielle {pack.InfoUrl}...");
+            try
+            {
+                pack = await SurfaceDriverPacks.RefreshAsync(pack, ct).ConfigureAwait(false);
+            }
+            catch (SurfacePackUnavailableException ex)
+            {
+                Log.Warn(ex.Message);
+                return new(false, folder, ex.Message);
+            }
+            match = match with { Pack = pack };
+        }
+
         if (!options.Force && ReadManifest(folder) is { } manifest && manifest.Matches(pack))
-            return new(true, folder, $"Déjà présent dans le dépôt ({pack.Id} {pack.Version}) : {folder}", manifest.InfCount, manifest.SignedInfCount, AlreadyPresent: true);
+            return new(true, folder, $"Déjà présent dans le dépôt ({pack.Id} {pack.Version}) : {folder}", manifest.InfCount, manifest.SignedInfCount,
+                AlreadyPresent: true, FirmwareInfCount: manifest.FirmwareInfCount);
 
         if (CheckFreeSpace(pack, repositoryRoot) is { } spaceError)
             return new(false, folder, spaceError);
@@ -64,20 +85,46 @@ public static class OemDriverPackDownloader
         var downloader = new Downloader(trust);
         progress?.Report($"Téléchargement de {pack.FileName} ({pack.SizeLabel}) depuis {new Uri(pack.Url).Host}...");
         var lastPercent = -1L;
-        var file = await downloader.DownloadAsync(pack.Url, pack.FileName, pack.Sha256, pack.Sha1, pack.Md5,
-            new Progress<DownloadProgress>(p =>
-            {
-                if (p.Total is not > 0) return;
-                var percent = p.Received * 100 / p.Total.Value;
-                if (percent / 10 == lastPercent / 10) return;
-                lastPercent = percent;
-                progress?.Report($"Téléchargement {percent} % ({p.Received / 1048576.0:0} / {p.Total.Value / 1048576.0:0} Mo)");
-            }), ct).ConfigureAwait(false);
-        progress?.Report("Empreinte vérifiée (" + (pack.Sha256 is not null ? "SHA-256" : pack.Sha1 is not null ? "SHA-1" : "MD5") + ").");
+        string file;
+        try
+        {
+            file = await downloader.DownloadAsync(pack.Url, pack.FileName, pack.Sha256, pack.Sha1, pack.Md5,
+                new Progress<DownloadProgress>(p =>
+                {
+                    if (p.Total is not > 0) return;
+                    var percent = p.Received * 100 / p.Total.Value;
+                    if (percent / 10 == lastPercent / 10) return;
+                    lastPercent = percent;
+                    progress?.Report($"Téléchargement {percent} % ({p.Received / 1048576.0:0} / {p.Total.Value / 1048576.0:0} Mo)");
+                }), ct).ConfigureAwait(false);
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.Gone or HttpStatusCode.Forbidden)
+        {
+            var obsolete = $"Lien du pack obsolète ({(int)ex.StatusCode!} sur {new Uri(pack.Url).Host}) : le constructeur a retiré {pack.FileName}. " +
+                          "Relancez « spokapilote driverpack list » pour obtenir la version actuelle.";
+            Log.Warn(obsolete);
+            return new(false, folder, obsolete);
+        }
 
-        // Signature : obligatoire et d'un éditeur approuvé pour un exécutable ; vérifiée si présente pour une archive.
+        if (pack.HasHash)
+        {
+            progress?.Report("Empreinte vérifiée (" + (pack.Sha256 is not null ? "SHA-256" : pack.Sha1 is not null ? "SHA-1" : "MD5") + ").");
+        }
+        else if (pack.Size is > 0 && new FileInfo(file).Length != pack.Size)
+        {
+            return Refuse(file, folder, $"Pack refusé : taille reçue {new FileInfo(file).Length} octets, {pack.Size} annoncés par la page officielle.");
+        }
+
+        // Signature : obligatoire et d'un éditeur approuvé pour un exécutable ; signature Microsoft Corporation
+        // obligatoire pour un MSI Surface (aucune empreinte publiée) ; vérifiée si présente pour une archive.
         var sig = SignatureVerifier.Verify(file);
-        if (pack.Format == "exe")
+        if (pack.RequiresMicrosoftSignature)
+        {
+            if (!sig.IsValid) return Refuse(file, folder, $"Pack refusé : {sig.Detail}.");
+            if (!IsMicrosoftCorporation(sig.Signer)) return Refuse(file, folder, $"Pack refusé : signé par {sig.Signer}, « Microsoft Corporation » attendu.");
+            progress?.Report($"Taille conforme à la page officielle, signature valide : {TrustPolicy.ExtractRdn(sig.Signer ?? "", "CN") ?? sig.Signer}.");
+        }
+        else if (pack.Format == "exe")
         {
             if (!sig.IsValid) return Refuse(file, folder, $"Pack refusé : {sig.Detail}.");
             if (!trust.IsTrustedPublisher(sig.Signer)) return Refuse(file, folder, $"Pack refusé : éditeur non approuvé ({sig.Signer}).");
@@ -95,7 +142,7 @@ public static class OemDriverPackDownloader
         // Extraction dans un dossier au chemin court : l'arborescence des packs est profonde et les extracteurs
         // constructeurs échouent au-delà de 260 caractères (constaté avec un pack Dell).
         var staging = Path.Combine(AppPaths.Extracted, "pk-" + AppPaths.SafeName(pack.Id, 24));
-        int infs, signed;
+        int infs, signed, firmware;
         List<string> rejected;
         try
         {
@@ -106,6 +153,7 @@ public static class OemDriverPackDownloader
 
             progress?.Report("Contrôle des signatures des pilotes extraits...");
             (infs, signed, rejected) = await Task.Run(() => VerifyInfs(staging, pack.Architecture), ct).ConfigureAwait(false);
+            firmware = await Task.Run(() => CountFirmwareInfs(staging), ct).ConfigureAwait(false);
             if (infs == 0)
                 return new(false, folder, "Aucun fichier INF dans le pack extrait (extraction incomplète ?).");
             if (signed == 0)
@@ -117,7 +165,7 @@ public static class OemDriverPackDownloader
                 return new(false, folder, $"Chemin du dépôt trop long pour ce pack ({Path.GetFullPath(folder).Length + 1 + longest} caractères, limite Windows 259) : " +
                                           "choisissez un dépôt plus court, par exemple D:\\Pilotes ou \\\\srv\\pilotes.", infs, signed, rejected);
 
-            await WriteManifestAsync(staging, match, sig, infs, signed, rejected, ct).ConfigureAwait(false);
+            await WriteManifestAsync(staging, match, sig, infs, signed, firmware, rejected, ct).ConfigureAwait(false);
             progress?.Report($"Copie dans le dépôt : {folder}...");
             await Task.Run(() => Publish(staging, folder), ct).ConfigureAwait(false);
         }
@@ -128,9 +176,10 @@ public static class OemDriverPackDownloader
 
         if (!options.KeepDownload) TryDeleteFile(file);
         var message = $"{signed} pilote(s) INF signé(s) sur {infs} prêt(s) dans {folder}";
+        if (firmware > 0) message += $" (dont {firmware} firmware(s) UEFI : installés seulement avec --include-firmware)";
         if (rejected.Count > 0) message += $" — {rejected.Count} INF sans signature valide (ils seront refusés à l'installation)";
         Log.Info($"Pack {pack.VendorName} {pack.Id} ({match.ModelLabel}, {pack.OsLabel}) : {message}");
-        return new(true, folder, message, infs, signed, rejected);
+        return new(true, folder, message, infs, signed, rejected, FirmwareInfCount: firmware);
     }
 
     /// <summary>
@@ -192,8 +241,18 @@ public static class OemDriverPackDownloader
     /// </summary>
     internal static int[] ExtractionSuccessCodes(OemDriverPack pack) => pack.Vendor == OemVendor.HP ? new[] { 0, 1168 } : new[] { 0 };
 
+    /// <summary>Le sujet du certificat est-il celui de Microsoft Corporation (O= ou, à défaut, CN=) ?</summary>
+    internal static bool IsMicrosoftCorporation(string? subject) =>
+        subject is not null &&
+        string.Equals(TrustPolicy.ExtractRdn(subject, "O") ?? TrustPolicy.ExtractRdn(subject, "CN"), "Microsoft Corporation", StringComparison.OrdinalIgnoreCase);
+
     private static async Task ExtractAsync(OemDriverPack pack, string file, string destination, CancellationToken ct)
     {
+        if (pack.Format == "msi")
+        {
+            await ExtractMsiAsync(pack, file, destination, ct).ConfigureAwait(false);
+            return;
+        }
         var args = ExtractionArguments(pack, destination);
         if (args is null)
         {
@@ -227,7 +286,39 @@ public static class OemDriverPackDownloader
                                   (Elevation.IsAdministrator() ? "." : " ; si le problème persiste, relancez dans une console administrateur."));
     }
 
+    /// <summary>
+    /// MSI Surface : installation administrative (msiexec /a ... TARGETDIR=), qui copie les fichiers sans rien
+    /// installer ni exécuter d'action personnalisée (méthode documentée par Microsoft pour WinPE et MDT).
+    /// La copie administrative du .msi déposée à la racine est ensuite supprimée (inutile dans le dépôt).
+    /// </summary>
+    private static async Task ExtractMsiAsync(OemDriverPack pack, string file, string destination, CancellationToken ct)
+    {
+        var log = Path.Combine(AppPaths.Logs, $"msiexec-{AppPaths.SafeName(pack.Id, 60)}.log");
+        var result = await ProcessRunner.RunAsync(ProcessRunner.SystemTool("msiexec.exe"), SurfaceDriverPacks.MsiAdminArguments(file, destination, log),
+            Path.GetDirectoryName(file), TimeSpan.FromMinutes(60), ct).ConfigureAwait(false);
+        if (result.TimedOut) throw new TimeoutException("Délai d'extraction du MSI dépassé (60 min).");
+        if (result.ExitCode != 0)
+            throw new IOException($"Extraction du MSI impossible : {SurfaceDriverPacks.DescribeMsiExitCode(result.ExitCode)}, voir {log}" +
+                                  (Elevation.IsAdministrator() ? "." : " ; relancez dans une console administrateur."));
+        foreach (var copy in Directory.EnumerateFiles(destination, "*.msi", SearchOption.TopDirectoryOnly))
+        {
+            try { File.Delete(copy); } catch (IOException ex) { Log.Debug($"Copie administrative non supprimée ({copy}) : {ex.Message}"); }
+        }
+    }
+
     // ------------------------------------------------------------------ contrôle
+
+    /// <summary>INF de firmware (classe « Firmware », capsules UEFI) : comptés à part, jamais installés sans --include-firmware.</summary>
+    internal static int CountFirmwareInfs(string folder)
+    {
+        var count = 0;
+        foreach (var path in DriverRepository.SafeEnumerate(folder, "*.inf"))
+        {
+            try { if (InfParser.Parse(path).IsFirmware) count++; }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or FormatException) { /* déjà signalé par VerifyInfs */ }
+        }
+        return count;
+    }
 
     /// <summary>Compte les INF et vérifie le catalogue de chacun (présent, signature valide). Le contrôle fin par périphérique reste fait à l'installation.</summary>
     internal static (int Infs, int Signed, List<string> Rejected) VerifyInfs(string folder, string architecture)
@@ -311,6 +402,10 @@ public static class OemDriverPackDownloader
         public DateTime Downloaded { get; set; }
         public int InfCount { get; set; }
         public int SignedInfCount { get; set; }
+        /// <summary>INF de firmware (UEFI, contrôleurs) parmi les INF du pack : installés seulement sur demande.</summary>
+        public int FirmwareInfCount { get; set; }
+        /// <summary>Page officielle d'origine (Surface) ou notes de version.</summary>
+        public string? InfoUrl { get; set; }
         public List<string> RejectedInfs { get; set; } = new();
 
         public bool Matches(OemDriverPack pack) =>
@@ -333,7 +428,7 @@ public static class OemDriverPackDownloader
         }
     }
 
-    private static Task WriteManifestAsync(string folder, DriverPackMatch match, SignatureResult sig, int infs, int signed, List<string> rejected, CancellationToken ct)
+    private static Task WriteManifestAsync(string folder, DriverPackMatch match, SignatureResult sig, int infs, int signed, int firmware, List<string> rejected, CancellationToken ct)
     {
         var pack = match.Pack;
         var manifest = new PackManifest
@@ -358,6 +453,8 @@ public static class OemDriverPackDownloader
             Downloaded = DateTime.Now,
             InfCount = infs,
             SignedInfCount = signed,
+            FirmwareInfCount = firmware,
+            InfoUrl = pack.InfoUrl,
             RejectedInfs = rejected,
         };
         return File.WriteAllTextAsync(Path.Combine(folder, ManifestName), JsonSerializer.Serialize(manifest, JsonOptions), ct);

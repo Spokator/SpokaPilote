@@ -8,17 +8,19 @@ using SpokaPilote.Core.Models;
 
 namespace SpokaPilote.Core.Repository;
 
-/// <summary>Un modèle de PC couvert par un pack : nom commercial + identifiants (SKU Dell, plateforme HP, type-machine Lenovo).</summary>
+/// <summary>Un modèle de PC couvert par un pack : nom commercial + identifiants (SKU Dell, plateforme HP, type-machine Lenovo,
+/// SKU et nom de modèle SMBIOS Surface).</summary>
 public sealed record PackSystem(string Name, IReadOnlyList<string> Ids);
 
 /// <summary>
 /// Pack complet de pilotes publié par le constructeur pour le déploiement (SCCM / MDT) : Dell Command | Deploy
-/// Driver Pack, HP Client Driver Pack, Lenovo SCCM Driver Pack. Une entrée = un fichier pour un Windows et une architecture.
+/// Driver Pack, HP Client Driver Pack, Lenovo SCCM Driver Pack, MSI « drivers and firmware » Microsoft Surface.
+/// Une entrée = un fichier pour un Windows et une architecture.
 /// </summary>
 public sealed class OemDriverPack
 {
     public required OemVendor Vendor { get; init; }
-    /// <summary>Identifiant officiel : releaseID Dell (ex. 16KXP), SoftPaq HP (ex. sp114161), nom du fichier Lenovo.</summary>
+    /// <summary>Identifiant officiel : releaseID Dell (ex. 16KXP), SoftPaq HP (ex. sp114161), nom du fichier Lenovo ou Surface.</summary>
     public required string Id { get; init; }
     public List<PackSystem> Systems { get; init; } = new();
     /// <summary>« win10 » ou « win11 ».</summary>
@@ -27,24 +29,29 @@ public sealed class OemDriverPack
     public required string Architecture { get; init; }
     /// <summary>Versions de Windows déclarées (ex. 22H2, 24H2).</summary>
     public List<string> OsReleases { get; init; } = new();
+    /// <summary>Build de Windows visé, quand le constructeur le publie (Surface : 22631, 26100...).</summary>
+    public int? OsBuild { get; init; }
     public string? Version { get; init; }
     public DateTime? Date { get; init; }
     public required string Url { get; init; }
-    /// <summary>Taille en octets (Lenovo ne la publie pas : complétée par une requête HEAD).</summary>
+    /// <summary>Taille en octets (Lenovo ne la publie pas : complétée par une requête HEAD). Surface : taille annoncée par la page, vérifiée.</summary>
     public long? Size { get; set; }
     public string? Sha256 { get; init; }
     public string? Sha1 { get; init; }
     public string? Md5 { get; init; }
+    /// <summary>Notes de version ; pour Surface, page officielle du Centre de téléchargement (relue au téléchargement).</summary>
     public string? InfoUrl { get; init; }
 
     public string FileName => Uri.UnescapeDataString(Path.GetFileName(new Uri(Url).AbsolutePath));
-    /// <summary>cab, exe ou zip.</summary>
+    /// <summary>cab, exe, zip ou msi (Surface).</summary>
     public string Format => Path.GetExtension(FileName).TrimStart('.').ToLowerInvariant();
     public string VendorName => OemDriverPacks.VendorName(Vendor);
     public string OsLabel => $"Windows {(Os == "win11" ? "11" : "10")} {(Architecture == "arm64" ? "ARM64" : "x64")}";
     /// <summary>Nom du sous-dossier dans le dépôt, cohérent avec l'export d'un poste de référence (ex. Win11-amd64).</summary>
     public string FolderOs => $"Win{(Os == "win11" ? "11" : "10")}-{Architecture}";
     public bool HasHash => Sha256 is not null || Sha1 is not null || Md5 is not null;
+    /// <summary>Microsoft ne publie pas d'empreinte des MSI Surface : intégrité garantie par la signature Authenticode Microsoft et la taille.</summary>
+    public bool RequiresMicrosoftSignature => Vendor == OemVendor.Microsoft;
     public string SizeLabel => Size is > 0 ? $"{Size.Value / 1073741824.0:0.00} Go".Replace('.', ',') : "taille inconnue";
     public string LatestRelease => OsReleases.OrderByDescending(OemDriverPacks.ReleaseRank).FirstOrDefault() ?? "";
 }
@@ -60,6 +67,11 @@ public sealed class DriverPackQuery
 {
     public OemVendor? Vendor { get; set; }
     public string? SystemId { get; set; }
+    /// <summary>
+    /// Nom de modèle SMBIOS du poste courant (Surface : « Surface Pro 9 »), utilisé seulement si <see cref="SystemId"/>
+    /// ne correspond à aucun pack (variante régionale absente de la table, par exemple).
+    /// </summary>
+    public string? SystemModel { get; set; }
     public string? Text { get; set; }
     /// <summary>win10 / win11, null = les deux.</summary>
     public string? Os { get; set; }
@@ -76,12 +88,21 @@ public sealed class DriverPackQuery
             OemVendor.Dell => system.SystemSku,
             OemVendor.HP => system.BaseBoardProduct,
             OemVendor.Lenovo => system.Model.Length >= 4 ? system.Model[..4] : null,
+            // Surface : « System SKU » SMBIOS (ex. Surface_Pro_9_for_Business_2038), la référence Microsoft pour
+            // distinguer deux appareils de même « System Model » (Surface Pro 9 Intel / 5G).
+            OemVendor.Microsoft => system.SystemSku,
             _ => null,
         };
+        // « Microsoft Corporation » fabrique aussi des machines virtuelles Hyper-V (« Virtual Machine ») : Surface uniquement.
+        var isSurface = system.Vendor == OemVendor.Microsoft && system.Model.Contains("Surface", StringComparison.OrdinalIgnoreCase);
+        var supported = system.Vendor is OemVendor.Dell or OemVendor.HP or OemVendor.Lenovo || isSurface;
         return new DriverPackQuery
         {
-            Vendor = system.Vendor is OemVendor.Dell or OemVendor.HP or OemVendor.Lenovo ? system.Vendor : null,
-            SystemId = string.IsNullOrWhiteSpace(id) ? null : id.Trim(),
+            Vendor = supported ? system.Vendor : null,
+            SystemId = !supported || string.IsNullOrWhiteSpace(id) ? null : id.Trim(),
+            SystemModel = isSurface ? system.Model.Trim() : null,
+            // SKU illisible : le « System Model » SMBIOS (ex. « Surface Laptop Studio 2 ») est recherché tel quel.
+            Text = isSurface && string.IsNullOrWhiteSpace(id) ? system.Model.Trim() : null,
             Architecture = system.Architecture == "arm64" ? "arm64" : "amd64",
         };
     }
@@ -93,8 +114,10 @@ public sealed class DriverPackQuery
 /// Catalogues officiels des packs de pilotes « entreprise » des constructeurs :
 /// Dell  : downloads.dell.com/catalog/DriverPackCatalog.cab (signé Dell, hachages MD5/SHA-1/SHA-256) ;
 /// HP    : hpia.hpcloud.hp.com/downloads/driverpackcatalog/HPClientDriverPackCatalog.cab (signé HP, SHA-256) ;
-/// Lenovo: download.lenovo.com/cdrt/td/catalogv2.xml (catalogue des outils de déploiement Lenovo, SHA-256).
-/// Les catalogues sont mis en cache 24 h.
+/// Lenovo: download.lenovo.com/cdrt/td/catalogv2.xml (catalogue des outils de déploiement Lenovo, SHA-256) ;
+/// Surface : table embarquée modèle → page du Centre de téléchargement Microsoft, liens relus sur la page
+/// (voir <see cref="SurfaceDriverPacks"/>).
+/// Les catalogues et les pages sont mis en cache 24 h.
 /// </summary>
 public static class OemDriverPacks
 {
@@ -102,13 +125,14 @@ public static class OemDriverPacks
     public const string HpCatalogUrl = "https://hpia.hpcloud.hp.com/downloads/driverpackcatalog/HPClientDriverPackCatalog.cab";
     public const string LenovoCatalogUrl = "https://download.lenovo.com/cdrt/td/catalogv2.xml";
 
-    public static readonly OemVendor[] SupportedVendors = { OemVendor.Dell, OemVendor.HP, OemVendor.Lenovo };
+    public static readonly OemVendor[] SupportedVendors = { OemVendor.Dell, OemVendor.HP, OemVendor.Lenovo, OemVendor.Microsoft };
 
     public static string VendorName(OemVendor vendor) => vendor switch
     {
         OemVendor.Dell => "Dell",
         OemVendor.HP => "HP",
         OemVendor.Lenovo => "Lenovo",
+        OemVendor.Microsoft => "Microsoft",
         _ => vendor.ToString(),
     };
 
@@ -154,6 +178,9 @@ public static class OemDriverPacks
                     packs = await Task.Run(() => ParseLenovo(xml), ct).ConfigureAwait(false);
                     break;
                 }
+                case OemVendor.Microsoft:
+                    packs = await SurfaceDriverPacks.LoadAsync(SurfaceDriverPacks.Catalog.Models, refresh: false, progress, ct).ConfigureAwait(false);
+                    break;
                 default:
                     throw new NotSupportedException($"Aucun catalogue de packs pour {vendor}.");
             }
@@ -190,7 +217,10 @@ public static class OemDriverPacks
         {
             try
             {
-                all.AddRange(await LoadAsync(vendor, settings, progress, ct).ConfigureAwait(false));
+                // Surface : une page par modèle ; seules celles que la requête peut viser sont lues.
+                all.AddRange(vendor == OemVendor.Microsoft
+                    ? await SurfaceDriverPacks.SearchAsync(query, progress, ct).ConfigureAwait(false)
+                    : await LoadAsync(vendor, settings, progress, ct).ConfigureAwait(false));
             }
             catch (Exception ex) when (ex is HttpRequestException or IOException && vendors.Length > 1)
             {
@@ -223,7 +253,7 @@ public static class OemDriverPacks
         }).ConfigureAwait(false);
     }
 
-    /// <summary>Marques déduites du texte (« Latitude » → Dell, « EliteBook » → HP, « ThinkPad » → Lenovo), sinon toutes.</summary>
+    /// <summary>Marques déduites du texte (« Latitude » → Dell, « EliteBook » → HP, « ThinkPad » → Lenovo, « Surface » → Microsoft), sinon toutes.</summary>
     internal static OemVendor[] InferVendors(string? text)
     {
         var tokens = Tokens(text ?? "");
@@ -234,38 +264,45 @@ public static class OemDriverPacks
             if (t is "dell" or "latitude" or "optiplex" or "precision" or "vostro" or "xps" or "alienware" or "inspiron") found.Add(OemVendor.Dell);
             else if (t is "hp" or "elitebook" or "probook" or "zbook" or "elitedesk" or "prodesk" or "elite" or "eliteone" or "proone" or "z2" or "engage") found.Add(OemVendor.HP);
             else if (t is "lenovo" or "thinkpad" or "thinkcentre" or "thinkstation" or "thinkbook") found.Add(OemVendor.Lenovo);
+            else if (t is "microsoft" or "surface") found.Add(OemVendor.Microsoft);
         }
         return found.Count > 0 ? found.ToArray() : SupportedVendors;
+    }
+
+    /// <summary>
+    /// Un modèle correspond-il à la requête ? Identifiant exact du poste (ou, avec <paramref name="useModelFallback"/>,
+    /// son nom de modèle SMBIOS), identifiant saisi en entier (« 20WM »), sinon tous les mots du nom.
+    /// </summary>
+    internal static bool SystemMatches(PackSystem system, DriverPackQuery query, bool useModelFallback)
+    {
+        if (query.SystemId is not null)
+        {
+            var id = useModelFallback ? query.SystemModel : query.SystemId;
+            return id is not null && system.Ids.Any(i => i.Equals(id, StringComparison.OrdinalIgnoreCase));
+        }
+        var textId = query.Text?.Trim();
+        if (textId is { Length: >= 4 } && system.Ids.Any(i => i.Equals(textId, StringComparison.OrdinalIgnoreCase)))
+            return true;
+        var words = Tokens(query.Text ?? "").Where(t => !IsVendorWord(t)).ToList();
+        var nameTokens = Tokens(system.Name);
+        return words.Count > 0 && words.All(w => nameTokens.Contains(w));
     }
 
     /// <summary>Filtre les packs (identifiant exact ou mots du nom), puis ne garde que le plus récent par modèle / Windows / architecture.</summary>
     internal static List<DriverPackMatch> Find(IEnumerable<OemDriverPack> packs, DriverPackQuery query)
     {
-        var words = Tokens(query.Text ?? "").Where(t => !IsVendorWord(t)).ToList();
-        var textId = query.Text?.Trim();
+        var candidates = packs.Where(pack =>
+            (query.Vendor is not { } vendor || pack.Vendor == vendor) &&
+            (query.Os is not { } os || pack.Os.Equals(os, StringComparison.OrdinalIgnoreCase)) &&
+            (query.Architecture is not { } arch || pack.Architecture.Equals(arch, StringComparison.OrdinalIgnoreCase))).ToList();
 
         // (pack, modèle reconnu) : la clé de regroupement est le modèle, pas le fichier (un pack HP couvre plusieurs modèles).
-        var hits = new List<(OemDriverPack Pack, string Model)>();
-        foreach (var pack in packs)
-        {
-            if (query.Vendor is { } vendor && pack.Vendor != vendor) continue;
-            if (query.Os is { } os && !pack.Os.Equals(os, StringComparison.OrdinalIgnoreCase)) continue;
-            if (query.Architecture is { } arch && !pack.Architecture.Equals(arch, StringComparison.OrdinalIgnoreCase)) continue;
-            foreach (var system in pack.Systems)
-            {
-                bool match;
-                if (query.SystemId is not null)
-                    match = system.Ids.Any(id => id.Equals(query.SystemId, StringComparison.OrdinalIgnoreCase));
-                else if (textId is { Length: >= 4 } && system.Ids.Any(id => id.Equals(textId, StringComparison.OrdinalIgnoreCase)))
-                    match = true;
-                else
-                {
-                    var nameTokens = Tokens(system.Name);
-                    match = words.Count > 0 && words.All(w => nameTokens.Contains(w));
-                }
-                if (match) hits.Add((pack, system.Name));
-            }
-        }
+        List<(OemDriverPack Pack, string Model)> Hits(bool fallback) => candidates
+            .SelectMany(pack => pack.Systems.Where(system => SystemMatches(system, query, fallback)).Select(system => (pack, system.Name)))
+            .ToList();
+        var hits = Hits(fallback: false);
+        // SKU absent de la table (variante régionale...) : repli sur le nom de modèle SMBIOS du poste.
+        if (hits.Count == 0 && query is { SystemId: not null, SystemModel: not null }) hits = Hits(fallback: true);
 
         IEnumerable<(OemDriverPack Pack, string Model)> selected = hits;
         if (!query.AllVersions)
@@ -288,7 +325,7 @@ public static class OemDriverPacks
             .ToList();
     }
 
-    private static bool IsVendorWord(string token) => token is "dell" or "hp" or "lenovo";
+    private static bool IsVendorWord(string token) => token is "dell" or "hp" or "lenovo" or "microsoft";
 
     internal static List<string> Tokens(string text) =>
         Regex.Split(text.ToLowerInvariant(), "[^a-z0-9]+").Where(t => t.Length > 0).ToList();

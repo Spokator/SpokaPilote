@@ -6,8 +6,9 @@ using SpokaPilote.Core.Repository;
 namespace SpokaPilote.Cli;
 
 /// <summary>
-/// spokapilote driverpack list|download : packs complets de pilotes officiels Dell / HP / Lenovo (déploiement SCCM/MDT),
-/// téléchargés dans le dépôt pour installer hors ligne tous les postes d'un même modèle.
+/// spokapilote driverpack list|download : packs complets de pilotes officiels Dell / HP / Lenovo (déploiement SCCM/MDT)
+/// et MSI « pilotes et firmwares » Microsoft Surface, téléchargés dans le dépôt pour installer hors ligne tous les postes
+/// d'un même modèle.
 /// </summary>
 internal static partial class Program
 {
@@ -30,7 +31,7 @@ internal static partial class Program
         }
         if (query is { SystemId: null, Text: null })
         {
-            WriteLine("Ce poste n'est pas un Dell, HP ou Lenovo identifiable : précisez le modèle avec --model \"Latitude 7420\".", ConsoleColor.Yellow);
+            WriteLine("Ce poste n'est pas un Dell, HP, Lenovo ou Surface identifiable : précisez le modèle avec --model \"Latitude 7420\".", ConsoleColor.Yellow);
             return ExitUsage;
         }
 
@@ -63,6 +64,9 @@ internal static partial class Program
             system = SystemInfoProvider.Collect();
             WriteLine($"Poste courant : {system.Manufacturer} {system.DisplayModel}" +
                       $"{(system.SystemSku is null ? "" : $" · SKU {system.SystemSku}")}{(system.BaseBoardProduct is null ? "" : $" · carte {system.BaseBoardProduct}")}", ConsoleColor.White);
+            if (system.Vendor == OemVendor.Microsoft && SurfaceDriverPacks.Catalog.Models.Count > 0 &&
+                !SurfaceDriverPacks.Catalog.Models.Any(m => m.SystemSkus.Contains(system.SystemSku ?? "", StringComparer.OrdinalIgnoreCase)))
+                WriteLine($"  SKU absent de la table Surface (version {SurfaceDriverPacks.Catalog.Updated}) : recherche par nom de modèle « {system.Model} ».", ConsoleColor.DarkYellow);
             query = DriverPackQuery.ForSystem(system);
         }
         else
@@ -76,7 +80,8 @@ internal static partial class Program
             "dell" => OemVendor.Dell,
             "hp" => OemVendor.HP,
             "lenovo" => OemVendor.Lenovo,
-            var other => throw new ArgumentException($"Marque inconnue : {other} (valeurs : dell, hp, lenovo)"),
+            "surface" or "microsoft" => OemVendor.Microsoft,
+            var other => throw new ArgumentException($"Marque inconnue : {other} (valeurs : dell, hp, lenovo, surface)"),
         };
         query.Os = a.Value("os")?.Trim().ToLowerInvariant() switch
         {
@@ -107,12 +112,18 @@ internal static partial class Program
                 var p = m.Pack;
                 var releases = p.OsReleases.Count > 0 ? $" ({string.Join(", ", p.OsReleases.OrderBy(OemDriverPacks.ReleaseRank))})" : "";
                 WriteLine($"    • {string.Join(" / ", m.MatchedModels.Take(3))}{(m.MatchedModels.Count > 3 ? $" (+{m.MatchedModels.Count - 3})" : "")}", ConsoleColor.White);
-                WriteLine($"        {p.OsLabel}{releases} · {p.Id}{(p.Version is null ? "" : " version " + p.Version)} du {p.Date:dd/MM/yyyy} · {p.SizeLabel} · {p.Format}", ConsoleColor.Gray);
+                var id = p.Vendor == OemVendor.Microsoft ? p.FileName : p.Id; // Surface : le nom du MSI porte produit, build et version
+                var build = p.OsBuild is { } b ? $" build {b}" : "";
+                WriteLine($"        {p.OsLabel}{releases}{build} · {id}{(p.Version is null || p.Vendor == OemVendor.Microsoft ? "" : " version " + p.Version)} du {p.Date:dd/MM/yyyy} · {p.SizeLabel} · {p.Format}", ConsoleColor.Gray);
                 var ids = p.Systems.Where(s => m.MatchedModels.Contains(s.Name, StringComparer.OrdinalIgnoreCase)).SelectMany(s => s.Ids).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
                 if (ids.Count > 0) WriteLine($"        identifiants : {string.Join(", ", ids)}", ConsoleColor.DarkGray);
                 WriteLine($"        {p.Url}", ConsoleColor.DarkGray);
+                if (p.Vendor == OemVendor.Microsoft && p.InfoUrl is not null) WriteLine($"        page officielle : {p.InfoUrl}", ConsoleColor.DarkGray);
             }
         }
+        if (matches.Any(m => m.Pack.Vendor == OemVendor.Microsoft))
+            WriteLine("\nSurface : le MSI contient pilotes ET firmwares (UEFI, SAM, EC...) ; Microsoft ne publie pas d'empreinte : " +
+                      "la signature « Microsoft Corporation » et la taille sont vérifiées.", ConsoleColor.DarkGray);
         WriteLine("\nTélécharger dans le dépôt : spokapilote driverpack download <dépôt> --model \"<modèle>\" [--os win11|win10]", ConsoleColor.Gray);
     }
 
@@ -143,7 +154,9 @@ internal static partial class Program
         var pack = match.Pack;
         var folder = OemDriverPackDownloader.TargetFolder(repo, match);
         var label = match.ModelLabel.StartsWith(pack.VendorName + " ", StringComparison.OrdinalIgnoreCase) ? match.ModelLabel : $"{pack.VendorName} {match.ModelLabel}";
-        WriteLine($"\nPack : {label} — {pack.OsLabel} — {pack.Id}{(pack.Version is null ? "" : " " + pack.Version)} du {pack.Date:dd/MM/yyyy}", ConsoleColor.White);
+        // Surface : l'identifiant (nom du MSI) contient déjà la version.
+        var version = pack.Version is null || pack.Id.EndsWith(pack.Version, StringComparison.OrdinalIgnoreCase) ? "" : " " + pack.Version;
+        WriteLine($"\nPack : {label} — {pack.OsLabel} — {pack.Id}{version} du {pack.Date:dd/MM/yyyy}", ConsoleColor.White);
         WriteLine($"Fichier : {pack.FileName} ({pack.SizeLabel}) depuis {new Uri(pack.Url).Host}", ConsoleColor.Gray);
         WriteLine($"Destination : {folder}", ConsoleColor.Gray);
         if (!a.Flag("yes") && !Confirm("Télécharger et extraire ce pack dans le dépôt ?")) return ExitOk;

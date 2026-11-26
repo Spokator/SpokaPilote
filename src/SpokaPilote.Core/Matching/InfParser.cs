@@ -25,6 +25,9 @@ public sealed class InfInfo
     /// </summary>
     public string? CatalogFileFor(string architecture) =>
         CatalogFiles.GetValueOrDefault("NT" + architecture) ?? CatalogFiles.GetValueOrDefault("NT") ?? CatalogFiles.GetValueOrDefault("") ?? CatalogFile;
+
+    /// <summary>Paquet de firmware (UEFI, contrôleurs...) et non de pilote : voir <see cref="InfParser.IsFirmwareClass"/>.</summary>
+    public bool IsFirmware => InfParser.IsFirmwareClass(Class);
 }
 
 /// <summary>
@@ -33,6 +36,12 @@ public sealed class InfInfo
 /// </summary>
 public static class InfParser
 {
+    /// <summary>
+    /// Classe « Firmware » : mise à jour de firmware UEFI (capsule) déclarant des ID UEFI\RES_{GUID}, appliquée au
+    /// redémarrage suivant son installation (packs Surface, certains packs constructeurs).
+    /// </summary>
+    public static bool IsFirmwareClass(string? infClass) => string.Equals(infClass?.Trim(), "Firmware", StringComparison.OrdinalIgnoreCase);
+
     public static InfInfo Parse(string path)
     {
         var text = ReadText(path);

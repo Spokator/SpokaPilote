@@ -70,17 +70,18 @@ internal static partial class Program
 
     private static async Task<int> ImageInjectAsync(Args a, CancellationToken ct)
     {
-        WriteLine("Fonction expérimentale : travaillez sur une COPIE de l'image (install.wim / dossier Windows hors ligne).", ConsoleColor.Yellow);
+        WriteLine("Travaillez sur une COPIE de l'image (install.wim) et gardez l'original.", ConsoleColor.Yellow);
         var wim = a.Value("wim");
         var offline = a.Value("offline");
         var repos = a.Values("repo").ToList();
         if ((wim is null) == (offline is null) || repos.Count == 0)
         {
-            WriteLine("Usage : spokapilote image inject --wim <install.wim> --index <n|1,3|all> --repo <dossier> [--dry-run] [--yes]", ConsoleColor.Yellow);
-            WriteLine("        spokapilote image inject --offline D:\\ --repo <dossier> [--dry-run] [--yes]", ConsoleColor.Yellow);
+            WriteLine("Usage : spokapilote image inject --wim <install.wim> --index <n|1,3|all> --repo <dossier> [--no-firmware] [--dry-run] [--yes]", ConsoleColor.Yellow);
+            WriteLine("        spokapilote image inject --offline D:\\ --repo <dossier> [--no-firmware] [--dry-run] [--yes]", ConsoleColor.Yellow);
             return ExitUsage;
         }
         var dryRun = a.Flag("dry-run");
+        var noFirmware = a.Flag("no-firmware");
         var progress = new Progress<string>(m => WriteLine($"› {m}", ConsoleColor.DarkGray));
 
         var reports = new List<InjectionReport>();
@@ -88,7 +89,7 @@ internal static partial class Program
         {
             WriteLine($"Injection des pilotes de {string.Join(", ", repos)} dans le Windows hors ligne {offline}{(dryRun ? " (SIMULATION)" : "")}.", ConsoleColor.Cyan);
             if (!dryRun && !a.Flag("yes") && !Confirm("Continuer ?")) return ExitOk;
-            reports.Add(await ImageInjector.InjectIntoOfflineAsync(offline, repos, dryRun, progress, ct));
+            reports.Add(await ImageInjector.InjectIntoOfflineAsync(offline, repos, dryRun, progress, ct, excludeFirmware: noFirmware));
         }
         else
         {
@@ -108,7 +109,7 @@ internal static partial class Program
             foreach (var index in indexes)
             {
                 ct.ThrowIfCancellationRequested();
-                reports.Add(await ImageInjector.InjectIntoWimAsync(wim!, index, repos, dryRun, progress, ct));
+                reports.Add(await ImageInjector.InjectIntoWimAsync(wim!, index, repos, dryRun, progress, ct, excludeFirmware: noFirmware));
             }
         }
 
@@ -120,7 +121,7 @@ internal static partial class Program
     {
         WriteLine($"\n{r.Target} — {r.Architecture ?? "?"} {r.OsVersion}", ConsoleColor.White);
         var refused = r.Refused.ToList();
-        WriteLine($"  Contrôle : {r.Accepted.Count()} INF accepté(s), {refused.Count} écarté(s)", ConsoleColor.Gray);
+        WriteLine($"  Contrôle : {r.Accepted.Count()} INF accepté(s){(r.AcceptedFirmwareCount > 0 ? $" dont {r.AcceptedFirmwareCount} firmware(s) UEFI (--no-firmware pour les écarter)" : "")}, {refused.Count} écarté(s)", ConsoleColor.Gray);
         foreach (var group in refused.GroupBy(c => ReasonKind(c.Reason)).OrderByDescending(g => g.Count()))
         {
             WriteLine($"    ⚠ {group.Count()} × {group.Key}", ConsoleColor.Yellow);
@@ -142,6 +143,7 @@ internal static partial class Program
     /// <summary>Regroupe les motifs de refus pour un affichage lisible (« ne convient pas à l'image », « non signé »...).</summary>
     private static string ReasonKind(string reason) =>
         reason.StartsWith("ne convient pas", StringComparison.OrdinalIgnoreCase) ? "architecture ou version de Windows différente"
+        : reason.StartsWith("firmware exclu", StringComparison.OrdinalIgnoreCase) ? "firmware exclu (--no-firmware)"
         : reason.Contains("pas signé", StringComparison.OrdinalIgnoreCase) || reason.Contains(".cat", StringComparison.OrdinalIgnoreCase) || reason.Contains("catalogue", StringComparison.OrdinalIgnoreCase) ? "signature absente ou invalide"
         : reason.StartsWith("aucun périphérique", StringComparison.OrdinalIgnoreCase) ? "aucun périphérique déclaré"
         : "illisible";
