@@ -19,7 +19,9 @@ public static class ScheduleEndpoints
             var groups = store.GetGroups().ToDictionary(g => g.Id, g => g.Name);
             return Results.Ok(new
             {
-                timeZone = runner.Zone.Id,
+                // Nom IANA (« Europe/Paris ») même quand le serveur tourne sous Windows (développement).
+                timeZone = runner.Zone.HasIanaId ? runner.Zone.Id
+                    : TimeZoneInfo.TryConvertWindowsIdToIanaId(runner.Zone.Id, out var iana) ? iana : runner.Zone.Id,
                 timeZoneName = runner.Zone.DisplayName,
                 schedules = store.GetSchedules().Select(s => View(s, groups)),
             });
