@@ -1,5 +1,12 @@
 ﻿# SpokaPilote
 
+[![CI](https://github.com/Spokator/SpokaPilote/actions/workflows/ci.yml/badge.svg)](https://github.com/Spokator/SpokaPilote/actions/workflows/ci.yml)
+[![Version](https://img.shields.io/github/v/release/Spokator/SpokaPilote?label=version)](https://github.com/Spokator/SpokaPilote/releases/latest)
+[![Licence MIT](https://img.shields.io/github/license/Spokator/SpokaPilote?label=licence)](LICENSE)
+[![Windows 10/11 x64 | ARM64](https://img.shields.io/badge/Windows-10%20%7C%2011%20%C2%B7%20x64%20%7C%20ARM64-0B63CE)](https://github.com/Spokator/SpokaPilote/releases/latest)
+[![Site web](https://img.shields.io/badge/site-spokator.github.io-14B8A6)](https://spokator.github.io/SpokaPilote/)
+[![Console Docker](https://img.shields.io/badge/ghcr.io-spokapilote--server-2496ED?logo=docker&logoColor=white)](https://github.com/Spokator/SpokaPilote/pkgs/container/spokapilote-server)
+
 **Les bons pilotes, pour tout le poste et les imprimantes d'entreprise, depuis les sources officielles uniquement — et le suivi de tout le parc.**
 
 Fini la tournée des sites constructeurs et les « driver updaters » douteux. SpokaPilote inventorie la machine,
