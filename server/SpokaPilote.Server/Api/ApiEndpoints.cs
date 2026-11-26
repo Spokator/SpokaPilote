@@ -3,7 +3,9 @@ using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using SpokaPilote.Server.Alerts;
+using SpokaPilote.Server.Audit;
 using SpokaPilote.Server.Fleet;
+using SpokaPilote.Server.Groups;
 using SpokaPilote.Server.Jobs;
 using SpokaPilote.Server.Security;
 using SpokaPilote.Server.Storage;
@@ -25,42 +27,66 @@ public static class ApiEndpoints
             ? Results.Ok(new { status = "ok", version = Version })
             : Results.Json(new { status = "error", version = Version }, statusCode: StatusCodes.Status503ServiceUnavailable));
 
-        // Vérifie un jeton (connexion à la console, « spokapilote server status »).
+        // Vérifie un jeton (connexion à la console, « spokapilote server status ») : « admin » ou « agent » pour les jetons
+        // (inchangé depuis la 3.0), « user » pour une session de compte nominatif.
         api.MapGet("/whoami", (HttpContext http) =>
-            Results.Ok(new { access = (Access)http.Items[RequireAccessFilter.AccessItem]! == Access.Admin ? "admin" : "agent", version = Version }))
-            .RequireAccess(Access.Agent | Access.Admin);
+        {
+            var p = Principal.Of(http)!;
+            return p.IsSession
+                ? Results.Ok(new { access = "user", version = Version, login = p.User!.Login, role = p.Role })
+                : Results.Ok(new { access = p.Access.HasFlag(Access.Admin) ? "admin" : "agent", version = Version });
+        }).RequireAccess(Access.Agent | Access.View);
 
         // ------------------------------------------------------------------ postes → console
 
         api.MapPost("/reports", ReceiveReportAsync).RequireAccess(Access.Agent);
 
-        // ------------------------------------------------------------------ administration
+        // ------------------------------------------------------------------ consultation (tous les rôles)
 
-        var admin = api.MapGroup("").RequireAccess(Access.Admin);
+        var view = api.MapGroup("").RequireAccess(Access.View);
 
-        admin.MapGet("/fleet", (ServerStore store, ServerOptions options, TimeProvider clock) =>
+        // Synthèse du parc, éventuellement limitée à un groupe (?group=id).
+        view.MapGet("/fleet", (long? group, ServerStore store, ServerOptions options, TimeProvider clock) =>
         {
             var now = clock.GetUtcNow();
             store.ExpireJobs(now, options.JobExpiryDays, options.JobRunningTimeoutHours);
-            var summary = FleetAggregator.Summarize(store.GetMachines(), now, options.StaleDays);
-            var jobs = store.GetJobStats(now);
+            var machines = store.GetMachines();
+            if (group is { } groupId)
+            {
+                if (store.GetGroup(groupId) is not { } g) return GroupEndpoints.GroupNotFound();
+                machines = machines.Where(m => GroupMatcher.IsMember(g, m)).ToList();
+            }
+            var summary = FleetAggregator.Summarize(machines, now, options.StaleDays);
+            var jobs = store.GetJobStats(now, group is null ? null : machines.Select(m => m.Id).ToList());
             summary.PendingJobs = jobs.Pending;
             summary.RunningJobs = jobs.Running;
             summary.FailedJobs24h = jobs.FailedLast24h;
             return Results.Ok(summary);
         });
 
-        admin.MapGet("/machines", (ServerStore store, ServerOptions options, TimeProvider clock) =>
+        // Liste des postes (?group=id pour un groupe) ; chaque ligne indique les groupes du poste.
+        view.MapGet("/machines", (long? group, ServerStore store, ServerOptions options, TimeProvider clock) =>
         {
             var machines = store.GetMachines();
+            var groups = store.GetGroups();
+            if (group is { } groupId)
+            {
+                if (groups.FirstOrDefault(g => g.Id == groupId) is not { } g) return GroupEndpoints.GroupNotFound();
+                machines = machines.Where(m => GroupMatcher.IsMember(g, m)).ToList();
+            }
             var active = store.GetActiveJobCounts();
+            var membership = GroupMatcher.GroupsByMachine(groups, machines);
             var ids = machines.ToDictionary(m => m.Name, m => m.Id, StringComparer.OrdinalIgnoreCase);
             var rows = FleetAggregator.Rows(machines, clock.GetUtcNow(), options.StaleDays);
-            foreach (var r in rows) r.ActiveJobs = active.GetValueOrDefault(ids[r.Name]);
+            foreach (var r in rows)
+            {
+                r.ActiveJobs = active.GetValueOrDefault(ids[r.Name]);
+                r.Groups = membership.GetValueOrDefault(ids[r.Name]) ?? new List<long>();
+            }
             return Results.Ok(rows);
         });
 
-        admin.MapGet("/machines/{name}", (string name, ServerStore store, ServerOptions options, TimeProvider clock) =>
+        view.MapGet("/machines/{name}", (string name, ServerStore store, ServerOptions options, TimeProvider clock) =>
         {
             if (store.GetMachine(name) is not { } m) return NotFound(name);
             var now = clock.GetUtcNow();
@@ -68,28 +94,39 @@ public static class ApiEndpoints
             var row = FleetAggregator.ToRow(m, now, options.StaleDays);
             var jobs = store.ListJobs(machine: m.Name, limit: 20);
             row.ActiveJobs = jobs.Count(j => j.State is JobStates.Pending or JobStates.Running);
+            var groups = store.GetGroups().Where(g => GroupMatcher.IsMember(g, m)).ToList();
+            row.Groups = groups.Select(g => g.Id).ToList();
             return Results.Ok(new
             {
                 machine = row,
                 report = m.Report,
                 history = store.GetHistory(m.Name),
                 jobs = jobs.Select(j => JobEndpoints.View(j)),
+                groups = groups.Select(g => new
+                {
+                    id = g.Id, name = g.Name, manual = g.ManualMembers.Contains(m.Id), byRule = GroupMatcher.Matches(g.Rules, m),
+                }),
             });
         });
 
-        admin.MapGet("/machines/{name}/reports/{id:long}", (string name, long id, ServerStore store) =>
+        view.MapGet("/machines/{name}/reports/{id:long}", (string name, long id, ServerStore store) =>
             store.GetHistoricReport(name, id) is { } r ? Results.Ok(r) : Results.Json(new ApiError("Rapport introuvable."), statusCode: 404));
 
         // Rapport brut complet : à donner à « spokapilote pack » pour préparer les pilotes d'un poste sans réseau.
-        admin.MapGet("/machines/{name}/raw", (string name, ServerStore store) =>
+        view.MapGet("/machines/{name}/raw", (string name, ServerStore store) =>
             store.GetRawReport(name) is { } raw
                 ? Results.File(Encoding.UTF8.GetBytes(raw), "application/json", $"{name.ToUpperInvariant()}.json")
                 : NotFound(name));
 
-        admin.MapDelete("/machines/{name}", (string name, ServerStore store, ILogger<ServerStore> log) =>
+        // ------------------------------------------------------------------ administration (jeton administrateur ou rôle Administrateur)
+
+        var admin = api.MapGroup("").RequireAccess(Access.Admin);
+
+        admin.MapDelete("/machines/{name}", (string name, HttpContext http, ServerStore store, AuditService audit, ILogger<ServerStore> log) =>
         {
             if (!store.DeleteMachine(name)) return NotFound(name);
             log.LogInformation("Poste {Machine} supprimé de la console.", name);
+            audit.Record(http, AuditActions.MachineDelete, name.ToUpperInvariant());
             return Results.NoContent();
         });
 
@@ -106,7 +143,7 @@ public static class ApiEndpoints
 
         admin.MapGet("/settings/alerts", (AlertSettingsService settings) => Results.Ok(settings.View()));
 
-        admin.MapPut("/settings/alerts", async (HttpRequest request, AlertSettingsService settings, TimeProvider clock,
+        admin.MapPut("/settings/alerts", async (HttpRequest request, AlertSettingsService settings, TimeProvider clock, AuditService audit,
             ILogger<AlertService> log, CancellationToken ct) =>
         {
             var body = await BodyReader.ReadAsync(request, 256 * 1024, "Réglages", ct);
@@ -123,12 +160,15 @@ public static class ApiEndpoints
                     statusCode: StatusCodes.Status400BadRequest);
             }
             log.LogInformation("Réglages des alertes modifiés depuis {Remote}.", request.HttpContext.Connection.RemoteIpAddress);
+            var current = settings.Current();
+            audit.Record(request.HttpContext, AuditActions.SettingsAlerts, "Alertes",
+                $"E-mail : {(current.Smtp.IsConfigured ? "configuré" : "non configuré")} · webhooks actifs : {current.Webhooks.Count(w => w.Enabled)}");
             return Results.Ok(settings.View());
         });
 
         // Alerte de test : envoi immédiat sur chaque canal, avec le résultat de chacun (erreur SMTP, webhook refusé...).
-        admin.MapPost("/alerts/test", async (AlertService alerts, AlertSender sender, AlertSettingsService settings, ServerStore store,
-            TimeProvider clock, CancellationToken ct) =>
+        admin.MapPost("/alerts/test", async (HttpContext http, AlertService alerts, AlertSender sender, AlertSettingsService settings, ServerStore store,
+            AuditService audit, TimeProvider clock, CancellationToken ct) =>
         {
             var current = settings.Current();
             if (!current.HasChannel)
@@ -139,6 +179,8 @@ public static class ApiEndpoints
             store.AddAlertEvent(clock.GetUtcNow(), null, alert.Reason, alert.Title,
                 results.All(r => r.Success) ? "envoyée" : results.Any(r => r.Success) ? "partielle" : "échec",
                 string.Join(" · ", results.Select(r => $"{r.Channel} : {r.Message}")));
+            audit.Record(http, AuditActions.AlertTest, "Alertes", string.Join(" · ", results.Select(r => $"{r.Channel} : {(r.Success ? "OK" : "échec")}")),
+                results.All(r => r.Success));
             return Results.Ok(new { results = results.Select(r => new { channel = r.Channel, success = r.Success, message = r.Message }) });
         });
 
@@ -154,14 +196,19 @@ public static class ApiEndpoints
             detail = e.Detail,
         })));
 
-        // ------------------------------------------------------------------ tâches à distance
+        // ------------------------------------------------------------------ tâches, groupes, planifications, comptes, audit
 
         api.MapJobApi();
+        api.MapGroupApi();
+        api.MapScheduleApi();
+        api.MapAccountApi();
+        api.MapAuditApi();
 
         // ------------------------------------------------------------------ documents partagés avec les postes
 
-        MapDocument(api, "/policy", ServerStore.PolicyKey, "Politique de pilotes");
-        MapDocument(api, "/printer-profile", ServerStore.PrinterProfileKey, "Profil d'imprimantes");
+        MapDocument(api, "/policy", ServerStore.PolicyKey, "Politique de pilotes", AuditActions.PolicyUpdate, AuditActions.PolicyDelete);
+        MapDocument(api, "/printer-profile", ServerStore.PrinterProfileKey, "Profil d'imprimantes",
+            AuditActions.PrinterProfileUpdate, AuditActions.PrinterProfileDelete);
     }
 
     private static async Task<IResult> ReceiveReportAsync(HttpRequest request, ServerStore store, ServerOptions options,
@@ -182,7 +229,10 @@ public static class ApiEndpoints
             return Results.Json(new ApiError(ex.Message), statusCode: StatusCodes.Status400BadRequest);
         }
 
-        var saved = store.SaveReport(report, body.Text!, received);
+        // L'adresse d'envoi sert aux règles de groupe « sous-réseau » (contrat des postes inchangé).
+        var remote = request.HttpContext.Connection.RemoteIpAddress;
+        var remoteIp = remote is null ? null : (remote.IsIPv4MappedToIPv6 ? remote.MapToIPv4() : remote).ToString();
+        var saved = store.SaveReport(report, body.Text!, received, remoteIp);
         if (saved.RenamedFrom is not null)
             log.LogInformation("Poste {Old} renommé en {New} (même identifiant machine).", saved.RenamedFrom, report.Name);
         try
@@ -211,10 +261,10 @@ public static class ApiEndpoints
     }
 
     /// <summary>
-    /// Document JSON brut stocké tel quel : GET (postes et administrateurs, 204 si absent), PUT et DELETE (administrateurs).
+    /// Document JSON brut stocké tel quel : GET (postes et console, 204 si absent), PUT et DELETE (administrateurs).
     /// Le format est défini par l'équipe qui le consomme ; le serveur vérifie seulement que c'est du JSON valide.
     /// </summary>
-    private static void MapDocument(RouteGroupBuilder api, string route, string key, string label)
+    private static void MapDocument(RouteGroupBuilder api, string route, string key, string label, string updateAction, string deleteAction)
     {
         api.MapGet(route, (HttpContext http, ServerStore store) =>
         {
@@ -222,9 +272,9 @@ public static class ApiEndpoints
             if (doc is null) return Results.NoContent();
             http.Response.Headers.LastModified = doc.UpdatedAt.ToString("R", CultureInfo.InvariantCulture);
             return Results.Text(doc.Json, "application/json; charset=utf-8");
-        }).RequireAccess(Access.Agent | Access.Admin);
+        }).RequireAccess(Access.Agent | Access.View);
 
-        api.MapPut(route, async (HttpRequest request, ServerStore store, ServerOptions options, TimeProvider clock,
+        api.MapPut(route, async (HttpRequest request, ServerStore store, ServerOptions options, TimeProvider clock, AuditService audit,
             ILogger<ServerStore> log, CancellationToken ct) =>
         {
             var body = await BodyReader.ReadAsync(request, options.MaxDocumentBytes, label, ct);
@@ -240,11 +290,16 @@ public static class ApiEndpoints
             var now = clock.GetUtcNow();
             store.SetDocument(key, body.Text!, now);
             log.LogInformation("{Label} mis(e) à jour ({Bytes} octets).", label, Encoding.UTF8.GetByteCount(body.Text!));
+            audit.Record(request.HttpContext, updateAction, label, $"{Encoding.UTF8.GetByteCount(body.Text!)} octets");
             return Results.Ok(new { updatedAt = now, bytes = Encoding.UTF8.GetByteCount(body.Text!) });
         }).RequireAccess(Access.Admin);
 
-        api.MapDelete(route, (ServerStore store) => store.DeleteDocument(key) ? Results.NoContent()
-                : Results.Json(new ApiError($"{label} : aucun document enregistré."), statusCode: 404))
+        api.MapDelete(route, (HttpContext http, ServerStore store, AuditService audit) =>
+            {
+                if (!store.DeleteDocument(key)) return Results.Json(new ApiError($"{label} : aucun document enregistré."), statusCode: 404);
+                audit.Record(http, deleteAction, label);
+                return Results.NoContent();
+            })
             .RequireAccess(Access.Admin);
     }
 

@@ -1,7 +1,9 @@
 using System.Text.Json;
 using SpokaPilote.Server.Alerts;
 using SpokaPilote.Server.Api;
+using SpokaPilote.Server.Audit;
 using SpokaPilote.Server.Fleet;
+using SpokaPilote.Server.Groups;
 using SpokaPilote.Server.Security;
 using SpokaPilote.Server.Storage;
 
@@ -11,12 +13,17 @@ namespace SpokaPilote.Server.Jobs;
 public sealed class JobRequest
 {
     public string? Type { get; set; }
-    /// <summary>Postes visés (noms). Ignoré si Target vaut « to-process » ou « all ».</summary>
+    /// <summary>Postes visés (noms). Ignoré si Target vaut « to-process », « all » ou « group ».</summary>
     public List<string>? Machines { get; set; }
-    /// <summary>« selection » (défaut), « to-process » (tous les postes à traiter) ou « all » (tout le parc).</summary>
+    /// <summary>« selection » (défaut), « to-process » (tous les postes à traiter), « all » (tout le parc) ou « group ».</summary>
     public string? Target { get; set; }
+    /// <summary>Groupe visé quand Target vaut « group ».</summary>
+    public long? Group { get; set; }
     public bool DryRun { get; set; }
-    /// <summary>Nom du technicien (facultatif), affiché dans l'historique des tâches.</summary>
+    /// <summary>
+    /// Nom du technicien (facultatif), affiché dans l'historique des tâches. Ignoré pour un compte nominatif : son
+    /// identité est alors inscrite.
+    /// </summary>
     public string? RequestedBy { get; set; }
 }
 
@@ -53,39 +60,45 @@ public static class JobEndpoints
         message = j.Message,
         exitCode = j.ExitCode,
         reportId = j.ReportId,
+        notAfter = j.NotAfter,
+        scheduleId = j.ScheduleId,
         log = withLog ? j.Log : null,
     };
 
     public static void MapJobApi(this RouteGroupBuilder api)
     {
-        var admin = api.MapGroup("").RequireAccess(Access.Admin);
+        var view = api.MapGroup("").RequireAccess(Access.View);
+        var operate = api.MapGroup("").RequireAccess(Access.Operate);
 
-        admin.MapGet("/job-types", () => Results.Ok(JobTypes.All.Select(t => new
+        view.MapGet("/job-types", () => Results.Ok(JobTypes.All.Select(t => new
         {
             id = t.Id, label = t.Label, description = t.Description, changesSystem = t.ChangesSystem, supportsDryRun = t.SupportsDryRun,
         })));
 
-        admin.MapGet("/jobs", (string? state, string? machine, int? limit, ServerStore store, ServerOptions options, TimeProvider clock) =>
+        view.MapGet("/jobs", (string? state, string? machine, int? limit, ServerStore store, ServerOptions options, TimeProvider clock) =>
         {
             store.ExpireJobs(clock.GetUtcNow(), options.JobExpiryDays, options.JobRunningTimeoutHours);
             var states = JobStates.Filter(state);
             return Results.Ok(store.ListJobs(states, machine, limit ?? 500).Select(j => View(j)));
         });
 
-        admin.MapGet("/jobs/{id:long}", (long id, ServerStore store) =>
+        view.MapGet("/jobs/{id:long}", (long id, ServerStore store) =>
             store.GetJob(id) is { } j ? Results.Ok(View(j, withLog: true)) : JobNotFound());
 
-        admin.MapPost("/jobs", CreateAsync);
+        operate.MapPost("/jobs", CreateAsync);
 
-        admin.MapPost("/jobs/{id:long}/cancel", (long id, HttpContext http, ServerStore store, TimeProvider clock, ILogger<ServerStore> log) =>
+        operate.MapPost("/jobs/{id:long}/cancel", (long id, HttpContext http, ServerStore store, TimeProvider clock, AuditService audit,
+            ILogger<ServerStore> log) =>
         {
             var job = store.GetJob(id, withLog: false);
             if (job is null) return JobNotFound();
-            if (!store.CancelJob(id, clock.GetUtcNow(), "administrateur"))
+            var principal = Principal.Of(http)!;
+            if (!store.CancelJob(id, clock.GetUtcNow(), principal.IsSession ? principal.Actor : "administrateur"))
                 return Results.Json(new ApiError(job.State == JobStates.Running
                     ? "La tâche est déjà en cours sur le poste : elle ne peut plus être annulée."
                     : "Seule une tâche en attente peut être annulée."), statusCode: StatusCodes.Status409Conflict);
             log.LogInformation("Tâche {Id} ({Type}) du poste {Machine} annulée depuis {Remote}.", id, job.Type, job.Machine, http.Connection.RemoteIpAddress);
+            audit.Record(http, AuditActions.JobCancel, $"Tâche n° {id} — {job.Machine}", JobTypes.Find(job.Type)?.Label ?? job.Type);
             return Results.Ok(View(store.GetJob(id, withLog: false)!));
         });
 
@@ -142,7 +155,7 @@ public static class JobEndpoints
     }
 
     private static async Task<IResult> CreateAsync(HttpRequest request, ServerStore store, ServerOptions options, TimeProvider clock,
-        ILogger<ServerStore> log, CancellationToken ct)
+        AuditService audit, ILogger<ServerStore> log, CancellationToken ct)
     {
         var body = await BodyReader.ReadAsync(request, 256 * 1024, "Demande", ct);
         if (body.Error is not null) return body.Error;
@@ -162,13 +175,23 @@ public static class JobEndpoints
         var all = store.GetMachines();
         List<StoredMachine> targets;
         var unknown = new List<string>();
+        string targetText;
         switch (req.Target?.Trim().ToLowerInvariant())
         {
+            case "group":
+                if (req.Group is not { } groupId || store.GetGroup(groupId) is not { } group)
+                    return Results.Json(new ApiError("Groupe introuvable."), statusCode: StatusCodes.Status404NotFound);
+                targets = all.Where(m => GroupMatcher.IsMember(group, m)).ToList();
+                if (targets.Count == 0) return Results.Json(new ApiError($"Le groupe « {group.Name} » ne contient aucun poste."), statusCode: 400);
+                targetText = $"groupe « {group.Name} »";
+                break;
             case "to-process":
                 targets = all.Where(m => !m.Report.Healthy).ToList();
+                targetText = "postes à traiter";
                 break;
             case "all":
                 targets = all;
+                targetText = "tout le parc";
                 break;
             case null or "" or "selection":
                 var names = (req.Machines ?? new List<string>()).Select(n => n.Trim()).Where(n => n.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
@@ -176,6 +199,7 @@ public static class JobEndpoints
                 var byName = all.ToDictionary(m => m.Name, StringComparer.OrdinalIgnoreCase);
                 targets = names.Where(byName.ContainsKey).Select(n => byName[n]).ToList();
                 unknown = names.Where(n => !byName.ContainsKey(n)).ToList();
+                targetText = targets.Count == 1 ? targets[0].Name : $"{targets.Count} postes sélectionnés";
                 break;
             default:
                 return Results.Json(new ApiError("Cible inconnue : selection, to-process ou all."), statusCode: 400);
@@ -183,7 +207,10 @@ public static class JobEndpoints
         if (targets.Count == 0 && unknown.Count == 0)
             return Results.Json(new ApiError(req.Target == "to-process" ? "Aucun poste à traiter." : "Aucun poste visé."), statusCode: 400);
 
-        var by = string.IsNullOrWhiteSpace(req.RequestedBy) ? "administrateur"
+        // Compte nominatif : son identité fait foi. Jeton administrateur : nom saisi (facultatif), comme en 3.0.
+        var principal = Principal.Of(request.HttpContext)!;
+        var by = principal.IsSession ? principal.Actor
+            : string.IsNullOrWhiteSpace(req.RequestedBy) ? "administrateur"
             : new string(req.RequestedBy.Trim().Where(c => !char.IsControl(c)).Take(60).ToArray());
         var created = new List<object>();
         var skipped = unknown.Select(n => (object)new { machine = n, reason = "Poste inconnu de la console." }).ToList();
@@ -195,6 +222,9 @@ public static class JobEndpoints
         }
         log.LogInformation("{Count} tâche(s) « {Type} »{DryRun} créée(s) par {By} depuis {Remote}.", created.Count, type.Id,
             req.DryRun ? " (simulation)" : "", by, request.HttpContext.Connection.RemoteIpAddress);
+        audit.Record(request.HttpContext, AuditActions.JobCreate, targetText,
+            $"{type.Label}{(req.DryRun ? " (simulation)" : "")} — {created.Count} tâche(s) créée(s), {skipped.Count} ignorée(s)" +
+            (principal.IsSession || string.IsNullOrWhiteSpace(req.RequestedBy) ? "" : $" — demandée par « {by} »"));
         return Results.Ok(new { created, skipped });
     }
 
