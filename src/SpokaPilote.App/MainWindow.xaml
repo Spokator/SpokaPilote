@@ -454,13 +454,13 @@
                         </UniformGrid>
                         <Border Style="{StaticResource Card}" Margin="0,16,0,0">
                             <StackPanel>
-                                <TextBlock FontWeight="SemiBold" Text="Pack officiel du constructeur (Dell, HP, Lenovo)" />
+                                <TextBlock FontWeight="SemiBold" Text="Pack officiel du constructeur (Dell, HP, Lenovo, Microsoft Surface)" />
                                 <TextBlock Opacity="0.75" TextWrapping="Wrap" Margin="0,4,0,8"
                                            Text="Le pack de déploiement complet publié par le constructeur pour un modèle : plus besoin de poste de référence. Laissez le modèle vide pour ce poste." />
                                 <DockPanel>
                                     <Button DockPanel.Dock="Right" Content="Rechercher" Command="{Binding SearchDriverPacksCommand}" Margin="8,0,0,0" />
                                     <ComboBox DockPanel.Dock="Right" ItemsSource="{Binding PackOsChoices}" SelectedIndex="{Binding PackOs}" Width="130" Margin="8,0,0,0" />
-                                    <TextBox Text="{Binding PackModel, UpdateSourceTrigger=PropertyChanged}" ToolTip="ex. Latitude 7420, EliteBook 840 G8, ThinkPad T14 Gen 3" />
+                                    <TextBox Text="{Binding PackModel, UpdateSourceTrigger=PropertyChanged}" ToolTip="ex. Latitude 7420, EliteBook 840 G8, ThinkPad T14 Gen 3, Surface Pro 9" />
                                 </DockPanel>
                                 <ListBox ItemsSource="{Binding DriverPacks}" SelectedItem="{Binding SelectedDriverPack}" MaxHeight="180" Margin="0,8,0,8">
                                     <ListBox.ItemTemplate>

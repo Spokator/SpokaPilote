@@ -111,7 +111,7 @@ public sealed class MainViewModel : ObservableObject
             foreach (var m in matches) DriverPacks.Add(m);
             SelectedDriverPack = DriverPacks.FirstOrDefault();
             RepositoryResult = matches.Count == 0
-                ? $"Aucun pack officiel pour {query.Describe()} ({PackOsChoices[PackOs]}). Seuls Dell, HP et Lenovo publient des packs de déploiement."
+                ? $"Aucun pack officiel pour {query.Describe()} ({PackOsChoices[PackOs]}). Seuls Dell, HP, Lenovo et Microsoft Surface publient des packs de déploiement."
                 : $"{matches.Count} pack(s) trouvé(s) pour {query.Describe()}.";
             Status = RepositoryResult;
         });
