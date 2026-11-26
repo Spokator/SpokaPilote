@@ -1,0 +1,9 @@
+SpokaPilote - fichier témoin du mode portable (clé USB).
+
+Tant que ce fichier se trouve à côté de SpokaPilote.App.exe et spokapilote.exe :
+  - les données sont rangées dans le dossier « Data » voisin (rien dans %ProgramData% ni %LocalAppData%) ;
+  - journaux, historique des interventions et sauvegardes de pilotes : Data\Postes\<POSTE>_<id> (un dossier par poste) ;
+  - le dossier « Depot » voisin, s'il existe, est utilisé automatiquement comme dépôt de pilotes ;
+  - les tâches planifiées sont refusées et la mise à jour ne lance jamais d'installeur.
+
+Ne supprimez pas ce fichier. Son contenu n'est pas lu. Documentation : docs/MODE-PORTABLE.md

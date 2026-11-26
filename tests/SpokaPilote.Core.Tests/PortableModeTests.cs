@@ -202,6 +202,18 @@ public class PortableModeTests
     }
 
     [Fact]
+    public void Build_script_names_portable_archives_with_the_shared_prefix()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "SpokaPilote.sln"))) dir = dir.Parent;
+        Assert.NotNull(dir);
+        var script = File.ReadAllText(Path.Combine(dir!.FullName, "scripts", "build-installer.ps1"));
+        Assert.Contains(UpdateChecker.PortablePrefix, script);
+        var release = File.ReadAllText(Path.Combine(dir.FullName, "scripts", "release.ps1"));
+        Assert.Contains(UpdateChecker.PortablePrefix, release);
+    }
+
+    [Fact]
     public async Task Portable_download_requires_a_published_sha256()
     {
         var update = new UpdateInfo(new Version(3, 1, 0), "v3.1.0", "https://github.com/a/x64.exe", "https://github.com/r", "")

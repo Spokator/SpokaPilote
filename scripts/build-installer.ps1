@@ -1,6 +1,9 @@
 ﻿# Construit les installeurs Windows :
 #   dist\SpokaPilote-Setup-<version>.exe        (PC x64 : Intel / AMD)
 #   dist\SpokaPilote-Installer-<version>-arm64.exe  (PC ARM64 : Snapdragon, Surface)
+# et les archives portables (clé USB, sans installation, voir docs\MODE-PORTABLE.md) :
+#   dist\SpokaPilote-Portable-<version>-x64.zip, dist\SpokaPilote-Portable-<version>-arm64.zip
+#   (jamais « Setup » ni « Installer » dans leur nom : les versions 1.0.x prendraient l'archive pour l'installeur)
 param(
     [ValidateSet("x64", "arm64", "all")] [string]$Arch = "all",
     [switch]$SkipTests
@@ -34,8 +37,8 @@ else { Write-Host "Signature : non configurée (installeurs non signés, voir do
 $archs = if ($Arch -eq "all") { @("x64", "arm64") } else { @($Arch) }
 $first = $true
 foreach ($a in $archs) {
-    # 1. Application autonome (interface + CLI) ; les tests ne tournent qu'une fois.
-    & "$PSScriptRoot\publish.ps1" -Arch $a -SkipTests:($SkipTests -or -not $first)
+    # 1. Application autonome (interface + CLI) et archive portable ; les tests ne tournent qu'une fois.
+    & "$PSScriptRoot\publish.ps1" -Arch $a -SkipTests:($SkipTests -or -not $first) -Portable
     if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { throw "La publication $a a échoué." }
     $first = $false
 
@@ -54,4 +57,7 @@ foreach ($a in $archs) {
     if ($signing) { Test-CodeSignature $signing $setup }
     $state = if ($signing) { "signé" } else { "non signé" }
     Write-Host "OK -> $setup ($state)" -ForegroundColor Green
+    $portableZip = "$root\dist\SpokaPilote-Portable-$version-$a.zip"
+    if (-not (Test-Path $portableZip)) { throw "Archive portable introuvable : $portableZip" }
+    Write-Host "OK -> $portableZip" -ForegroundColor Green
 }
