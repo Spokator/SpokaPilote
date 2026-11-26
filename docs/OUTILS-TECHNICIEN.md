@@ -233,8 +233,8 @@ BIOS : 1.12.0 installé, 1.18.0 disponible (critique) → https://www.dell.com/s
   ⚠ Avant de mettre à jour le BIOS : secteur branché (batterie chargée), BitLocker suspendu (Suspend-BitLocker ...
 ```
 
-L'état apparaît aussi dans le rapport HTML (carte « BIOS et firmwares »), dans l'onglet **Ce poste** de l'interface
-(carte « Santé des pilotes », avec un bouton vers la page officielle) et dans le rapport JSON (objet `firmware`).
+L'état apparaît aussi dans le rapport HTML (carte « BIOS et firmwares »), sur la page **Accueil** de l'interface
+(ligne « BIOS » sous les points importants, avec un bouton vers la page officielle) et dans le rapport JSON (objet `firmware`).
 
 ### Comment c'est vérifié
 

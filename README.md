@@ -82,7 +82,20 @@ automatique. Pour un parc : `SpokaPilote-Setup-<version>.exe /VERYSILENT /SUPPRE
 Sur clé USB, sans installation : `SpokaPilote-Portable-<version>-x64.zip` (voir [docs/MODE-PORTABLE.md](docs/MODE-PORTABLE.md)).
 
 ### Interface
-**Analyser ce poste** → onglet **Pilotes** → **Installer la sélection** (relance en administrateur proposée).
+L'**Accueil** tient en un bouton : **Analyser ce poste** (F5), puis **Installer N pilotes** (relance en administrateur
+proposée). Il affiche aussi le modèle, Windows, la note de santé A–E avec les points importants et l'état du BIOS.
+Le reste est rangé dans six pages (Ctrl+1 à Ctrl+6) :
+
+| Page | Contenu |
+|---|---|
+| **Accueil** | Identité du poste, note de santé, BIOS, action principale et progression en clair |
+| **Pilotes** | Liste filtrable (manquants, mises à jour, bloqués par la politique, tout), simulation, installation |
+| **Périphériques** | Périphériques en erreur ou sans pilote trouvé, diagnostic et réparation guidée |
+| **Historique** | Interventions, annulation, réinstallation d'une sauvegarde |
+| **Outils** | Dépôt de pilotes, packs constructeur, pack hors ligne, rapport de parc, nettoyage du magasin, maintenance planifiée et agent, console centrale, journal technique |
+| **Paramètres** | Langue, sources de pilotes, sécurité, connexion à la console, à propos et mises à jour |
+
+Les imprimantes se déploient désormais avec **SpokaPrint** (les commandes `spokapilote printers` restent disponibles).
 
 ### Ligne de commande (extraits)
 ```powershell

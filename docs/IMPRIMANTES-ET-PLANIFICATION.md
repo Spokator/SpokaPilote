@@ -3,6 +3,11 @@
 Deux fonctions pour les parcs : **configurer les imprimantes une fois et les déployer partout**, et **laisser le
 parc s'entretenir tout seul** grâce à une tâche planifiée Windows.
 
+> **Interface graphique** : la recherche et le déploiement des imprimantes ne sont plus dans l'interface de
+> SpokaPilote ; ils passent à **SpokaPrint**, un outil dédié (Outils › carte « Imprimantes → SpokaPrint »). Les
+> commandes `spokapilote printers ...` décrites ici restent disponibles et inchangées pour vos scripts. La maintenance
+> planifiée se règle dans **Outils › Maintenance planifiée et agent**.
+
 ---
 
 ## 1. Profils d'imprimantes
