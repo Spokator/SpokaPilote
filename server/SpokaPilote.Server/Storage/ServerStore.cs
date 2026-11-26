@@ -1,4 +1,4 @@
-﻿using System.Globalization;
+using System.Globalization;
 using System.IO.Compression;
 using System.Text.Json;
 using Microsoft.Data.Sqlite;
@@ -6,26 +6,26 @@ using SpokaPilote.Server.Fleet;
 
 namespace SpokaPilote.Server.Storage;
 
-/// <summary>EntrÃ©e de l'historique d'un poste (indicateurs du rapport, sans le dÃ©tail).</summary>
+/// <summary>Entrée de l'historique d'un poste (indicateurs du rapport, sans le détail).</summary>
 public sealed record HistoryEntry(long Id, DateTimeOffset Timestamp, DateTimeOffset ReceivedAt, string? AppVersion,
     int DriverProblems, int HardwareFaults, int Unresolved, int Proposed, int Blocked, int Installed, int Failed, bool AnalysisOnly, bool Healthy,
     int? HealthScore = null);
 
-/// <summary>Document JSON brut (politique de pilotes, profil d'imprimantes) et sa date de mise Ã  jour.</summary>
+/// <summary>Document JSON brut (politique de pilotes, profil d'imprimantes) et sa date de mise à jour.</summary>
 public sealed record StoredDocument(string Json, DateTimeOffset UpdatedAt);
 
-/// <summary>RÃ©sultat de l'enregistrement d'un rapport (sert aux alertes et Ã  l'accusÃ© de rÃ©ception).</summary>
-/// <param name="MachineRef">ClÃ© interne du poste.</param>
+/// <summary>Résultat de l'enregistrement d'un rapport (sert aux alertes et à l'accusé de réception).</summary>
+/// <param name="MachineRef">Clé interne du poste.</param>
 /// <param name="ReportId">Identifiant du rapport dans l'historique.</param>
 /// <param name="IsNewMachine">Premier rapport de ce poste.</param>
-/// <param name="IsLatest">Le rapport devient l'Ã©tat actuel du poste (false : ancien rapport ajoutÃ© Ã  l'historique).</param>
-/// <param name="Previous">Ã‰tat actuel du poste avant ce rapport (null pour un nouveau poste).</param>
-/// <param name="RenamedFrom">Ancien nom si le poste (reconnu par son identifiant) a changÃ© de nom.</param>
+/// <param name="IsLatest">Le rapport devient l'état actuel du poste (false : ancien rapport ajouté à l'historique).</param>
+/// <param name="Previous">État actuel du poste avant ce rapport (null pour un nouveau poste).</param>
+/// <param name="RenamedFrom">Ancien nom si le poste (reconnu par son identifiant) a changé de nom.</param>
 public sealed record SaveResult(long MachineRef, long ReportId, bool IsNewMachine, bool IsLatest, MachineReport? Previous, string? RenamedFrom);
 
 /// <summary>
-/// Stockage SQLite (un seul fichier dans le volume de donnÃ©es) : postes, historique des rapports, documents, tÃ¢ches Ã 
-/// distance et alertes. Une connexion par opÃ©ration (le pool de Microsoft.Data.Sqlite les rÃ©utilise) ; journal WAL
+/// Stockage SQLite (un seul fichier dans le volume de données) : postes, historique des rapports, documents, tâches à
+/// distance et alertes. Une connexion par opération (le pool de Microsoft.Data.Sqlite les réutilise) ; journal WAL
 /// pour les lectures concurrentes.
 /// </summary>
 public sealed partial class ServerStore
@@ -63,9 +63,9 @@ public sealed partial class ServerStore
         return connection;
     }
 
-    // ------------------------------------------------------------------ schÃ©ma
+    // ------------------------------------------------------------------ schéma
 
-    /// <summary>Tables de la version 2 (clÃ© interne des postes, identifiant machine, tÃ¢ches, alertes).</summary>
+    /// <summary>Tables de la version 2 (clé interne des postes, identifiant machine, tâches, alertes).</summary>
     private const string SchemaV2 = """
         CREATE TABLE IF NOT EXISTS machines (
             id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -134,8 +134,8 @@ public sealed partial class ServerStore
         using var tx = c.BeginTransaction();
         if (version == 1)
         {
-            // Version 1 (console 2.x) : postes indexÃ©s par leur nom. On passe Ã  une clÃ© interne pour qu'un poste
-            // renommÃ© reste le mÃªme poste ; l'historique est conservÃ© Ã  l'identique.
+            // Version 1 (console 2.x) : postes indexés par leur nom. On passe à une clé interne pour qu'un poste
+            // renommé reste le même poste ; l'historique est conservé à l'identique.
             Execute(c, """
                 DROP INDEX IF EXISTS ix_reports_machine;
                 ALTER TABLE machines RENAME TO machines_v1;
@@ -164,14 +164,14 @@ public sealed partial class ServerStore
 
     /// <summary>
     /// Enregistre un rapport. Le poste est reconnu d'abord par son identifiant machine (MachineGuid), sinon par son nom :
-    /// un poste renommÃ© reste le mÃªme poste ; un poste connu par son seul nom (rapports antÃ©rieurs Ã  la 3.0) reÃ§oit
-    /// l'identifiant au premier rapport qui le contient. Le Â« dernier rapport Â» d'un poste est celui dont l'horodatage
-    /// est le plus rÃ©cent : renvoyer un ancien rapport (reprise d'un partage) l'ajoute Ã  l'historique sans Ã©craser l'Ã©tat actuel.
+    /// un poste renommé reste le même poste ; un poste connu par son seul nom (rapports antérieurs à la 3.0) reçoit
+    /// l'identifiant au premier rapport qui le contient. Le « dernier rapport » d'un poste est celui dont l'horodatage
+    /// est le plus récent : renvoyer un ancien rapport (reprise d'un partage) l'ajoute à l'historique sans écraser l'état actuel.
     /// </summary>
     public SaveResult SaveReport(MachineReport report, string rawJson, DateTimeOffset receivedAt)
     {
         var summary = JsonSerializer.Serialize(report, Json);
-        // Dernier contact : date du rapport, bornÃ©e par la date de rÃ©ception (horloge du poste en avance).
+        // Dernier contact : date du rapport, bornée par la date de réception (horloge du poste en avance).
         var seen = report.Timestamp < receivedAt ? report.Timestamp : receivedAt;
         var machineId = report.System.MachineId;
 
@@ -202,7 +202,7 @@ public sealed partial class ServerStore
         var reportId = Convert.ToInt64(Scalar(c, """
             INSERT INTO reports(machine_ref, report_at, received_at, summary_json) VALUES($m, $at, $rcv, $s) RETURNING id;
             """, ("$m", machineRef), ("$at", Iso(report.Timestamp)), ("$rcv", Iso(receivedAt)), ("$s", summary)), CultureInfo.InvariantCulture);
-        // Ne garde que les N rapports les plus rÃ©cents du poste.
+        // Ne garde que les N rapports les plus récents du poste.
         Execute(c, """
             DELETE FROM reports WHERE machine_ref = $m AND id NOT IN
               (SELECT id FROM reports WHERE machine_ref = $m ORDER BY report_at DESC, id DESC LIMIT $keep);
@@ -212,9 +212,9 @@ public sealed partial class ServerStore
     }
 
     /// <summary>
-    /// Retrouve le poste d'un rapport. RÃ¨gles : 1) mÃªme identifiant machine â†’ mÃªme poste (renommÃ© si le rapport est le
-    /// plus rÃ©cent ; un ancien enregistrement qui portait dÃ©jÃ  ce nom est mis de cÃ´tÃ© sous Â« NOM~id Â») ; 2) mÃªme nom â†’
-    /// mÃªme poste, qui adopte l'identifiant (poste antÃ©rieur Ã  la 3.0, ou Windows rÃ©installÃ© : nouvel identifiant) ;
+    /// Retrouve le poste d'un rapport. Règles : 1) même identifiant machine → même poste (renommé si le rapport est le
+    /// plus récent ; un ancien enregistrement qui portait déjà ce nom est mis de côté sous « NOM~id ») ; 2) même nom →
+    /// même poste, qui adopte l'identifiant (poste antérieur à la 3.0, ou Windows réinstallé : nouvel identifiant) ;
     /// 3) sinon nouveau poste.
     /// </summary>
     private static (long? Id, string? RenamedFrom, MachineReport? Previous) ResolveForReport(SqliteConnection c, string name, string? machineId, string reportAt)
@@ -304,14 +304,14 @@ public sealed partial class ServerStore
             ("$n", name), ("$id", id)) is string json ? Deserialize(json) : null;
     }
 
-    /// <summary>Un rapport appartient-il Ã  ce poste ? (lien entre une tÃ¢che et le rapport qu'elle a produit)</summary>
+    /// <summary>Un rapport appartient-il à ce poste ? (lien entre une tâche et le rapport qu'elle a produit)</summary>
     public bool ReportBelongsTo(long reportId, long machineRef)
     {
         using var c = Open();
         return Scalar(c, "SELECT 1 FROM reports WHERE id = $id AND machine_ref = $m;", ("$id", reportId), ("$m", machineRef)) is not null;
     }
 
-    /// <summary>Dernier rapport brut du poste (tel qu'envoyÃ©), rÃ©utilisable avec Â« spokapilote pack Â».</summary>
+    /// <summary>Dernier rapport brut du poste (tel qu'envoyé), réutilisable avec « spokapilote pack ».</summary>
     public string? GetRawReport(string name)
     {
         using var c = Open();
@@ -324,7 +324,7 @@ public sealed partial class ServerStore
         return Execute(c, "DELETE FROM machines WHERE name = $n;", ("$n", name)) > 0;
     }
 
-    // ------------------------------------------------------------------ documents (politique, profil d'imprimantes, rÃ©glages)
+    // ------------------------------------------------------------------ documents (politique, profil d'imprimantes, réglages)
 
     public StoredDocument? GetDocument(string key)
     {
@@ -398,7 +398,7 @@ public sealed partial class ServerStore
         return result is DBNull ? null : result;
     }
 
-    /// <summary>PremiÃ¨re ligne d'une requÃªte (null si aucune), valeurs DBNull converties en null.</summary>
+    /// <summary>Première ligne d'une requête (null si aucune), valeurs DBNull converties en null.</summary>
     private static object?[]? Row(SqliteConnection c, string sql, params (string Name, object? Value)[] parameters)
     {
         using var cmd = c.CreateCommand();

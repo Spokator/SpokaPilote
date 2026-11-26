@@ -1,6 +1,6 @@
-﻿namespace SpokaPilote.Server.Storage;
+namespace SpokaPilote.Server.Storage;
 
-/// <summary>Alerte envoyÃ©e (ou tentÃ©e) : historique affichÃ© dans la page ParamÃ¨tres.</summary>
+/// <summary>Alerte envoyée (ou tentée) : historique affiché dans la page Paramètres.</summary>
 public sealed record AlertEventRecord(long Id, DateTimeOffset CreatedAt, string? Machine, string Reason, string Title, string Status, string? Detail);
 
 public sealed partial class ServerStore
@@ -10,8 +10,8 @@ public sealed partial class ServerStore
     private const int AlertEventsKept = 200;
 
     /// <summary>
-    /// Anti-spam : rÃ©serve l'envoi d'une alerte pour ce sujet (poste) et ce motif. Renvoie false si la mÃªme alerte a dÃ©jÃ 
-    /// Ã©tÃ© envoyÃ©e il y a moins de <paramref name="window"/> ; sinon enregistre l'envoi et renvoie true (atomique).
+    /// Anti-spam : réserve l'envoi d'une alerte pour ce sujet (poste) et ce motif. Renvoie false si la même alerte a déjà
+    /// été envoyée il y a moins de <paramref name="window"/> ; sinon enregistre l'envoi et renvoie true (atomique).
     /// </summary>
     public bool TryRegisterAlert(string subject, string reason, DateTimeOffset now, TimeSpan window)
     {
@@ -28,7 +28,7 @@ public sealed partial class ServerStore
         return true;
     }
 
-    /// <summary>Oublie les envois anciens (la fenÃªtre anti-spam ne dÃ©passe jamais quelques jours).</summary>
+    /// <summary>Oublie les envois anciens (la fenêtre anti-spam ne dépasse jamais quelques jours).</summary>
     public int PurgeAlertLog(DateTimeOffset now, int days = 30)
     {
         using var c = Open();
