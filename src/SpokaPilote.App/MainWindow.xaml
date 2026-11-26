@@ -663,6 +663,14 @@
                                 </DockPanel>
                                 <TextBlock Margin="0,8,0,0" Opacity="0.7" TextWrapping="Wrap"
                                            Text="Une fois configurée, chaque analyse et chaque installation envoient leur rapport à la console. La console s'installe avec Docker : voir docs/CONSOLE-CENTRALE.md." />
+                                <TextBlock FontWeight="SemiBold" Text="Actions à distance" Margin="0,16,0,4" />
+                                <TextBlock Opacity="0.75" TextWrapping="Wrap" Margin="0,0,0,8"
+                                           Text="L'agent vérifie toutes les 15 minutes si la console a demandé une action pour ce poste (analyse, installation des pilotes manquants, imprimantes, annulation, mise à jour). Aucune autre commande n'est possible." />
+                                <WrapPanel>
+                                    <Button Content="Activer l'agent" Command="{Binding EnableAgentCommand}" Margin="0,0,8,0" />
+                                    <Button Content="Désactiver" Command="{Binding DisableAgentCommand}" />
+                                </WrapPanel>
+                                <TextBlock Margin="0,8,0,0" Opacity="0.8" TextWrapping="Wrap" Text="{Binding AgentStatusText, Mode=OneWay}" />
                             </StackPanel>
                         </Border>
                         <Border Style="{StaticResource Card}" Margin="0,16,0,0">

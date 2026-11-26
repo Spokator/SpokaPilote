@@ -66,6 +66,7 @@ public sealed class MainViewModel : ObservableObject
         RunScheduleNowCommand = new RelayCommand(RunScheduleNowAsync, () => !IsBusy && ScheduleExists);
         RefreshHistory();
         _ = RefreshScheduleStatusAsync();
+        _ = RefreshAgentStatusAsync();
     }
 
     // ------------------------------------------------------------------ politique de pilotes
@@ -158,6 +159,55 @@ public sealed class MainViewModel : ObservableObject
         {
             ServerStatusText = "✗ " + ex.Message;
         }
+    }
+
+    // Agent : tâche planifiée qui récupère et exécute les actions demandées depuis la console (liste blanche).
+    private string _agentStatus = "";
+    public string AgentStatusText { get => _agentStatus; private set => Set(ref _agentStatus, value); }
+    public RelayCommand EnableAgentCommand => _enableAgent ??= new RelayCommand(EnableAgentAsync, () => !IsBusy);
+    public RelayCommand DisableAgentCommand => _disableAgent ??= new RelayCommand(DisableAgentAsync, () => !IsBusy);
+    private RelayCommand? _enableAgent, _disableAgent;
+
+    private async Task RefreshAgentStatusAsync()
+    {
+        try
+        {
+            var s = await AgentScheduler.StatusAsync();
+            AgentStatusText = s.Exists
+                ? Loc.F("Agent actif ({0}) · dernière vérification : {1}", s.TriggerSummary ?? "",
+                    s.LastRun is { } l ? l.ToString("dd/MM/yyyy HH:mm") : Loc.T("jamais"))
+                : Loc.T("Agent désactivé : la console ne peut pas lancer d'action sur ce poste.");
+        }
+        catch (Exception ex)
+        {
+            AgentStatusText = ex.Message;
+        }
+    }
+
+    private async Task EnableAgentAsync()
+    {
+        if (!Core.Online.ServerClient.IsConfigured(Settings)) { AgentStatusText = Loc.T("Renseignez d'abord l'adresse et le jeton de la console, puis Enregistrer."); return; }
+        if (!IsAdmin) { AskRelaunch(Loc.T("L'activation de l'agent")); return; }
+        var problem = MaintenanceScheduler.ValidateExecutable(CliPath);
+        if (problem is not null) { AgentStatusText = problem; return; }
+        SaveSettings();
+        await RunBusyAsync(Loc.T("Activation de l'agent..."), async ct =>
+        {
+            var (_, message) = await AgentScheduler.EnableAsync(AgentScheduler.DefaultIntervalMinutes, CliPath, ct);
+            Status = message;
+            await RefreshAgentStatusAsync();
+        });
+    }
+
+    private async Task DisableAgentAsync()
+    {
+        if (!IsAdmin) { AskRelaunch(Loc.T("La désactivation de l'agent")); return; }
+        await RunBusyAsync(Loc.T("Désactivation de l'agent..."), async ct =>
+        {
+            var (_, message) = await AgentScheduler.DisableAsync(ct);
+            Status = message;
+            await RefreshAgentStatusAsync();
+        });
     }
 
     /// <summary>Envoie le rapport à la console centrale si elle est configurée (jamais bloquant).</summary>

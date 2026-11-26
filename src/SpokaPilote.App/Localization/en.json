@@ -251,6 +251,19 @@
   "N° de série {0}": "Serial number {0}",
   "Interface": "Interface",
 
+  // ---------------------------------------------------------------- agent (actions à distance)
+  "Actions à distance": "Remote actions",
+  "L'agent vérifie toutes les 15 minutes si la console a demandé une action pour ce poste (analyse, installation des pilotes manquants, imprimantes, annulation, mise à jour). Aucune autre commande n'est possible.": "Every 15 minutes the agent checks whether the console has requested an action for this PC (scan, missing driver installation, printers, rollback, update). No other command is possible.",
+  "Activer l'agent": "Enable agent",
+  "Agent actif ({0}) · dernière vérification : {1}": "Agent enabled ({0}) · last check: {1}",
+  "jamais": "never",
+  "Agent désactivé : la console ne peut pas lancer d'action sur ce poste.": "Agent disabled: the console cannot run actions on this PC.",
+  "Renseignez d'abord l'adresse et le jeton de la console, puis Enregistrer.": "Enter the console address and token first, then Save.",
+  "L'activation de l'agent": "Enabling the agent",
+  "La désactivation de l'agent": "Disabling the agent",
+  "Activation de l'agent...": "Enabling the agent...",
+  "Désactivation de l'agent...": "Disabling the agent...",
+
   // ---------------------------------------------------------------- boîte à outils du technicien
   "Santé des pilotes": "Driver health",
   "Note de santé des pilotes": "Driver health grade",
