@@ -19,10 +19,17 @@ public sealed record UpdateInfo(Version Version, string Tag, string DownloadUrl,
 /// <summary>L'installeur téléchargé ne correspond pas à ce que GitHub annonce : il est supprimé et jamais exécuté.</summary>
 public sealed class UpdateIntegrityException(string message) : Exception(message);
 
-/// <summary>Vérifie la dernière version publiée sur GitHub et télécharge son installeur.</summary>
+/// <summary>
+/// Vérifie la dernière version publiée sur GitHub et télécharge son installeur. Le dépôt interrogé est celui du produit
+/// en vigueur (<see cref="AppIdentity.UpdateRepository"/>) : un produit construit sur ce moteur ne reçoit jamais les
+/// Releases de SpokaPilote.
+/// </summary>
 public static class UpdateChecker
 {
+    /// <summary>Dépôt des Releases de SpokaPilote (identité par défaut).</summary>
     public const string Repository = "Spokator/SpokaPilote";
+    /// <summary>Dépôt interrogé : celui du produit en vigueur.</summary>
+    public static string CurrentRepository => AppIdentity.Current.UpdateRepository;
     /// <summary>Préfixe des archives portables. Ne contient jamais « Setup » ni « Installer » (voir <see cref="PortableAssetName"/>).</summary>
     public const string PortablePrefix = "SpokaPilote-Portable-";
 
@@ -32,7 +39,7 @@ public static class UpdateChecker
     /// comme installeur) et extension .zip (jamais retenue comme installeur par <see cref="Parse(JsonElement, Version, string)"/>).
     /// </summary>
     public static string PortableAssetName(string version, string architecture) => $"{PortablePrefix}{version}-{architecture}.zip";
-    public static string ReleasesPage => $"https://github.com/{Repository}/releases/latest";
+    public static string ReleasesPage => $"https://github.com/{CurrentRepository}/releases/latest";
 
     public static Version CurrentVersion
     {
@@ -45,9 +52,14 @@ public static class UpdateChecker
         }
     }
 
-    public static async Task<UpdateInfo?> CheckAsync(Version current, CancellationToken ct = default)
+    public static Task<UpdateInfo?> CheckAsync(Version current, CancellationToken ct = default) => CheckAsync(current, CurrentRepository, ct);
+
+    /// <summary>Dernière Release publiée de <paramref name="repository"/> (« propriétaire/nom »), si plus récente.</summary>
+    public static async Task<UpdateInfo?> CheckAsync(Version current, string repository, CancellationToken ct = default)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Get, $"https://api.github.com/repos/{Repository}/releases/latest");
+        if (!System.Text.RegularExpressions.Regex.IsMatch(repository, @"^[A-Za-z0-9_.\-]+/[A-Za-z0-9_.\-]+$"))
+            throw new ArgumentException($"Dépôt GitHub invalide : {repository}", nameof(repository));
+        using var request = new HttpRequestMessage(HttpMethod.Get, $"https://api.github.com/repos/{repository}/releases/latest");
         request.Headers.Accept.ParseAdd("application/vnd.github+json");
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         cts.CancelAfter(TimeSpan.FromSeconds(20));
@@ -64,7 +76,8 @@ public static class UpdateChecker
 
     internal static UpdateInfo? Parse(JsonElement release, Version current) => Parse(release, current, HostArchitecture);
 
-    internal static UpdateInfo? Parse(JsonElement release, Version current, string architecture)
+    /// <summary>Release GitHub (JSON de l'API) → installeur de cette architecture, si la version est plus récente.</summary>
+    public static UpdateInfo? Parse(JsonElement release, Version current, string architecture)
     {
         if (release.TryGetProperty("draft", out var draft) && draft.GetBoolean()) return null;
         if (release.TryGetProperty("prerelease", out var pre) && pre.GetBoolean()) return null;
@@ -147,7 +160,8 @@ public static class UpdateChecker
     {
         if (AppPaths.IsPortable)
             throw new InvalidOperationException("Mode portable : l'installeur n'est pas téléchargé (utilisez l'archive portable).");
-        var target = Path.Combine(Path.GetTempPath(), "SpokaPilote", $"SpokaPilote-Setup-{update.Version}.exe");
+        var identity = AppIdentity.Current;
+        var target = Path.Combine(Path.GetTempPath(), identity.DataFolderName, $"{identity.ProductName}-Setup-{update.Version}.exe");
         return DownloadVerifiedAsync(update.DownloadUrl, update.Size, update.Sha256, target, progress, ct);
     }
 
@@ -170,8 +184,11 @@ public static class UpdateChecker
         IProgress<double>? progress, CancellationToken ct)
     {
         var uri = new Uri(url);
-        if (uri.Scheme != Uri.UriSchemeHttps || !uri.Host.EndsWith("github.com", StringComparison.OrdinalIgnoreCase))
-            throw new UpdateIntegrityException("Adresse de mise à jour inattendue : seule une Release GitHub de SpokaPilote est acceptée.");
+        // Release GitHub du produit en vigueur uniquement (« https://github.com/<dépôt>/releases/download/... ») : un
+        // produit construit sur ce moteur ne télécharge jamais l'installeur d'un autre.
+        if (uri.Scheme != Uri.UriSchemeHttps || !uri.Host.EndsWith("github.com", StringComparison.OrdinalIgnoreCase) ||
+            !uri.AbsolutePath.StartsWith($"/{CurrentRepository}/releases/download/", StringComparison.OrdinalIgnoreCase))
+            throw new UpdateIntegrityException($"Adresse de mise à jour inattendue : seule une Release GitHub de {AppIdentity.Current.ProductName} est acceptée.");
 
         var part = target + ".part";
         Directory.CreateDirectory(Path.GetDirectoryName(target)!);

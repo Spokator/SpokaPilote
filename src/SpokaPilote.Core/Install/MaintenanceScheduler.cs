@@ -162,21 +162,32 @@ public static class MaintenanceScheduler
         return BuildSystemTaskXml(TaskName, description, trigger, o.RunOnBattery, o.ExecutionLimit, executable, BuildArguments(o));
     }
 
+    /// <summary>Espace de noms XML des définitions de tâches (pour construire un déclencheur).</summary>
+    public static XNamespace TaskNamespace => Ns;
+
     /// <summary>
     /// Définition XML d'une tâche SpokaPilote exécutée en SYSTEM (privilèges maximum, instance unique) : socle commun
     /// à la maintenance (\SpokaPilote\Maintenance) et à l'agent des tâches à distance (\SpokaPilote\Agent).
     /// </summary>
-    internal static string BuildSystemTaskXml(string taskName, string description, XElement trigger, bool runOnBattery,
+    public static string BuildSystemTaskXml(string taskName, string description, XElement trigger, bool runOnBattery,
+        TimeSpan executionLimit, string executable, IEnumerable<string> arguments) =>
+        BuildSystemTaskXml(taskName, description, new[] { trigger }, runOnBattery, executionLimit, executable, arguments);
+
+    /// <summary>
+    /// Même définition avec plusieurs déclencheurs (ex. au démarrage ET chaque jour) ; l'auteur est le produit en
+    /// vigueur (<see cref="AppIdentity.ProductName"/>).
+    /// </summary>
+    public static string BuildSystemTaskXml(string taskName, string description, IEnumerable<XElement> triggers, bool runOnBattery,
         TimeSpan executionLimit, string executable, IEnumerable<string> arguments)
     {
         var doc = new XDocument(
             new XDeclaration("1.0", "UTF-16", null),
             new XElement(Ns + "Task", new XAttribute("version", "1.2"),
                 new XElement(Ns + "RegistrationInfo",
-                    new XElement(Ns + "Author", "SpokaPilote"),
+                    new XElement(Ns + "Author", AppIdentity.Current.ProductName),
                     new XElement(Ns + "Description", description),
                     new XElement(Ns + "URI", taskName)),
-                new XElement(Ns + "Triggers", trigger),
+                new XElement(Ns + "Triggers", triggers),
                 new XElement(Ns + "Principals",
                     new XElement(Ns + "Principal", new XAttribute("id", "Author"),
                         new XElement(Ns + "UserId", "S-1-5-18"), // SYSTEM, quel que soit la langue de Windows
@@ -242,25 +253,31 @@ public static class MaintenanceScheduler
     /// par un utilisateur standard). Un dossier temporaire ou de compilation est refusé, de même qu'une copie
     /// portable (fichier témoin SpokaPilote.portable à côté de l'exécutable).
     /// </summary>
-    public static string? ValidateExecutable(string? path)
+    public static string? ValidateExecutable(string? path) => ValidateExecutable(path, "spokapilote.exe", "SpokaPilote", PortableRefusal);
+
+    /// <summary>
+    /// Même contrôle pour la ligne de commande d'un autre produit (<paramref name="expectedFileName"/>, ex.
+    /// « spokaprint.exe ») : version installée dans Program Files obligatoire.
+    /// </summary>
+    public static string? ValidateExecutable(string? path, string expectedFileName, string productName, string? portableRefusal = null)
     {
         if (string.IsNullOrWhiteSpace(path)) return "Chemin de l'exécutable inconnu.";
         string full;
         try { full = Path.GetFullPath(path); } catch (Exception ex) { return $"Chemin de l'exécutable invalide : {ex.Message}"; }
-        if (!Path.GetFileName(full).Equals("spokapilote.exe", StringComparison.OrdinalIgnoreCase))
-            return $"La tâche doit lancer spokapilote.exe (exécutable actuel : {full}).";
+        if (!Path.GetFileName(full).Equals(expectedFileName, StringComparison.OrdinalIgnoreCase))
+            return $"La tâche doit lancer {expectedFileName} (exécutable actuel : {full}).";
         if (Path.GetDirectoryName(full) is { } dir && AppPaths.IsPortableDirectory(dir))
-            return PortableRefusal;
+            return portableRefusal ?? $"Copie portable : les tâches planifiées ne sont pas disponibles. Installez {productName} sur le poste.";
 
         static bool Under(string file, string? folder) =>
             !string.IsNullOrWhiteSpace(folder) &&
             file.StartsWith(Path.TrimEndingDirectorySeparator(Path.GetFullPath(folder)) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
 
         if (Under(full, Path.GetTempPath()) || Under(full, Environment.GetEnvironmentVariable("TEMP")))
-            return $"Exécutable dans un dossier temporaire ({full}) : installez SpokaPilote dans Program Files.";
+            return $"Exécutable dans un dossier temporaire ({full}) : installez {productName} dans Program Files.";
         var segments = full.Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries);
         if (segments.Any(s => s.Equals("bin", StringComparison.OrdinalIgnoreCase) || s.Equals("obj", StringComparison.OrdinalIgnoreCase)))
-            return $"Exécutable de compilation ({full}) : installez SpokaPilote dans Program Files.";
+            return $"Exécutable de compilation ({full}) : installez {productName} dans Program Files.";
         var programFiles = new[]
         {
             Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
@@ -297,9 +314,10 @@ public static class MaintenanceScheduler
     public static Task<MaintenanceStatus> StatusAsync(CancellationToken ct = default) => StatusAsync(TaskName, ct);
 
     // ------------------------------------------------------------------ opérations communes à toutes les tâches \SpokaPilote\*
+    // (publiques : un produit construit sur ce moteur gère ses propres tâches, dans son dossier du Planificateur)
 
     /// <summary>Enregistre (ou remplace) une tâche à partir de sa définition XML, conservée dans %ProgramData%\SpokaPilote.</summary>
-    internal static async Task<(bool Ok, string Message, string File)> RegisterTaskAsync(string taskName, string xml, string fileName, CancellationToken ct)
+    public static async Task<(bool Ok, string Message, string File)> RegisterTaskAsync(string taskName, string xml, string fileName, CancellationToken ct)
     {
         var file = Path.Combine(AppPaths.Ensure(AppPaths.Root), fileName);
         await File.WriteAllTextAsync(file, xml, Encoding.Unicode, ct).ConfigureAwait(false);
@@ -307,8 +325,11 @@ public static class MaintenanceScheduler
         return r.ExitCode == 0 ? (true, "", file) : (false, $"schtasks a refusé la tâche (code {r.ExitCode}) : {r.Combined.Trim()}", file);
     }
 
-    /// <summary>Supprime une tâche, puis le dossier de tâches \SpokaPilote s'il est vide.</summary>
-    internal static async Task<(bool Ok, string Message)> DeleteTaskAsync(string taskName, CancellationToken ct)
+    /// <summary>
+    /// Supprime une tâche, puis son dossier de tâches (\SpokaPilote pour \SpokaPilote\Maintenance) s'il est vide.
+    /// Le dossier est celui du nom de la tâche : un dossier de premier niveau, jamais la racine.
+    /// </summary>
+    public static async Task<(bool Ok, string Message)> DeleteTaskAsync(string taskName, CancellationToken ct)
     {
         if (!Elevation.IsAdministrator()) return (false, "La suppression de la tâche planifiée nécessite une console administrateur.");
         var exists = (await QueryXmlAsync(taskName, ct).ConfigureAwait(false)) is not null;
@@ -317,18 +338,31 @@ public static class MaintenanceScheduler
             var r = await ProcessRunner.RunAsync(SchTasks, $"/Delete /TN \"{taskName}\" /F", timeout: TimeSpan.FromMinutes(1), ct: ct).ConfigureAwait(false);
             if (r.ExitCode != 0) return (false, $"schtasks n'a pas supprimé la tâche (code {r.ExitCode}) : {r.Combined.Trim()}");
         }
-        // schtasks ne sait pas supprimer un dossier : API COM du Planificateur.
-        var folder = ProcessRunner.PsQuote(TaskFolder);
-        var script = "$s = New-Object -ComObject Schedule.Service; $s.Connect(); " +
-                     $"try {{ $f = $s.GetFolder({folder}) }} catch {{ 'ABSENT'; exit 0 }}; " +
-                     "if ($f.GetTasks(1).Count -eq 0 -and $f.GetFolders(0).Count -eq 0) { $s.GetFolder('\\').DeleteFolder('SpokaPilote', 0); 'DELETED' } else { 'KEPT' }";
-        var del = await ProcessRunner.RunPowerShellAsync(script, TimeSpan.FromMinutes(1), ct).ConfigureAwait(false);
-        var folderNote = del.StdOut.Contains("KEPT") ? $" (dossier {TaskFolder} conservé : il contient d'autres tâches)" : "";
+        var taskFolder = TaskFolderOf(taskName);
+        var folderNote = "";
+        if (taskFolder is not null)
+        {
+            // schtasks ne sait pas supprimer un dossier : API COM du Planificateur.
+            var folder = ProcessRunner.PsQuote(taskFolder);
+            var leaf = ProcessRunner.PsQuote(taskFolder.TrimStart('\\'));
+            var script = "$s = New-Object -ComObject Schedule.Service; $s.Connect(); " +
+                         $"try {{ $f = $s.GetFolder({folder}) }} catch {{ 'ABSENT'; exit 0 }}; " +
+                         $"if ($f.GetTasks(1).Count -eq 0 -and $f.GetFolders(0).Count -eq 0) {{ $s.GetFolder('\\').DeleteFolder({leaf}, 0); 'DELETED' }} else {{ 'KEPT' }}";
+            var del = await ProcessRunner.RunPowerShellAsync(script, TimeSpan.FromMinutes(1), ct).ConfigureAwait(false);
+            if (del.StdOut.Contains("KEPT")) folderNote = $" (dossier {taskFolder} conservé : il contient d'autres tâches)";
+        }
         Log.Info($"Tâche planifiée {taskName} supprimée.");
         return (true, exists ? $"Tâche « {taskName} » supprimée{folderNote}." : $"Aucune tâche « {taskName} » sur ce poste{folderNote}.");
     }
 
-    internal static async Task<(bool Ok, string Message)> RunNowAsync(string taskName, CancellationToken ct)
+    /// <summary>Dossier de premier niveau d'une tâche (« \SpokaPilote\Maintenance » → « \SpokaPilote »), sinon null.</summary>
+    public static string? TaskFolderOf(string taskName)
+    {
+        var parts = taskName.Split('\\', StringSplitOptions.RemoveEmptyEntries);
+        return parts.Length == 2 && taskName.StartsWith('\\') ? "\\" + parts[0] : null;
+    }
+
+    public static async Task<(bool Ok, string Message)> RunNowAsync(string taskName, CancellationToken ct)
     {
         var r = await ProcessRunner.RunAsync(SchTasks, $"/Run /TN \"{taskName}\"", timeout: TimeSpan.FromMinutes(1), ct: ct).ConfigureAwait(false);
         return r.ExitCode == 0
@@ -336,7 +370,7 @@ public static class MaintenanceScheduler
             : (false, $"Démarrage impossible (code {r.ExitCode}) : {r.Combined.Trim()}");
     }
 
-    internal static async Task<string?> QueryXmlAsync(string taskName, CancellationToken ct)
+    public static async Task<string?> QueryXmlAsync(string taskName, CancellationToken ct)
     {
         var r = await ProcessRunner.RunAsync(SchTasks, $"/Query /TN \"{taskName}\" /XML", timeout: TimeSpan.FromMinutes(1), ct: ct).ConfigureAwait(false);
         return r.ExitCode == 0 && r.StdOut.Contains("<Task", StringComparison.Ordinal) ? r.StdOut : null;
@@ -346,7 +380,7 @@ public static class MaintenanceScheduler
     /// État d'une tâche. La définition vient du XML (schtasks /Query /XML) et l'état d'exécution de
     /// Get-ScheduledTaskInfo (valeurs numériques et dates ISO : indépendant de la langue de Windows).
     /// </summary>
-    internal static async Task<MaintenanceStatus> StatusAsync(string taskName, CancellationToken ct)
+    public static async Task<MaintenanceStatus> StatusAsync(string taskName, CancellationToken ct)
     {
         var xml = await QueryXmlAsync(taskName, ct).ConfigureAwait(false);
         if (xml is null) return new MaintenanceStatus(false, null, null, null, null, 0, null, null, null);
@@ -398,6 +432,7 @@ public static class MaintenanceScheduler
                 return t.Name.LocalName switch
                 {
                     "BootTrigger" => $"au démarrage (après {XmlConvert.ToTimeSpan(t.Element(Ns + "Delay")?.Value ?? "PT0S").TotalMinutes:0} min)",
+                    "LogonTrigger" => $"à l'ouverture de session (après {XmlConvert.ToTimeSpan(t.Element(Ns + "Delay")?.Value ?? "PT0S").TotalMinutes:0} min)",
                     "CalendarTrigger" when t.Element(Ns + "ScheduleByWeek") is { } w =>
                         $"chaque {string.Join(", ", w.Element(Ns + "DaysOfWeek")?.Elements().Select(d => Enum.TryParse<DayOfWeek>(d.Name.LocalName, out var day) ? CultureInfo.GetCultureInfo("fr-FR").DateTimeFormat.GetDayName(day) : d.Name.LocalName) ?? Array.Empty<string>())} à {start:HH\\:mm}{randomText}",
                     "CalendarTrigger" => $"chaque jour à {start:HH\\:mm}{randomText}",

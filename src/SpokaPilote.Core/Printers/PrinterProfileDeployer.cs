@@ -434,7 +434,7 @@ public sealed class PrinterProfileDeployer
         var printer = inventory.Find(name);
         if (printer is null) return (false, $"Imprimante « {name} » introuvable sur ce poste.");
         if (!printer.IsNetwork && !printer.IsConnection)
-            return (false, $"« {printer.Name} » est une imprimante locale ou virtuelle (port {printer.PortName}) : non gérée par SpokaPilote.");
+            return (false, $"« {printer.Name} » est une imprimante locale ou virtuelle (port {printer.PortName}) : non gérée par {AppIdentity.Current.ProductName}.");
 
         var removePort = printer.PortKind == InstalledPortKind.TcpIp && inventory.IsPortUnused(printer.PortName, exceptPrinter: printer.Name);
         var script = $"Remove-Printer -Name {ProcessRunner.PsQuote(printer.Name)}" + (removePort ? "; " + RemovePortScript(printer.PortName) : "");

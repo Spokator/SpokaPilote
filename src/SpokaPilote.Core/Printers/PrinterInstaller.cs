@@ -36,7 +36,7 @@ public sealed class PrinterInstaller
         try
         {
             if (option.Kind == PrinterDriverOptionKind.VendorPage)
-                return new PrinterInstallResult(false, $"Téléchargez le pilote sur {option.Url}, puis importez-le dans le dépôt SpokaPilote.");
+                return new PrinterInstallResult(false, $"Téléchargez le pilote sur {option.Url}, puis importez-le dans le dépôt de pilotes de l'entreprise.");
 
             if (option.Kind == PrinterDriverOptionKind.IppClass)
             {
