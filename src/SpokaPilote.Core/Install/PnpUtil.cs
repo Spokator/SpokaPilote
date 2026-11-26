@@ -32,8 +32,62 @@ public static class PnpUtil
     internal static bool IsPublishedOemName(string name) =>
         System.Text.RegularExpressions.Regex.IsMatch(name, @"^oem\d+\.inf$", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
 
+    /// <summary>
+    /// Retire un paquet INUTILISÉ du magasin (nettoyage) : ni /uninstall ni /force, pnputil refuse donc la suppression
+    /// si un périphérique utilise encore le paquet.
+    /// </summary>
+    public static Task<ProcessResult> DeleteUnusedDriverAsync(string publishedName, CancellationToken ct = default)
+    {
+        if (!IsPublishedOemName(publishedName))
+            throw new ArgumentException($"Nom de paquet inattendu : {publishedName}");
+        return ProcessRunner.RunAsync(Exe, $"/delete-driver {publishedName}", timeout: TimeSpan.FromMinutes(10), ct: ct);
+    }
+
+    /// <summary>Copie un paquet du magasin dans un dossier (sauvegarde réinstallable avec « spokapilote restore »).</summary>
+    public static Task<ProcessResult> ExportDriverAsync(string publishedName, string destination, CancellationToken ct = default)
+    {
+        if (!IsPublishedOemName(publishedName))
+            throw new ArgumentException($"Nom de paquet inattendu : {publishedName}");
+        return ProcessRunner.RunAsync(Exe, $"/export-driver {publishedName} \"{destination}\"", timeout: TimeSpan.FromMinutes(10), ct: ct);
+    }
+
     public static Task<ProcessResult> ScanDevicesAsync(CancellationToken ct = default) =>
         ProcessRunner.RunAsync(Exe, "/scan-devices", timeout: TimeSpan.FromMinutes(5), ct: ct);
+
+    // ------------------------------------------------------------------ actions sur un périphérique
+
+    /// <summary>
+    /// /restart-device, /enable-device, /disable-device et /remove-device existent depuis Windows 10 version 2004
+    /// (build 19041) ; /scan-devices depuis la version 1903.
+    /// </summary>
+    public static bool SupportsDeviceCommands => Environment.OSVersion.Version.Build >= 19041;
+
+    /// <summary>Redémarre un périphérique (arrêt puis redémarrage de sa pile de pilotes).</summary>
+    public static Task<ProcessResult> RestartDeviceAsync(string instanceId, CancellationToken ct = default) =>
+        DeviceCommandAsync("/restart-device", instanceId, ct);
+
+    public static Task<ProcessResult> EnableDeviceAsync(string instanceId, CancellationToken ct = default) =>
+        DeviceCommandAsync("/enable-device", instanceId, ct);
+
+    public static Task<ProcessResult> DisableDeviceAsync(string instanceId, CancellationToken ct = default) =>
+        DeviceCommandAsync("/disable-device", instanceId, ct);
+
+    /// <summary>Retire le périphérique (sans supprimer son pilote du magasin) : « /scan-devices » le redétecte ensuite.</summary>
+    public static Task<ProcessResult> RemoveDeviceAsync(string instanceId, CancellationToken ct = default) =>
+        DeviceCommandAsync("/remove-device", instanceId, ct);
+
+    private static Task<ProcessResult> DeviceCommandAsync(string command, string instanceId, CancellationToken ct)
+    {
+        if (!IsValidInstanceId(instanceId))
+            throw new ArgumentException($"Identifiant de périphérique inattendu : {instanceId}");
+        // Jamais /force : pnputil refuse alors d'agir sur un périphérique qui fournit une fonction système critique.
+        return ProcessRunner.RunAsync(Exe, $"{command} \"{instanceId}\"", timeout: TimeSpan.FromMinutes(3), ct: ct);
+    }
+
+    /// <summary>Identifiant d'instance plausible (ex. USB\VID_0000&amp;PID_0002\5&amp;2E786FD2&amp;0&amp;4) : pas de guillemet ni de joker.</summary>
+    internal static bool IsValidInstanceId(string? id) =>
+        !string.IsNullOrWhiteSpace(id) && id.Length <= 512 && id.Contains('\\') &&
+        id.IndexOfAny(new[] { '"', '*', '?', '\r', '\n', '\0' }) < 0 && !id.StartsWith('/');
 
     public static bool IsSuccess(int exitCode) => exitCode is 0 or ErrorSuccessRebootRequired or ErrorNoMoreItems;
 }

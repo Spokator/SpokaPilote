@@ -59,6 +59,9 @@ internal static partial class Program
                 "schedule" or "planification" => await ScheduleAsync(a, cts.Token),
                 "maintenance" => await MaintenanceAsync(a, cts.Token),
                 "server" or "serveur" => await ServerAsync(a, cts.Token),
+                "health" or "sante" or "santé" => await HealthAsync(a, cts.Token),
+                "device" or "peripherique" or "périphérique" => await DeviceAsync(a, cts.Token),
+                "driverstore" or "driver-store" or "magasin" => await DriverStoreAsync(a, cts.Token),
                 "version" or "--version" => Version(),
                 _ => Help(),
             };
@@ -105,6 +108,7 @@ internal static partial class Program
 
         PrintSystem(scan);
         PrintCandidates(scan);
+        PrintHealth(scan.Health, detailed: false);
 
         List<InstallOutcome>? outcomes = null;
         var exit = ExitOk;
@@ -492,6 +496,7 @@ internal static partial class Program
             WriteLine($"{i.Id}  {i.Summary}", i.RolledBackAt is null ? ConsoleColor.White : ConsoleColor.DarkGray);
             foreach (var item in i.Items) WriteLine($"    {item.Status,-13} {item.Title} {item.Version}", ConsoleColor.Gray);
             if (i.AddedDriverPackages.Count > 0) WriteLine($"    paquets ajoutés : {string.Join(", ", i.AddedDriverPackages)}", ConsoleColor.DarkGray);
+            if (i.RemovedDriverPackages.Count > 0) WriteLine($"    paquets retirés (non annulable{(i.BackupFolder is null ? "" : ", sauf restauration de la sauvegarde")}) : {string.Join(", ", i.RemovedDriverPackages)}", ConsoleColor.DarkGray);
             if (i.BackupFolder is not null) WriteLine($"    sauvegarde : {i.BackupFolder}", ConsoleColor.DarkGray);
         }
         WriteLine("\nAnnuler une intervention : spokapilote rollback <id|last>", ConsoleColor.Cyan);
@@ -685,6 +690,19 @@ internal static partial class Program
               spokapilote policy check <fichier|url>       valide un driver-policy.json (numéros des règles fautives)
               spokapilote policy test [--policy <fichier>] analyse ce poste : ce qui serait bloqué / autorisé et pourquoi
               spokapilote policy init <fichier> [--force]  crée un modèle commenté
+
+            BOÎTE À OUTILS DU TECHNICIEN (voir docs/OUTILS-TECHNICIEN.md)
+              spokapilote health [--quick] [--json [fichier]] [--html rapport.html]
+                                   note A-E et constats : pilotes dangereux installés, manquants, en erreur,
+                                   non signés, anciens, mises à jour (--json seul : JSON sur la sortie standard)
+              spokapilote device list [--problems] [--all]      périphériques numérotés (en erreur d'abord)
+              spokapilote device info <n°|id>                   fiche, diagnostic et actions possibles
+              spokapilote device repair <n°|id> [--action restart|enable|reinstall|rescan] [--dry-run] [--yes]
+                                   [--confirm-critical]   réparation guidée (pnputil), état contrôlé après l'action ;
+                                   périphérique critique : confirmation explicite obligatoire (--yes ne suffit pas)
+              spokapilote driverstore list [--all]              paquets tiers du magasin, utilisés ou non, taille
+              spokapilote driverstore clean [--dry-run] [--yes] [--backup]
+                                   supprime les anciennes versions inutilisées et remplacées (aperçu par défaut)
 
             HISTORIQUE ET RETOUR ARRIÈRE
               spokapilote history                          interventions passées sur ce poste

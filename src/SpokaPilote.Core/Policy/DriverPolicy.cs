@@ -325,6 +325,39 @@ public sealed class DriverPolicy
         return decisions;
     }
 
+    /// <summary>
+    /// Règle « block » qui vise un pilote DÉJÀ INSTALLÉ sur un périphérique (santé des pilotes), null si aucune.
+    /// <para>
+    /// Même ordre d'évaluation que pour les pilotes proposés (règles de l'organisation, puis liste de référence) :
+    /// une règle « allow » de l'organisation placée avant lève le signalement. Pour éviter les faux positifs, seules
+    /// les règles qui désignent une version (« versions », « versionMin » / « versionMax ») peuvent signaler un pilote
+    /// installé ; les règles « pin » et celles qui portent sur la source ou le type de proposition (« source »,
+    /// « kind ») ne concernent que les pilotes proposés et sont ignorées.
+    /// </para>
+    /// Critères comparés au pilote installé : « hardwareId » (ID matériels et compatibles du périphérique),
+    /// « manufacturer » (fabricant du périphérique ou fournisseur du pilote), « category » (classe), « deviceName »,
+    /// « title » (nom du périphérique ou nom de l'INF, publié « oemNN.inf » ou d'origine), versions.
+    /// </summary>
+    /// <param name="originalInfName">Nom d'origine de l'INF (ex. « intcaudiobus.inf »), s'il est connu.</param>
+    public PolicyRule? FindInstalledBlock(DeviceInfo device, string? originalInfName = null, DateTime? now = null)
+    {
+        EnsureValid();
+        if (string.IsNullOrWhiteSpace(device.DriverVersion)) return null;
+        var at = now ?? DateTime.Now;
+        foreach (var rule in Rules)
+        {
+            if (rule.IsExpired(at) || !rule.AppliesToInstalledDrivers || !rule.MatchesInstalled(device, originalInfName)) continue;
+            switch (rule.ParsedAction)
+            {
+                case PolicyAction.Allow:
+                    return null; // exception explicite de l'organisation
+                case PolicyAction.Block when rule.HasVersionCriteria:
+                    return rule;
+            }
+        }
+        return null;
+    }
+
     // ------------------------------------------------------------------ utilitaires
 
     internal static DateTime? ParseDate(string? text)
@@ -559,6 +592,35 @@ public sealed class PolicyRule
     private bool HasCriteria => HardwareId is not null || Title is not null || Manufacturer is not null || Category is not null ||
                                 DeviceName is not null || Source is not null || Kind is not null ||
                                 VersionMin is not null || VersionMax is not null || Versions is not null;
+
+    /// <summary>La règle désigne une ou plusieurs versions précises (critère indispensable pour signaler un pilote installé).</summary>
+    [JsonIgnore] internal bool HasVersionCriteria => _min is not null || _max is not null || _exact is not null;
+
+    /// <summary>Une règle qui porte sur la source ou le type de proposition ne concerne que les pilotes proposés.</summary>
+    [JsonIgnore] internal bool AppliesToInstalledDrivers => ParsedAction != PolicyAction.Pin && _sources is null && _kinds is null;
+
+    /// <summary>Correspondance avec le pilote installé d'un périphérique (voir <see cref="DriverPolicy.FindInstalledBlock"/>).</summary>
+    internal bool MatchesInstalled(DeviceInfo d, string? originalInfName)
+    {
+        static bool Any(Regex[] patterns, IEnumerable<string?> values) =>
+            values.Any(v => !string.IsNullOrEmpty(v) && patterns.Any(p => p.IsMatch(v)));
+
+        if (!AppliesToInstalledDrivers) return false;
+        if (_hw is not null && !Any(_hw, d.HardwareIds.Concat(d.CompatibleIds))) return false;
+        if (_title is not null && !Any(_title, new[] { d.Name, d.InfName, originalInfName })) return false;
+        if (_manufacturer is not null && !Any(_manufacturer, new[] { d.Manufacturer, d.DriverProvider })) return false;
+        if (_category is not null && !Any(_category, new[] { d.ClassName })) return false;
+        if (_device is not null && !Any(_device, new[] { d.Name })) return false;
+        if (_min is not null || _max is not null || _exact is not null)
+        {
+            var version = DriverVersion.Parse(d.DriverVersion);
+            if (version is null) return false;
+            if (_min is not null && version < _min) return false;
+            if (_max is not null && version > _max) return false;
+            if (_exact is not null && !_exact.Contains(version)) return false;
+        }
+        return true;
+    }
 
     internal bool Matches(DriverCandidate c, IReadOnlyList<DeviceInfo> targets)
     {

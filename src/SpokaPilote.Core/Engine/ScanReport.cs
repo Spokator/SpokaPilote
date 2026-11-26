@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using SpokaPilote.Core.Health;
 using SpokaPilote.Core.Install;
 using SpokaPilote.Core.Models;
 using SpokaPilote.Core.Online;
@@ -71,6 +72,8 @@ public sealed class ScanReport
     public Dictionary<string, string> SourceErrors { get; set; } = new();
     public List<ReportCandidate> Candidates { get; set; } = new();
     public ReportPolicy? Policy { get; set; }
+    /// <summary>Santé des pilotes (facultatif) : { score, grade, findings: [ { severity, code, title, detail, deviceId } ] }.</summary>
+    public HealthReport? Health { get; set; }
     public List<ReportOutcome>? Installation { get; set; }
     public List<DeviceInfo> Devices { get; set; } = new();
 
@@ -102,6 +105,7 @@ public sealed class ScanReport
         Sources = scan.SourcesUsed,
         SourceErrors = scan.SourceErrors,
         Devices = scan.Devices,
+        Health = scan.Health,
         Candidates = scan.Candidates.Select(c => new ReportCandidate
         {
             Title = c.Title,
