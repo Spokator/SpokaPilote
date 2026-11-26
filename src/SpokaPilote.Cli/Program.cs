@@ -708,11 +708,12 @@ internal static partial class Program
                                    Surface : MSI extrait sans installation (msiexec /a), firmwares UEFI
                                    installés seulement avec « install --include-firmware »
 
-            IMAGES WINDOWS (DISM, console administrateur) — EXPÉRIMENTAL : testez sur une copie de l'image
+            IMAGES WINDOWS (DISM, console administrateur) — travaillez sur une copie de l'image
               spokapilote image info <install.wim> [--index n]       éditions, architecture, version
-              spokapilote image inject --wim <install.wim> --index <n|1,3|all> --repo <dossier> [--dry-run] [--yes]
-              spokapilote image inject --offline D:\ --repo <dossier> [--dry-run] [--yes]
-                                   n'injecte que les INF signés et compatibles avec l'architecture de l'image
+              spokapilote image inject --wim <install.wim> --index <n|1,3|all> --repo <dossier> [--no-firmware] [--dry-run] [--yes]
+              spokapilote image inject --offline D:\ --repo <dossier> [--no-firmware] [--dry-run] [--yes]
+                                   n'injecte que les INF signés et compatibles avec l'architecture de l'image ;
+                                   --no-firmware écarte les firmwares UEFI (packs Surface)
               spokapilote image cleanup                    nettoie les montages orphelins (après une coupure)
 
             PARC

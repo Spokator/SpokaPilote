@@ -431,6 +431,30 @@ public class ImageInjectorTests
     }
 
     [Fact]
+    public void Real_add_driver_output_on_windows_11_enterprise_is_parsed()
+    {
+        // Extrait réel : dism /Add-Driver /Recurse dans install.wim (Windows 11 Entreprise évaluation 26300) monté,
+        // dépôt = pilotes exportés + pack Surface Go 3 (validation de novembre 2026, 106 pilotes ajoutés puis /Commit).
+        const string output = """
+            Deployment Image Servicing and Management tool
+            Version: 10.0.26100.8972
+
+            Image Version: 10.0.26300.9457
+
+            Searching for driver packages to install...
+            Found 106 driver package(s) to install.
+            Installing 1 of 106 - D:\repo\Exportes\ch341ser-oem45\ch341ser.inf: The driver package was successfully installed.
+            Installing 68 of 106 - D:\repo\Microsoft\Surface_Go_3\Win11-amd64\SurfaceUpdate\surfacebattery\SurfaceBattery.inf: The driver package was successfully installed.
+            Installing 94 of 106 - D:\repo\Microsoft\Surface_Go_3\Win11-amd64\SurfaceUpdate\uefi\SurfaceUEFI.inf: The driver package was successfully installed.
+            The operation completed successfully.
+            """;
+        var results = ImageInjector.ParseAddDriver(output);
+        Assert.Equal(3, results.Count);
+        Assert.All(results, r => Assert.True(r.Success, r.Message));
+        Assert.Equal(@"D:\repo\Microsoft\Surface_Go_3\Win11-amd64\SurfaceUpdate\uefi\SurfaceUEFI.inf", results[2].InfPath);
+    }
+
+    [Fact]
     public void Firmware_inf_is_flagged_and_counted_in_the_report()
     {
         var report = new InjectionReport();
