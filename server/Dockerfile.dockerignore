@@ -2,6 +2,7 @@
 *
 !Directory.Build.props
 !server/SpokaPilote.Server/
+!src/SpokaPilote.Core/Infrastructure/OfficialHosts.cs
 server/SpokaPilote.Server/bin/
 server/SpokaPilote.Server/obj/
 server/SpokaPilote.Server/data/

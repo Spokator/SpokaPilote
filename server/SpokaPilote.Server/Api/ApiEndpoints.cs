@@ -20,9 +20,10 @@ public static class ApiEndpoints
 
     /// <summary>
     /// Possibilités annoncées par /api/health : rapports compressés gzip (toutes les versions de la console),
-    /// refus temporaire 503 + Retry-After en cas d'afflux, liste des postes paginée, supervision, sauvegarde à chaud.
+    /// refus temporaire 503 + Retry-After en cas d'afflux, liste des postes paginée, supervision, sauvegarde à chaud ;
+    /// cache de pilotes et de catalogues (4.0, état réel : GET /api/cache/status).
     /// </summary>
-    public static readonly string[] Capabilities = ["gzip-reports", "retry-after", "machines-paging", "metrics", "backup"];
+    public static readonly string[] Capabilities = ["gzip-reports", "retry-after", "machines-paging", "metrics", "backup", Cache.DriverCacheEndpoints.Capability];
 
     public static void MapSpokaPiloteApi(this WebApplication app)
     {

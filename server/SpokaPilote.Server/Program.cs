@@ -3,6 +3,7 @@ using SpokaPilote.Server;
 using SpokaPilote.Server.Alerts;
 using SpokaPilote.Server.Api;
 using SpokaPilote.Server.Audit;
+using SpokaPilote.Server.Cache;
 using SpokaPilote.Server.Jobs;
 using SpokaPilote.Server.Security;
 using SpokaPilote.Server.Storage;
@@ -34,6 +35,9 @@ builder.Services.AddSingleton<RequestMetrics>();
 builder.Services.AddSingleton<BackupService>();
 builder.Services.AddSingleton<StorageMaintenance>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<StorageMaintenance>());
+// ---- Cache de pilotes et de catalogues (4.0) : fichiers officiels et catalogues servis aux postes depuis /data/cache.
+builder.Services.AddSpokaPiloteDriverCache();
+// ---- fin du cache de pilotes
 // Les accès à SQLite sont synchrones : assez de fils prêts d'emblée pour absorber un afflux sans attendre la croissance
 // progressive du pool (les requêtes des postes restent bornées par le contrôle d'admission).
 ThreadPool.GetMinThreads(out var minWorkers, out var minIo);
@@ -75,6 +79,9 @@ app.UseStaticFiles(new StaticFileOptions
     OnPrepareResponse = ctx => ctx.Context.Response.Headers.CacheControl = "no-cache",
 });
 app.MapSpokaPiloteApi();
+// ---- Cache de pilotes (4.0) : /api/cache/*, /api/settings/cache
+app.MapDriverCacheApi();
+// ---- fin du cache de pilotes
 app.MapFallback("/api/{**path}", () => Results.Json(new ApiError("Route d'API inconnue."), statusCode: StatusCodes.Status404NotFound));
 
 app.Run();

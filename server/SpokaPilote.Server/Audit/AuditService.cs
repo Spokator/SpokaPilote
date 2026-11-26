@@ -34,6 +34,9 @@ public static class AuditActions
     public const string AuditExport = "audit.export";
     public const string MaintenanceBackup = "maintenance.backup";
     public const string MaintenanceVacuum = "maintenance.vacuum";
+    public const string SettingsCache = "settings.cache";
+    public const string CachePurge = "cache.purge";
+    public const string CachePrefetch = "cache.prefetch";
 
     public static readonly IReadOnlyDictionary<string, string> Labels = new Dictionary<string, string>
     {
@@ -65,6 +68,9 @@ public static class AuditActions
         [AuditExport] = "Journal d'audit exporté",
         [MaintenanceBackup] = "Sauvegarde de la base",
         [MaintenanceVacuum] = "Compactage de la base (VACUUM)",
+        [SettingsCache] = "Paramètres du cache de pilotes modifiés",
+        [CachePurge] = "Cache de pilotes vidé",
+        [CachePrefetch] = "Préchargement du cache de pilotes",
     };
 
     /// <summary>Catégories du filtre de la console (préfixe du code).</summary>
@@ -81,6 +87,7 @@ public static class AuditActions
         ["machine"] = "Postes",
         ["audit"] = "Journal d'audit",
         ["maintenance"] = "Sauvegarde et entretien",
+        ["cache"] = "Cache de pilotes",
     };
 
     public static string Label(string action) => Labels.GetValueOrDefault(action, action);
