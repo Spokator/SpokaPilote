@@ -38,6 +38,10 @@ public sealed class ReportPolicy
     public string? Origin { get; set; }
     public bool FromCache { get; set; }
     public int OrganizationRules { get; set; }
+    /// <summary>Anneau de déploiement du poste indiqué par la console 4.0 (null : pas de diffusion par anneaux).</summary>
+    public string? RolloutRing { get; set; }
+    /// <summary>Pilotes retenus par la diffusion par anneaux (compris dans BlockedCandidates).</summary>
+    public int RolloutHeldCandidates { get; set; }
     public string? ReferenceVersion { get; set; }
     public int ReferenceRules { get; set; }
     public int BlockedCandidates { get; set; }
@@ -137,7 +141,9 @@ public sealed class ScanReport
             UpdatedAt = p.Organization?.UpdatedAt,
             Origin = p.OrganizationOrigin,
             FromCache = p.FromCache,
-            OrganizationRules = p.Organization?.Rules.Count ?? 0,
+            OrganizationRules = p.Organization?.Rules.Count(r => !r.IsRollout) ?? 0,
+            RolloutRing = p.Organization?.Rollout is { Enabled: true } ro ? ro.Ring ?? "(anneau le plus prudent)" : null,
+            RolloutHeldCandidates = scan.Candidates.Count(c => c.HeldByRollout),
             ReferenceVersion = p.Reference?.Version,
             ReferenceRules = p.ReferenceRuleCount,
             BlockedCandidates = scan.Candidates.Count(c => c.BlockedReason is not null),

@@ -181,6 +181,8 @@
   "⛔ Bloqué": "⛔ Blocked",
   "✗ Échec": "✗ Failed",
   "⛔ Bloqué par la politique": "⛔ Blocked by policy",
+  "⏳ Retenu (diffusion par anneaux)": "⏳ Held (staged rollout)",
+  "Disponible pour votre anneau « {0} » le {1}": "Available for your ring “{0}” on {1}",
   "🔗 Site officiel (manuel)": "🔗 Official website (manual)",
   "En attente": "Waiting",
 
