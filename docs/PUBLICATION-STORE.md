@@ -69,7 +69,8 @@ console administrateur : importez `dist-store\SpokaPilote-test.cer` dans `Ordina
 (alias d'exécution).
 
 Après vos essais : désinstallez l'application, retirez le certificat de `Personnes autorisées`, et supprimez le
-certificat de test : `Get-ChildItem Cert:\CurrentUser\My | Where-Object Subject -eq "CN=Spoka" | Remove-Item`.
+certificat de test (magasin personnel et sa copie dans « Autorités intermédiaires ») :
+`Get-ChildItem Cert:\CurrentUser -Recurse | Where-Object Subject -eq "CN=Spoka" | Remove-Item`.
 
 ## Distribution hors Store (MSIX signé)
 

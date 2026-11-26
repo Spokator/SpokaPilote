@@ -150,7 +150,8 @@ $cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject "CN=SpokaPilote
 $env:SPOKAPILOTE_SIGN_THUMBPRINT = $cert.Thumbprint     # pour ce terminal seulement
 .\scripts\build-installer.ps1 -Arch x64 -SkipTests      # « certificat auto-signé non approuvé sur ce poste (test) » : normal
 Remove-Item Env:\SPOKAPILOTE_SIGN_THUMBPRINT
-Remove-Item "Cert:\CurrentUser\My\$($cert.Thumbprint)" # suppression du certificat de test
+# suppression du certificat de test (Windows en place aussi une copie dans « Autorités intermédiaires »)
+Get-ChildItem Cert:\CurrentUser -Recurse | Where-Object Thumbprint -eq $cert.Thumbprint | Remove-Item
 ```
 
 ## En cas de problème
