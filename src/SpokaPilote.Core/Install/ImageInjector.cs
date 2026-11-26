@@ -27,8 +27,8 @@ public sealed record WimImageInfo(
 /// <summary>Pilote tiers présent dans une image (sortie de dism /Get-Drivers).</summary>
 public sealed record ImageDriver(string PublishedName, string OriginalFileName, bool Inbox, string? ClassName, string? Provider, string? Date, string? Version);
 
-/// <summary>Verdict du contrôle préalable d'un INF du dépôt.</summary>
-public sealed record InfCheck(string Path, bool Accepted, string Reason, string? Provider = null, string? Class = null, string? Version = null);
+/// <summary>Verdict du contrôle préalable d'un INF du dépôt (<paramref name="IsFirmware"/> : capsule de firmware UEFI, classe « Firmware »).</summary>
+public sealed record InfCheck(string Path, bool Accepted, string Reason, string? Provider = null, string? Class = null, string? Version = null, bool IsFirmware = false);
 
 /// <summary>Résultat DISM pour un INF (« Installing 1 of 3 - C:\...\a.inf: The driver package was successfully installed. »).</summary>
 public sealed record DismDriverResult(string InfPath, bool Success, string Message);
@@ -50,6 +50,8 @@ public sealed class InjectionReport
     public TimeSpan Duration { get; set; }
 
     public IEnumerable<InfCheck> Accepted => Checks.Where(c => c.Accepted);
+    /// <summary>Firmwares UEFI acceptés : appliqués par Windows au premier démarrage du poste installé depuis l'image.</summary>
+    public int AcceptedFirmwareCount => Checks.Count(c => c.Accepted && c.IsFirmware);
     public IEnumerable<InfCheck> Refused => Checks.Where(c => !c.Accepted);
     public int InjectedCount => Results.Count(r => r.Success);
     public int FailedCount => Results.Count(r => !r.Success);
@@ -393,8 +395,11 @@ public static class ImageInjector
 
     // ------------------------------------------------------------------ contrôle préalable
 
-    /// <summary>Chaque INF du dépôt : lisible, déclare des périphériques pour cette architecture / version, catalogue signé valide.</summary>
-    public static List<InfCheck> VerifyRepository(string repository, string architecture, Version osVersion, IProgress<string>? progress = null)
+    /// <summary>
+    /// Chaque INF du dépôt : lisible, déclare des périphériques pour cette architecture / version, catalogue signé valide.
+    /// <paramref name="excludeFirmware"/> : écarte les capsules de firmware (classe « Firmware », ex. packs Surface).
+    /// </summary>
+    public static List<InfCheck> VerifyRepository(string repository, string architecture, Version osVersion, IProgress<string>? progress = null, bool excludeFirmware = false)
     {
         var checks = new List<InfCheck>();
         var files = DriverRepository.SafeEnumerate(repository, "*.inf").OrderBy(f => f, StringComparer.OrdinalIgnoreCase).ToList();
@@ -402,27 +407,29 @@ public static class ImageInjector
         foreach (var path in files)
         {
             if (++n % 50 == 0) progress?.Report($"Contrôle des pilotes : {n}/{files.Count}...");
-            checks.Add(CheckInf(path, architecture, osVersion));
+            checks.Add(CheckInf(path, architecture, osVersion, excludeFirmware));
         }
         return checks;
     }
 
-    internal static InfCheck CheckInf(string path, string architecture, Version osVersion)
+    internal static InfCheck CheckInf(string path, string architecture, Version osVersion, bool excludeFirmware = false)
     {
         InfInfo inf;
         try { inf = InfParser.Parse(path); }
         catch (Exception ex) { return new InfCheck(path, false, $"INF illisible : {ex.Message}"); }
 
+        if (inf.IsFirmware && excludeFirmware)
+            return new InfCheck(path, false, "firmware exclu (--no-firmware)", inf.Provider, inf.Class, inf.DriverVersion, IsFirmware: true);
         if (inf.Models.Count == 0)
-            return new InfCheck(path, false, "aucun périphérique déclaré", inf.Provider, inf.Class, inf.DriverVersion);
+            return new InfCheck(path, false, "aucun périphérique déclaré", inf.Provider, inf.Class, inf.DriverVersion, inf.IsFirmware);
         if (!inf.Models.Any(m => InfParser.DecorationApplies(m.Decoration, architecture, osVersion)))
         {
             var declared = inf.Models.Select(m => DecorationArchitecture(m.Decoration)).Distinct().OrderBy(a => a);
             return new InfCheck(path, false, $"ne convient pas à l'image {architecture} {osVersion.ToString(3)} (déclare : {string.Join(", ", declared)})",
-                inf.Provider, inf.Class, inf.DriverVersion);
+                inf.Provider, inf.Class, inf.DriverVersion, inf.IsFirmware);
         }
         var (signed, reason) = PackageVerifier.VerifyInfSignature(path, inf, architecture);
-        return new InfCheck(path, signed, signed ? "signé, architecture compatible" : reason, inf.Provider, inf.Class, inf.DriverVersion);
+        return new InfCheck(path, signed, signed ? "signé, architecture compatible" : reason, inf.Provider, inf.Class, inf.DriverVersion, inf.IsFirmware);
     }
 
     private static string DecorationArchitecture(string decoration)
@@ -436,7 +443,7 @@ public static class ImageInjector
 
     /// <summary>Image WIM : montage, ajout des pilotes contrôlés, enregistrement ; en cas d'erreur, abandon des modifications et nettoyage.</summary>
     public static async Task<InjectionReport> InjectIntoWimAsync(string wim, int index, IReadOnlyList<string> repositories, bool dryRun = false,
-        IProgress<string>? progress = null, CancellationToken ct = default)
+        IProgress<string>? progress = null, CancellationToken ct = default, bool excludeFirmware = false)
     {
         EnsureAdministrator();
         wim = Path.GetFullPath(wim);
@@ -452,7 +459,7 @@ public static class ImageInjector
         if (info.Architecture is null || info.Version is null)
             return Finish(report, watch, false, "Architecture ou version de l'image illisibles : injection annulée.");
 
-        Verify(report, progress);
+        Verify(report, progress, excludeFirmware);
         if (!report.Accepted.Any())
             return Finish(report, watch, false, "Aucun pilote du dépôt ne convient à cette image (signature ou architecture) : rien à injecter.");
         if (dryRun)
@@ -482,6 +489,7 @@ public static class ImageInjector
             mounted = false;
             report.Committed = true;
             var message = $"{report.InjectedCount} pilote(s) injecté(s) dans {Path.GetFileName(wim)} (index {index})" +
+                          (report.AcceptedFirmwareCount > 0 ? $" dont {report.AcceptedFirmwareCount} firmware(s)" : "") +
                           (report.FailedCount > 0 ? $", {report.FailedCount} refusé(s) par DISM" : "") +
                           (report.Refused.Any() ? $", {report.Refused.Count()} écarté(s) au contrôle" : "") + ".";
             return Finish(report, watch, report.FailedCount == 0, message);
@@ -501,7 +509,7 @@ public static class ImageInjector
 
     /// <summary>Windows hors ligne (ex. disque d'un autre poste branché en D:) : /Image:D:\ /Add-Driver.</summary>
     public static async Task<InjectionReport> InjectIntoOfflineAsync(string windowsRoot, IReadOnlyList<string> repositories, bool dryRun = false,
-        IProgress<string>? progress = null, CancellationToken ct = default)
+        IProgress<string>? progress = null, CancellationToken ct = default, bool excludeFirmware = false)
     {
         EnsureAdministrator();
         var root = ImageRoot(windowsRoot);
@@ -521,7 +529,7 @@ public static class ImageInjector
         report.OsVersion = detected.Value.Version;
         progress?.Report($"Windows hors ligne : {root} — {detected.Value.Architecture}, version {detected.Value.Version}");
 
-        Verify(report, progress);
+        Verify(report, progress, excludeFirmware);
         if (!report.Accepted.Any())
             return Finish(report, watch, false, "Aucun pilote du dépôt ne convient à ce Windows (signature ou architecture) : rien à injecter.");
         if (dryRun)
@@ -537,16 +545,17 @@ public static class ImageInjector
         return Finish(report, watch, report.InjectedCount > 0 && report.FailedCount == 0, message);
     }
 
-    private static void Verify(InjectionReport report, IProgress<string>? progress)
+    private static void Verify(InjectionReport report, IProgress<string>? progress, bool excludeFirmware)
     {
         foreach (var repo in report.Repositories)
         {
             if (!Directory.Exists(repo)) throw new DirectoryNotFoundException($"Dépôt introuvable : {repo}");
             progress?.Report($"Contrôle des pilotes de {repo} (signature, architecture {report.Architecture})...");
-            report.Checks.AddRange(VerifyRepository(repo, report.Architecture!, report.OsVersion!, progress));
+            report.Checks.AddRange(VerifyRepository(repo, report.Architecture!, report.OsVersion!, progress, excludeFirmware));
         }
         var accepted = report.Accepted.Count();
-        progress?.Report($"{report.Checks.Count} INF contrôlé(s) : {accepted} accepté(s), {report.Checks.Count - accepted} écarté(s).");
+        progress?.Report($"{report.Checks.Count} INF contrôlé(s) : {accepted} accepté(s){(report.AcceptedFirmwareCount > 0 ? $" dont {report.AcceptedFirmwareCount} firmware(s)" : "")}, " +
+                         $"{report.Checks.Count - accepted} écarté(s).");
         foreach (var refused in report.Refused) Log.Info($"INF écarté : {refused.Path} — {refused.Reason}");
     }
 
@@ -574,11 +583,44 @@ public static class ImageInjector
             foreach (var l in lines.Where(l => !l.Success)) Log.Warn($"DISM a refusé {l.InfPath} : {l.Message}");
             if (lines.Count == 0 && result.ExitCode != 0)
             {
-                report.Message = $"DISM /Add-Driver : {DescribeFailure(result)}";
+                report.Message = $"DISM /Add-Driver : {DescribeFailure(result)}" + (DiagnoseDismLog(ReadLogTail(logPath)) is { } hint ? $" — {hint}" : "");
                 // Erreur d'initialisation de la session (image illisible, droits...) : inutile de poursuivre.
                 if (report.Results.Count == 0) break;
             }
             if (lines.Count > 0) progress?.Report($"  {lines.Count(l => l.Success)} ajouté(s), {lines.Count(l => !l.Success)} refusé(s) par DISM.");
+        }
+    }
+
+    /// <summary>
+    /// Cause connue d'une erreur 87 « An initialization error occurred » : DISM n'arrive pas à lire la version de l'image
+    /// dans son registre (get_OSVersion, 0x80070057) parce que le poste refuse de charger les ruches de registre hors
+    /// ligne (RegLoadKey). Constaté sur un poste où même « reg load » d'une ruche minuscule échoue (erreur 206) :
+    /// un pilote noyau tiers qui filtre le registre (anti-triche, sécurité) en est la cause habituelle.
+    /// </summary>
+    internal static string? DiagnoseDismLog(string? logText)
+    {
+        if (string.IsNullOrEmpty(logText)) return null;
+        if (logText.Contains("Failed trying to determine the OS Version", StringComparison.OrdinalIgnoreCase) &&
+            logText.Contains("0x80070057", StringComparison.OrdinalIgnoreCase))
+            return "DISM n'a pas pu lire le registre de l'image : ce poste refuse le chargement des ruches de registre hors ligne " +
+                   "(testez « reg load HKLM\\TEST <ruche> » ; un pilote noyau tiers filtrant le registre, anti-triche ou sécurité, en est la cause habituelle). " +
+                   "Faites l'injection depuis un autre poste ou depuis WinPE.";
+        return null;
+    }
+
+    private static string? ReadLogTail(string path)
+    {
+        try
+        {
+            if (!File.Exists(path)) return null;
+            using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            fs.Seek(Math.Max(0, fs.Length - 64 * 1024), SeekOrigin.Begin);
+            using var reader = new StreamReader(fs);
+            return reader.ReadToEnd();
+        }
+        catch (IOException)
+        {
+            return null;
         }
     }
 
@@ -622,6 +664,7 @@ public static class ImageInjector
                 report.Committed,
                 report.Message,
                 report.DriversInImage,
+                firmwareAccepted = report.AcceptedFirmwareCount,
                 duration = report.Duration.ToString(@"hh\:mm\:ss"),
                 report.DismLog,
                 injected = report.Results.Where(r => r.Success).Select(r => r.InfPath),

@@ -154,7 +154,9 @@ internal static partial class Program
         var pack = match.Pack;
         var folder = OemDriverPackDownloader.TargetFolder(repo, match);
         var label = match.ModelLabel.StartsWith(pack.VendorName + " ", StringComparison.OrdinalIgnoreCase) ? match.ModelLabel : $"{pack.VendorName} {match.ModelLabel}";
-        WriteLine($"\nPack : {label} — {pack.OsLabel} — {pack.Id}{(pack.Version is null ? "" : " " + pack.Version)} du {pack.Date:dd/MM/yyyy}", ConsoleColor.White);
+        // Surface : l'identifiant (nom du MSI) contient déjà la version.
+        var version = pack.Version is null || pack.Id.EndsWith(pack.Version, StringComparison.OrdinalIgnoreCase) ? "" : " " + pack.Version;
+        WriteLine($"\nPack : {label} — {pack.OsLabel} — {pack.Id}{version} du {pack.Date:dd/MM/yyyy}", ConsoleColor.White);
         WriteLine($"Fichier : {pack.FileName} ({pack.SizeLabel}) depuis {new Uri(pack.Url).Host}", ConsoleColor.Gray);
         WriteLine($"Destination : {folder}", ConsoleColor.Gray);
         if (!a.Flag("yes") && !Confirm("Télécharger et extraire ce pack dans le dépôt ?")) return ExitOk;
