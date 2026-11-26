@@ -7,7 +7,7 @@ internal sealed class Args
     {
         "json", "html", "report", "sources", "repo", "range", "name", "driver", "location", "output-dir", "out", "only", "exclude", "policy",
         "weekly", "time", "mode", "printers", "random-delay", "startup-delay", "max-duration", "nvidia-branch",
-        "model", "vendor", "os", "arch", "wim", "index", "offline",
+        "model", "vendor", "os", "arch", "wim", "index", "offline", "action",
     };
 
     private readonly List<string> _positionals = new();

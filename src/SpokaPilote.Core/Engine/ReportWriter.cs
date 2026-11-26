@@ -38,6 +38,14 @@ public static class ReportWriter
             table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden}
             th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top;overflow-wrap:anywhere}th{font-size:12px;color:var(--muted);font-weight:600}
             .ok{color:var(--ok)}.warn{color:var(--warn)}.bad{color:var(--bad)}.scroll{overflow-x:auto}code{font-size:12px}
+            .health{display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap;margin-top:16px}.health h2{margin:0 0 6px}
+            .grade{flex:0 0 auto;width:96px;height:96px;border-radius:14px;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#fff;font-weight:700}
+            .grade b{font-size:52px;line-height:1}.grade span{font-size:13px;opacity:.95}
+            .g-A{background:#1a7f37}.g-B{background:#2f8f4e}.g-C{background:#9a6700}.g-D{background:#bc4c00}.g-E{background:#cf222e}
+            .findings{flex:1 1 320px;min-width:0}.findings ul{list-style:none;margin:8px 0 0;padding:0}
+            .findings li{padding:8px 0;border-top:1px solid var(--line)}.findings li:first-child{border-top:0}
+            .sev{display:inline-block;font-size:11px;font-weight:700;text-transform:uppercase;border-radius:4px;padding:1px 6px;margin-right:6px;color:#fff}
+            .sev-critical{background:var(--bad)}.sev-warning{background:var(--warn)}.sev-info{background:var(--muted)}
             </style></head><body><main>
             """);
         sb.Append($"<h1>Rapport SpokaPilote — {E(s.ComputerName)}</h1><div class=\"muted\">{scan.Timestamp:dd/MM/yyyy HH:mm} · analyse en {scan.Duration.TotalSeconds:0} s · sources : {E(string.Join(", ", scan.SourcesUsed))}</div>");
@@ -54,6 +62,28 @@ public static class ReportWriter
                 ? "Aucune (liste de référence seule)"
                 : $"{policy.Organization.Name ?? "sans nom"}{(policy.Organization.Version is null ? "" : " v" + policy.Organization.Version)}{(policy.FromCache ? " (cache)" : "")}");
         sb.Append("</div>");
+
+        if (scan.Health is { } health)
+        {
+            // Carte « Santé des pilotes » : note en grand, constats triés (critiques d'abord).
+            sb.Append($"<div class=\"card health\"><div class=\"grade g-{E(health.Grade)}\" role=\"img\" aria-label=\"Note {E(health.Grade)}, {health.Score} sur 100\"><b>{E(health.Grade)}</b><span>{health.Score}/100</span></div>");
+            sb.Append($"<div class=\"findings\"><h2>Santé des pilotes — {E(health.GradeLabel)}</h2><div class=\"muted\">{E(health.Summary)}</div>");
+            if (health.Findings.Count == 0) sb.Append("<p class=\"ok\">Aucun constat : pilotes à jour, signés et sans erreur.</p>");
+            else
+            {
+                sb.Append("<ul>");
+                foreach (var f in health.Findings)
+                {
+                    var sev = f.Severity.ToString().ToLowerInvariant();
+                    var detail = E(f.Detail);
+                    if (f.AdvisoryUrl is { } url && Uri.TryCreate(url, UriKind.Absolute, out var u) && u.Scheme == Uri.UriSchemeHttps)
+                        detail = detail.Replace(E(url), $"<a href=\"{E(url)}\" rel=\"noopener noreferrer\">{E(url)}</a>");
+                    sb.Append($"<li><span class=\"sev sev-{sev}\">{E(f.SeverityLabel)}</span><b>{E(f.Title)}</b><br><span class=\"muted\">{detail}</span></li>");
+                }
+                sb.Append("</ul>");
+            }
+            sb.Append("<p class=\"muted\">Pondération : pilote dangereux −30 (note D au mieux), sans pilote / en erreur / non signé −15, pilote ancien −3 (−15 max), mise à jour −2 (−10 max) ; pannes matérielles et périphériques désactivés non comptés.</p></div></div>");
+        }
 
         if (scan.Policy is { } applied)
         {

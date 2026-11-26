@@ -90,6 +90,9 @@ public sealed class HealthReport
         }
     }
 
+    /// <summary>JSON du contrat « health » (camelCase, même forme que dans le rapport d'analyse).</summary>
+    public string ToJson() => JsonSerializer.Serialize(this, Engine.ScanReport.Json);
+
     [JsonIgnore]
     public string GradeLabel => Grade switch
     {
