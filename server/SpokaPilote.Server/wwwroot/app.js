@@ -26,7 +26,7 @@
   const enc = encodeURIComponent;
   const plural = (n, one, many) => `${n} ${n > 1 ? many : one}`;
   /** « Microsoft Windows 11 Professionnel 25H2 » → « Windows 11 Professionnel 25H2 » (colonnes étroites). */
-  const shortOs = (os) => String(os || '').replace(/^Microsoft\s+/i, '');
+  const shortOs = (os) => String(os || '').replace(/^Microsoft\s+/i, '').replace(/\bProfessionnel\b/, 'Pro');
 
   const dateFmt = new Intl.DateTimeFormat('fr-FR', { dateStyle: 'short', timeStyle: 'short' });
   const timeFmt = new Intl.DateTimeFormat('fr-FR', { timeStyle: 'medium' });
@@ -474,8 +474,9 @@
           ${f.averageHealth != null ? kpi('Santé moyenne', `${String(f.averageHealth).replace('.', ',')}/100`,
             { kind: scoreKind(f.averageHealth), href: '#/postes?tri=health', sub: `${plural(f.healthMachines, 'poste évalué', 'postes évalués')}` }) : ''}
           ${f.dangerousDrivers > 0 ? kpi('Pilotes dangereux', f.dangerousDrivers, { kind: 'bad', href: '#/postes?statut=dangerous', sub: 'postes concernés' }) : ''}
-          ${kpi('Tâches à distance', f.pendingJobs + f.runningJobs, { kind: f.failedJobs24h ? 'bad' : '', href: '#/taches',
-            sub: `${f.pendingJobs} en attente · ${f.runningJobs} en cours${f.failedJobs24h ? ` · ${f.failedJobs24h} échouée(s) en 24 h` : ''}` })}
+          ${kpi('Tâches à distance', f.pendingJobs + f.runningJobs, { href: '#/taches?etat=active',
+            sub: `${f.pendingJobs} en attente · ${f.runningJobs} en cours` })}
+          ${f.failedJobs24h > 0 ? kpi('Tâches échouées (24 h)', f.failedJobs24h, { kind: 'bad', href: '#/taches?etat=failed', sub: 'voir le détail et le journal' }) : ''}
         </div>
 
         <section class="section">
@@ -586,7 +587,7 @@
         <button id="m-run-todo" class="btn btn-sm" type="button" title="Tous les postes actuellement « à traiter », sélectionnés ou non">Lancer sur tous les postes à traiter</button>
         <button id="m-clear" class="btn btn-ghost btn-sm" type="button">Vider la sélection</button>
       </div>
-      <div class="table-wrap"><table>
+      <div class="table-wrap"><table class="table-compact">
         <thead id="m-head"></thead>
         <tbody id="m-body"></tbody>
       </table></div>`;

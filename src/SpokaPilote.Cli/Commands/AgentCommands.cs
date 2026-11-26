@@ -89,7 +89,7 @@ internal static partial class Program
             WriteLine($"Tâche planifiée    : {AgentScheduler.TaskName} ({s.State ?? "état inconnu"}) — {s.TriggerSummary}", ConsoleColor.White);
             WriteLine($"Commande           : \"{s.Command}\" {s.Arguments}", ConsoleColor.Gray);
             WriteLine($"Prochaine exécution: {Date(s.NextRun)}", ConsoleColor.White);
-            WriteLine($"Dernière exécution : {Date(s.LastRun)} — {MaintenanceScheduler.ResultLabel(s.LastResult)}",
+            WriteLine($"Dernière exécution : {(s.LastRun is null ? "jamais" : $"{Date(s.LastRun)} — {MaintenanceScheduler.ResultLabel(s.LastResult)}")}",
                 s.LastResult is 0 or 0x41303 or null ? ConsoleColor.White : ConsoleColor.Yellow);
         }
         try
