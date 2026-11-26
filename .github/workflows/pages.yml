@@ -1,0 +1,50 @@
+name: Site web (GitHub Pages)
+
+# Construit le site (site/ + docs/*.md convertis en HTML par scripts/build-site.ps1) et le publie sur
+# https://spokator.github.io/SpokaPilote/ à chaque modification sur main.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "site/**"
+      - "docs/**"
+      - "scripts/build-site.ps1"
+      - "Directory.Build.props"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    # Windows PowerShell 5.1 : le même environnement que sur le poste du mainteneur.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Construire le site
+        shell: powershell
+        run: .\scripts\build-site.ps1 -Output _site
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

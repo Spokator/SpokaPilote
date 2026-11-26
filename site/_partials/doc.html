@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{DOC_TITLE}} — SpokaPilote</title>
+<meta name="description" content="{{DOC_SUMMARY}}">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="{{ROOT}}favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="{{ROOT}}assets/style.css">
+<script src="{{ROOT}}assets/site.js" defer></script>
+</head>
+<body data-page="documentation">
+<!--#header-->
+<div class="container doc-layout">
+  <aside class="doc-toc" aria-label="Sommaire du document">
+    <p class="toc-title"><a href="{{ROOT}}documentation.html">← Documentation</a></p>
+    <ul>
+{{DOC_TOC}}
+    </ul>
+  </aside>
+  <main id="contenu" class="prose">
+{{DOC_CONTENT}}
+    <p class="doc-meta">Source : <a href="{{DOC_SOURCE}}" rel="noopener">{{DOC_SOURCE}}</a> — une erreur, une question ? <a href="{{REPO}}/issues/new/choose" rel="noopener">Ouvrez un ticket</a>.</p>
+  </main>
+</div>
+<!--#footer-->
+</body>
+</html>

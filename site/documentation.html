@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Documentation — SpokaPilote</title>
+<meta name="description" content="Documentation de SpokaPilote : console centrale, politique de pilotes, packs constructeur, imprimantes, maintenance planifiée, pilotes graphiques, distribution.">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="{{ROOT}}favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="{{ROOT}}assets/style.css">
+<script src="{{ROOT}}assets/site.js" defer></script>
+</head>
+<body data-page="documentation">
+<!--#header-->
+<main id="contenu">
+
+<section class="page-hero">
+  <div class="container">
+    <p class="eyebrow">Documentation</p>
+    <h1>Documentation</h1>
+    <p class="lead">Guides pas à pas pour installer SpokaPilote, l'utiliser sur un poste et le déployer sur un parc.</p>
+  </div>
+</section>
+
+<section style="padding-top:8px">
+  <div class="container">
+    <h2>Premiers pas</h2>
+    <div class="grid-2">
+      <ol class="steps">
+        <li><strong>Installez</strong> SpokaPilote depuis la <a href="{{ROOT}}index.html#telecharger">page de
+          téléchargement</a> (x64 ou ARM64).</li>
+        <li><strong>Analyser ce poste</strong> : inventaire et recherche, sans droits administrateur.</li>
+        <li>Onglet <strong>Pilotes</strong> → <strong>Installer la sélection</strong> (SpokaPilote propose de se relancer
+          en administrateur).</li>
+      </ol>
+      <div>
+<pre><code>spokapilote scan --html rapport.html                    # inventaire + pilotes proposés
+spokapilote install --yes                               # manquants + mises à jour (admin)
+spokapilote install --missing --exclude NVIDIA --yes    # choisir finement
+spokapilote rollback last --yes                         # annuler la dernière intervention
+spokapilote driverpack download \\srv\pilotes --model "Latitude 7420"
+spokapilote printers export-profile imprimantes.json    # puis : printers deploy
+spokapilote schedule enable --weekly lundi --time 12:30 --mode missing
+spokapilote policy test --policy driver-policy.json
+spokapilote help                                        # toutes les commandes</code></pre>
+        <p>Codes de sortie : <code>0</code> OK · <code>1</code> erreur · <code>2</code> échec partiel ·
+          <code>3010</code> redémarrage requis.</p>
+      </div>
+    </div>
+
+<!--#docs-list-->
+
+    <h2>Besoin d'aide ?</h2>
+    <p>Une question, un matériel non reconnu, un bug : <a href="{{REPO}}/issues/new/choose">ouvrez un ticket</a> en
+      joignant si possible le rapport <code>spokapilote scan --json rapport.json</code>.</p>
+  </div>
+</section>
+
+</main>
+<!--#footer-->
+</body>
+</html>

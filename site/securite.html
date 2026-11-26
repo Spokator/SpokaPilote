@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sécurité et confidentialité — SpokaPilote</title>
+<meta name="description" content="Comment SpokaPilote garantit qu'un pilote vient de la bonne source et n'a pas été modifié : sources officielles, empreinte, signature numérique, compatibilité réelle, politique, annulation.">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="{{ROOT}}favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="{{ROOT}}assets/style.css">
+<script src="{{ROOT}}assets/site.js" defer></script>
+</head>
+<body data-page="securite">
+<!--#header-->
+<main id="contenu">
+
+<section class="page-hero">
+  <div class="container">
+    <p class="eyebrow">Sécurité</p>
+    <h1>Un pilote s'exécute au cœur de Windows. Il doit venir de la bonne source.</h1>
+    <p class="lead">Un mauvais pilote peut rendre un poste instable ou ouvrir une brèche. C'est pourquoi SpokaPilote
+      applique, à chaque pilote, une chaîne de contrôle stricte que personne ne peut désactiver — ni l'utilisateur, ni
+      un réglage, ni une politique.</p>
+  </div>
+</section>
+
+<section>
+  <div class="container">
+    <h2>La chaîne de contrôle</h2>
+    <ol class="chain">
+      <li><strong>Sources officielles uniquement</strong><br>Windows Update, Microsoft Update Catalog, catalogues
+        officiels Dell, HP et Lenovo, NVIDIA, et votre dépôt interne. Tout autre domaine est refusé ; HTTPS obligatoire,
+        redirections comprises.</li>
+      <li><strong>Empreinte vérifiée</strong><br>Chaque fichier téléchargé est comparé à l'empreinte publiée par sa source
+        (catalogue Microsoft, SHA-256 HP et Lenovo, Dell, NVIDIA). Le moindre écart et le fichier est rejeté.</li>
+      <li><strong>Signature numérique</strong><br>Vérifiée par Windows (<code>WinVerifyTrust</code>) ; l'éditeur doit être
+        approuvé : Microsoft WHQL, Dell, HP, Lenovo, Intel, AMD, NVIDIA, Realtek… Les catalogues de packs Dell et HP sont
+        eux-mêmes vérifiés.</li>
+      <li><strong>Compatibilité réelle</strong><br>Le fichier INF doit déclarer l'identifiant matériel exact du
+        composant, pour l'architecture et la version de Windows du poste. Un paquet au titre trompeur est refusé.</li>
+      <li><strong>Politique de l'entreprise</strong><br>Pilotes, versions ou matériels bloqués, versions figées, sources
+        autorisées. Une liste de référence des pilotes connus pour provoquer des écrans bleus (avis Microsoft) est
+        appliquée par défaut.</li>
+      <li><strong>Filets de sécurité</strong><br>Point de restauration et sauvegarde des pilotes avant chaque
+        intervention, historique complet et annulation en un clic. Un pilote Windows intégré qui fonctionne n'est jamais
+        remplacé automatiquement.</li>
+    </ol>
+  </div>
+</section>
+
+<section class="alt">
+  <div class="container grid-2">
+    <div>
+      <h2>Ce que SpokaPilote ne fait jamais</h2>
+      <ul class="checklist">
+        <li>Télécharger un pilote depuis un site miroir, un forum ou un « pack » non officiel.</li>
+        <li>Installer un logiciel tiers, une barre d'outils ou une publicité.</li>
+        <li>Envoyer des données d'utilisation : aucune télémétrie, aucun compte à créer.</li>
+        <li>Installer quoi que ce soit sans votre action ou votre configuration explicite (maintenance planifiée).</li>
+      </ul>
+    </div>
+    <div>
+      <h2>Confidentialité</h2>
+      <p>SpokaPilote contacte uniquement les serveurs nécessaires à son travail : Microsoft (Windows Update, Microsoft
+        Update Catalog), les catalogues des constructeurs et de NVIDIA, et GitHub (nouvelles versions de SpokaPilote,
+        liste de référence des pilotes à éviter).</p>
+      <p>Les rapports d'inventaire restent sur le poste. Si vous installez la <a href="{{ROOT}}console.html">console
+        centrale</a>, ils ne sont envoyés qu'à <strong>votre</strong> serveur, avec votre jeton.</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="container grid-2">
+    <div>
+      <h2>Intégrité de SpokaPilote lui-même</h2>
+      <ul class="checklist">
+        <li><strong>Code source ouvert</strong> (licence MIT) : chaque règle est lisible et vérifiable sur
+          <a href="{{REPO}}">GitHub</a>.</li>
+        <li><strong>Mises à jour vérifiées</strong> : avant d'installer une nouvelle version, SpokaPilote contrôle sa
+          taille et son empreinte SHA-256 publiées par GitHub.</li>
+        <li><strong>Construction contrôlée</strong> : environ 400 tests automatiques et un contrôle de chaque écran de
+          l'interface avant chaque publication.</li>
+        <li><strong>Signature de code</strong> : le processus de publication est prêt à signer l'application et ses
+          installeurs ; les installeurs actuels ne sont pas encore signés (avertissement SmartScreen possible au premier
+          lancement).</li>
+      </ul>
+    </div>
+    <div id="signaler">
+      <h2>Signaler une vulnérabilité</h2>
+      <p>Vous pensez avoir trouvé une faille de sécurité ? Merci de <strong>ne pas</strong> ouvrir de ticket public.
+        Utilisez le signalement privé de GitHub :</p>
+      <p><a class="btn btn-primary" href="{{REPO}}/security/advisories/new" rel="noopener">Signaler en privé</a></p>
+      <p>La politique complète (versions prises en charge, délais de réponse) est dans
+        <a href="{{REPO}}/blob/main/SECURITY.md">SECURITY.md</a>.</p>
+    </div>
+  </div>
+</section>
+
+</main>
+<!--#footer-->
+</body>
+</html>

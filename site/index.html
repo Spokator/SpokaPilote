@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SpokaPilote — les bons pilotes, depuis les sources officielles uniquement</title>
+<meta name="description" content="SpokaPilote trouve, vérifie et installe les pilotes Windows depuis les sources officielles uniquement (Microsoft, Dell, HP, Lenovo, NVIDIA), gère les imprimantes d'entreprise et le suivi d'un parc. Gratuit et open source.">
+<meta name="color-scheme" content="light dark">
+<meta property="og:title" content="SpokaPilote">
+<meta property="og:description" content="Les bons pilotes pour tout le poste et les imprimantes d'entreprise, depuis les sources officielles uniquement — et le suivi de tout le parc.">
+<meta property="og:type" content="website">
+<link rel="icon" href="{{ROOT}}favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="{{ROOT}}assets/style.css">
+<script src="{{ROOT}}assets/site.js" defer></script>
+</head>
+<body data-page="accueil">
+<!--#header-->
+<main id="contenu">
+
+<section class="hero">
+  <div class="container hero-grid">
+    <div>
+      <p class="eyebrow">Pilotes Windows de confiance</p>
+      <h1>Les bons pilotes, depuis les sources officielles uniquement.</h1>
+      <p class="lead">SpokaPilote inventorie le PC, trouve chaque pilote manquant ou à mettre à jour <strong>chez Microsoft,
+        chez le constructeur du PC ou chez le fabricant de la carte graphique</strong>, le vérifie, puis l'installe.
+        Il configure aussi les imprimantes et copieurs réseau, et suit tout un parc depuis une console web.</p>
+      <div class="btn-row">
+        <a class="btn btn-primary" data-download="x64" data-download-primary href="{{REPO}}/releases/latest">
+          <span data-label>Télécharger pour Windows</span> <small>v<span data-version>{{VERSION}}</span></small></a>
+        <a class="btn btn-secondary" data-download="arm64" data-download-secondary href="{{REPO}}/releases/latest">Version ARM64 (Snapdragon, Surface)</a>
+      </div>
+      <p class="hero-meta">Windows 10 (1809 et suivants) et Windows 11 · x64 et ARM64 · gratuit et open source (licence MIT)</p>
+    </div>
+    <figure class="window">
+      <div class="window-bar">SpokaPilote — Ce poste</div>
+      <img src="{{ROOT}}assets/captures/poste.png" width="1224" height="761"
+        alt="Écran « Ce poste » de SpokaPilote après une analyse : nombre de périphériques détectés, pilotes proposés, périphérique en panne matérielle avec son explication, politique de pilotes appliquée.">
+    </figure>
+  </div>
+</section>
+
+<section>
+  <div class="container">
+    <p class="eyebrow">Pour qui</p>
+    <h2>Pensé pour ceux qui gèrent des PC au quotidien</h2>
+    <div class="grid">
+      <div class="card">
+        <h3>Techniciens et prestataires</h3>
+        <p>Remettre en état un poste sans faire la tournée des sites constructeurs ni utiliser de « driver updater »
+          douteux. Une analyse, une liste claire, une installation contrôlée et réversible.</p>
+      </div>
+      <div class="card">
+        <h3>Services informatiques</h3>
+        <p>Un parc de 10 à plusieurs centaines de postes : installation silencieuse, maintenance planifiée, politique de
+          pilotes commune, profils d'imprimantes et console centrale auto-hébergée.</p>
+      </div>
+      <div class="card">
+        <h3>Utilisateurs avertis</h3>
+        <p>Un seul PC à tenir à jour proprement : uniquement des pilotes signés, venus de la bonne source, avec un point
+          de restauration et l'annulation en un clic.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="alt">
+  <div class="container">
+    <p class="eyebrow">Fonctionnalités</p>
+    <h2>Tout le poste, toutes les imprimantes, tout le parc</h2>
+    <div class="grid">
+      <div class="card">
+        <div class="icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg></div>
+        <h3>Pilotes manquants et mises à jour</h3>
+        <p>Dépôt interne, catalogues Dell / HP / Lenovo, NVIDIA, Windows Update et Microsoft Update Catalog, interrogés
+          en parallèle. Chaque composant est identifié par son identifiant matériel exact.</p>
+      </div>
+      <div class="card">
+        <div class="icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 3v6c0 4.5-3.4 8.2-8 9-4.6-.8-8-4.5-8-9V6z"/><path d="M9 12l2 2 4-4"/></svg></div>
+        <h3>Vérifiés avant installation</h3>
+        <p>Domaine officiel en HTTPS, empreinte, signature numérique d'un éditeur approuvé et compatibilité réelle avec
+          le matériel. Un pilote Windows intégré qui fonctionne n'est jamais remplacé d'office.</p>
+      </div>
+      <div class="card">
+        <div class="icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/></svg></div>
+        <h3>Historique et annulation</h3>
+        <p>Point de restauration et sauvegarde des pilotes avant chaque intervention ; chaque installation est tracée et
+          s'annule en un clic.</p>
+      </div>
+      <div class="card">
+        <div class="icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9V3h12v6"/><rect x="3" y="9" width="18" height="8" rx="2"/><path d="M6 14h12v7H6z"/></svg></div>
+        <h3>Imprimantes et copieurs</h3>
+        <p>Découverte réseau (SNMP, IPP), modèle exact, pilote vérifié, file d'impression. Profils d'imprimantes à
+          déployer sur tout le parc, avec conditions par site ou par nom de poste.</p>
+      </div>
+      <div class="card">
+        <div class="icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></div>
+        <h3>Maintenance automatique</h3>
+        <p>Une tâche planifiée entretient chaque poste (chaque semaine, chaque jour ou au démarrage) et dépose son
+          rapport pour le suivi du parc.</p>
+      </div>
+      <div class="card">
+        <div class="icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg></div>
+        <h3>Console centrale</h3>
+        <p>Une console web auto-hébergée (Docker) : état du parc, postes à traiter, matériel sans pilote, politique de
+          pilotes et profil d'imprimantes diffusés aux postes. <a href="{{ROOT}}console.html">En savoir plus</a></p>
+      </div>
+      <div class="card">
+        <div class="icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8l-9-5-9 5v8l9 5z"/><path d="M3.3 7.5 12 12l8.7-4.5M12 22V12"/></svg></div>
+        <h3>Packs constructeur et hors ligne</h3>
+        <p>Le pack officiel Dell / HP / Lenovo d'un modèle, vérifié et rangé dans le dépôt ; un pack hors ligne pour le
+          PC neuf dont la carte réseau n'a pas encore de pilote.</p>
+      </div>
+      <div class="card">
+        <div class="icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 17l6-6-6-6"/><path d="M12 19h8"/></svg></div>
+        <h3>Ligne de commande</h3>
+        <p>La commande <code>spokapilote</code> fait tout ce que fait l'interface, pour les scripts de déploiement,
+          Intune ou un outil de télémaintenance. Codes de sortie documentés.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="container">
+    <p class="eyebrow">Captures d'écran</p>
+    <h2>Clair, en français, sans jargon inutile</h2>
+    <p class="section-intro">Captures réelles de l'application, générées automatiquement à chaque version.</p>
+    <div class="gallery">
+      <figure>
+        <a class="window" href="{{ROOT}}assets/captures/pilotes.png"><img src="{{ROOT}}assets/captures/pilotes.png" width="1224" height="761" loading="lazy"
+          alt="Onglet Pilotes : liste des pilotes proposés avec leur source officielle, version, taille et options de point de restauration et de sauvegarde."></a>
+        <figcaption>Pilotes proposés : source, version, simulation avant installation.</figcaption>
+      </figure>
+      <figure>
+        <a class="window" href="{{ROOT}}assets/captures/peripheriques.png"><img src="{{ROOT}}assets/captures/peripheriques.png" width="1224" height="761" loading="lazy"
+          alt="Onglet Périphériques : inventaire matériel complet avec pilote actuel, fournisseur, état et identifiant matériel."></a>
+        <figcaption>Inventaire matériel complet, avec diagnostic des périphériques en erreur.</figcaption>
+      </figure>
+      <figure>
+        <a class="window" href="{{ROOT}}assets/captures/historique.png"><img src="{{ROOT}}assets/captures/historique.png" width="1224" height="761" loading="lazy"
+          alt="Onglet Historique : liste des interventions, détail des paquets ajoutés et bouton d'annulation."></a>
+        <figcaption>Historique : chaque intervention s'annule en un clic.</figcaption>
+      </figure>
+      <figure>
+        <a class="window" href="{{ROOT}}assets/captures/depot.png"><img src="{{ROOT}}assets/captures/depot.png" width="1224" height="761" loading="lazy"
+          alt="Onglet Dépôt de pilotes : dépôts d'entreprise, export d'un poste de référence, packs officiels des constructeurs."></a>
+        <figcaption>Dépôt d'entreprise et packs officiels des constructeurs.</figcaption>
+      </figure>
+      <figure>
+        <a class="window" href="{{ROOT}}assets/captures/imprimantes.png"><img src="{{ROOT}}assets/captures/imprimantes.png" width="1224" height="761" loading="lazy"
+          alt="Onglet Imprimantes : recherche des imprimantes réseau et installation avec choix du pilote."></a>
+        <figcaption>Imprimantes et copieurs réseau.</figcaption>
+      </figure>
+      <figure>
+        <a class="window" href="{{ROOT}}assets/captures/parametres.png"><img src="{{ROOT}}assets/captures/parametres.png" width="1224" height="761" loading="lazy"
+          alt="Onglet Paramètres : sources de pilotes, sécurité, maintenance automatique."></a>
+        <figcaption>Paramètres : sources autorisées, sécurité, maintenance automatique.</figcaption>
+      </figure>
+    </div>
+  </div>
+</section>
+
+<section class="alt">
+  <div class="container grid-2">
+    <div>
+      <p class="eyebrow">Confiance</p>
+      <h2>Une chaîne de contrôle stricte, non désactivable</h2>
+      <p>SpokaPilote ne télécharge rien depuis un site tiers et n'installe aucun pilote qui n'a pas passé tous les
+        contrôles. Le code est ouvert et chaque décision est expliquée.</p>
+      <p><a class="btn btn-secondary" href="{{ROOT}}securite.html">Sécurité et confidentialité</a></p>
+    </div>
+    <ul class="checklist">
+      <li><strong>Sources officielles uniquement</strong> : Microsoft, Dell, HP, Lenovo, NVIDIA, ou votre dépôt interne.</li>
+      <li><strong>Empreinte vérifiée</strong> pour chaque fichier téléchargé.</li>
+      <li><strong>Signature numérique</strong> d'un éditeur approuvé (Microsoft WHQL, constructeurs, fabricants).</li>
+      <li><strong>Compatibilité réelle</strong> : identifiant matériel exact, architecture et version de Windows.</li>
+      <li><strong>Politique de l'entreprise</strong> : pilotes bloqués, versions figées, sources autorisées.</li>
+      <li><strong>Filets de sécurité</strong> : point de restauration, sauvegarde, annulation.</li>
+    </ul>
+  </div>
+</section>
+
+<section>
+  <div class="container grid-2">
+    <div>
+      <p class="eyebrow">Démarrage rapide</p>
+      <h2>Trois étapes</h2>
+      <ol class="steps">
+        <li><strong>Installez</strong> SpokaPilote (moins d'une minute, aucune dépendance).</li>
+        <li><strong>Analysez ce poste</strong> : l'inventaire et la recherche ne demandent pas de droits administrateur.</li>
+        <li><strong>Installez la sélection</strong> : SpokaPilote propose de se relancer en administrateur, crée un point
+          de restauration et sauvegarde les pilotes actuels.</li>
+      </ol>
+    </div>
+    <div>
+      <h3>En ligne de commande</h3>
+<pre><code>spokapilote scan --html rapport.html        # inventaire + pilotes proposés
+spokapilote install --yes                   # manquants + mises à jour (admin)
+spokapilote rollback last --yes             # annuler la dernière intervention
+spokapilote schedule enable --weekly lundi  # maintenance automatique
+spokapilote help                            # toutes les commandes</code></pre>
+      <p><a href="{{ROOT}}documentation.html">Toute la documentation</a></p>
+    </div>
+  </div>
+</section>
+
+<section class="alt" id="telecharger">
+  <div class="container">
+    <p class="eyebrow">Téléchargement</p>
+    <h2>Télécharger SpokaPilote <span data-version>{{VERSION}}</span></h2>
+    <p class="section-intro">Installeur Windows autonome : installation dans Program Files, menu Démarrer, commande
+      <code>spokapilote</code> dans tous les terminaux et mise à jour automatique.</p>
+    <div class="grid">
+      <div class="card download-card">
+        <h3>PC Intel / AMD (x64)</h3>
+        <p>La grande majorité des PC de bureau et portables.</p>
+        <a class="btn btn-primary" data-download="x64" href="{{REPO}}/releases/latest">Télécharger <span data-size="x64"></span></a>
+        <p class="sha" data-sha="x64"></p>
+      </div>
+      <div class="card download-card">
+        <h3>PC ARM64</h3>
+        <p>PC Snapdragon (Copilot+ PC), Surface Pro X et suivantes.</p>
+        <a class="btn btn-secondary" data-download="arm64" href="{{REPO}}/releases/latest">Télécharger <span data-size="arm64"></span></a>
+        <p class="sha" data-sha="arm64"></p>
+      </div>
+      <div class="card">
+        <h3>Déploiement sur un parc</h3>
+        <p>Installation silencieuse (GPO, Intune, outil de télémaintenance) :</p>
+        <pre><code>SpokaPilote-Setup-&lt;version&gt;.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART</code></pre>
+        <p><a href="{{REPO}}/releases">Toutes les versions</a> · <a href="{{REPO}}/blob/main/CHANGELOG.md">Nouveautés</a></p>
+      </div>
+    </div>
+    <div class="note" style="margin-top:24px">
+      <p><strong>Avertissement SmartScreen ?</strong> Les installeurs ne sont pas encore signés numériquement : au premier
+        lancement, Windows peut afficher « Windows a protégé votre ordinateur ». Choisissez « Informations
+        complémentaires » puis « Exécuter quand même ». Pour vérifier l'intégrité du fichier, comparez son empreinte
+        (<code>Get-FileHash .\SpokaPilote-Setup-*.exe</code>) avec le SHA-256 affiché ci-dessus et sur la page de la
+        version.</p>
+    </div>
+  </div>
+</section>
+
+</main>
+<!--#footer-->
+</body>
+</html>
