@@ -72,7 +72,10 @@ public sealed class LocalRepositorySource : IDriverSource
                                 Version = inf.Version,
                                 Date = inf.Date,
                                 LocalPath = inf.Path,
-                                Kind = device.HasProblem ? CandidateKind.MissingDriver : CandidateKind.Update,
+                                // Firmware UEFI (packs Surface, capsules constructeurs) : appliqué au redémarrage,
+                                // installé seulement sur demande explicite (--include-firmware), comme chez Dell / HP.
+                                Kind = InfParser.IsFirmwareClass(inf.Class) ? CandidateKind.Firmware
+                                     : device.HasProblem ? CandidateKind.MissingDriver : CandidateKind.Update,
                             };
                             byInf[inf.Path] = candidate;
                         }
@@ -97,7 +100,7 @@ public sealed class LocalRepositorySource : IDriverSource
                     ? device.CompatibleIds[choice.Rank - HardwareIdMatcher.CompatibleIdOffset]
                     : device.HardwareIds[choice.Rank];
             }
-            if (device.HasProblem) c.Kind = CandidateKind.MissingDriver;
+            if (device.HasProblem && c.Kind != CandidateKind.Firmware) c.Kind = CandidateKind.MissingDriver;
             results[c.Id] = c;
         }
         Log.Info($"Dépôt local : {results.Count} paquet(s) applicable(s).");

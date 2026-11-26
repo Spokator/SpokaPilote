@@ -698,13 +698,15 @@ internal static partial class Program
               spokapilote pack <rapport.json|ce-poste> <dossier> [--all]
                                    prépare sur un poste connecté les pilotes d'un poste sans réseau
 
-            PACKS DE PILOTES OFFICIELS (Dell, HP, Lenovo — déploiement SCCM/MDT)
-              spokapilote driverpack list [--model "Latitude 7420"] [--vendor dell|hp|lenovo] [--os win11|win10]
+            PACKS DE PILOTES OFFICIELS (Dell, HP, Lenovo, Microsoft Surface — déploiement SCCM/MDT)
+              spokapilote driverpack list [--model "Latitude 7420"] [--vendor dell|hp|lenovo|surface] [--os win11|win10]
                                           [--arch x64|arm64] [--all]
                                    sans --model : le pack du poste courant ; --all : toutes les versions
               spokapilote driverpack download <dépôt> [--model ...] [--os ...] [--yes] [--force] [--keep-download]
                                    télécharge, vérifie (empreinte, signature) et extrait le pack dans
                                    <dépôt>\<Fabricant>\<Modèle>\<WinXX-arch>, prêt pour « install --repo »
+                                   Surface : MSI extrait sans installation (msiexec /a), firmwares UEFI
+                                   installés seulement avec « install --include-firmware »
 
             IMAGES WINDOWS (DISM, console administrateur) — EXPÉRIMENTAL : testez sur une copie de l'image
               spokapilote image info <install.wim> [--index n]       éditions, architecture, version

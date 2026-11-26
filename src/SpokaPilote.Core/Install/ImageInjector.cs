@@ -643,7 +643,8 @@ public static class ImageInjector
     private static async Task<ProcessResult> RunDismAsync(string arguments, TimeSpan timeout, CancellationToken ct)
     {
         Log.Info($"dism {arguments}");
-        var result = await ProcessRunner.RunAsync(Dism, arguments, timeout: timeout, ct: ct).ConfigureAwait(false);
+        // DISM écrit dans la page de codes OEM de la console (850 en France) quand sa sortie est redirigée.
+        var result = await ProcessRunner.RunAsync(Dism, arguments, timeout: timeout, ct: ct, outputEncoding: ProcessRunner.OemEncoding()).ConfigureAwait(false);
         Log.Debug($"dism (code {result.ExitCode}) :\n{CleanOutput(result.Combined)}");
         if (result.ExitCode != 0) Log.Warn($"dism {arguments.Split(' ').Skip(1).FirstOrDefault()} : {DescribeFailure(result)}");
         return result;

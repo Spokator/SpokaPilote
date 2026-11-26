@@ -15,7 +15,8 @@ public static class ProcessRunner
         string arguments,
         string? workingDirectory = null,
         TimeSpan? timeout = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        Encoding? outputEncoding = null)
     {
         var psi = new ProcessStartInfo(fileName, arguments)
         {
@@ -24,8 +25,8 @@ public static class ProcessRunner
             RedirectStandardError = true,
             CreateNoWindow = true,
             WorkingDirectory = workingDirectory ?? Environment.CurrentDirectory,
-            StandardOutputEncoding = Encoding.UTF8,
-            StandardErrorEncoding = Encoding.UTF8,
+            StandardOutputEncoding = outputEncoding ?? Encoding.UTF8,
+            StandardErrorEncoding = outputEncoding ?? Encoding.UTF8,
         };
 
         Log.Debug($"Exécution : \"{fileName}\" {arguments}");
@@ -67,5 +68,25 @@ public static class ProcessRunner
     /// <summary>Échappe une valeur pour l'insérer dans une chaîne PowerShell entre apostrophes.</summary>
     public static string PsQuote(string value) => "'" + value.Replace("'", "''") + "'";
 
+    [System.Runtime.InteropServices.DllImport("kernel32.dll")]
+    private static extern uint GetOEMCP();
+
     public static string SystemTool(string exe) => Path.Combine(Environment.SystemDirectory, exe);
+
+    /// <summary>
+    /// Page de codes OEM de la console (850 en France) : celle qu'utilisent les outils console classiques (DISM...)
+    /// quand leur sortie est redirigée. Lue en UTF-8, « Version d'évaluation » deviendrait « Version d'�valuation ».
+    /// </summary>
+    public static Encoding OemEncoding()
+    {
+        try
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+            return Encoding.GetEncoding((int)GetOEMCP());
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException)
+        {
+            return Encoding.UTF8;
+        }
+    }
 }

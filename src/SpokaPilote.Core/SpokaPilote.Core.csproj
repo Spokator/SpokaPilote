@@ -10,6 +10,7 @@
   <ItemGroup>
     <EmbeddedResource Include="Printers\printer-vendors.json" />
     <EmbeddedResource Include="Policy\known-bad-drivers.json" />
+    <EmbeddedResource Include="Repository\surface-driverpacks.json" />
     <InternalsVisibleTo Include="SpokaPilote.Core.Tests" />
   </ItemGroup>
 </Project>
