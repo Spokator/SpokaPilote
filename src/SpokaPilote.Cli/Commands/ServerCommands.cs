@@ -18,11 +18,12 @@ internal static partial class Program
         try
         {
             var client = new ServerClient(settings);
-            await client.UploadReportAsync(ScanReport.From(scan, outcomes), ct);
+            _lastUpload = await client.UploadReportAsync(ScanReport.From(scan, outcomes), ct);
             WriteLine($"Rapport envoyé à la console centrale ({client.BaseUri.Authority}).", ConsoleColor.Gray);
         }
         catch (ServerException ex)
         {
+            _lastUploadError = ex.Message;
             WriteLine($"⚠ Rapport non envoyé à la console centrale : {ex.Message}", ConsoleColor.Yellow);
             WriteLine($"  Sans conséquence sur l'analyse ; le rapport local reste dans {AppPaths.Reports}.", ConsoleColor.DarkGray);
             // Niveau Info : consigné dans le journal sans répéter le message déjà affiché en console.

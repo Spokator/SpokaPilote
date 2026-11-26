@@ -2,9 +2,12 @@
 #   Image publiée (recommandé) : docker compose -f server/docker-compose.yml up -d
 #     (utilise ghcr.io/spokator/spokapilote-server:latest, publiée à chaque version de SpokaPilote)
 #   Depuis les sources        : docker compose -f server/docker-compose.yml up -d --build
+#   Avec HTTPS automatique    : SPOKAPILOTE_DOMAIN=spokapilote.mon-entreprise.fr dans server/.env, puis
+#                               docker compose -f server/docker-compose.yml --profile https up -d
+#     (Caddy obtient et renouvelle seul un certificat Let's Encrypt ; ports 80 et 443 ouverts depuis Internet,
+#      nom DNS public pointant sur ce serveur — voir docs/CONSOLE-CENTRALE.md)
 # Jetons : laissez SPOKAPILOTE_ADMIN_TOKEN / SPOKAPILOTE_AGENT_TOKEN vides pour qu'ils soient générés au premier
 # démarrage (visibles dans « docker compose logs » et dans le volume), ou fixez-les dans un fichier .env à côté de ce fichier.
-# En production, publiez la console en HTTPS derrière un reverse proxy (voir docs/CONSOLE-CENTRALE.md).
 
 services:
   spokapilote:
@@ -13,18 +16,38 @@ services:
       dockerfile: server/Dockerfile
     image: ghcr.io/spokator/spokapilote-server:${SPOKAPILOTE_VERSION:-latest}
     pull_policy: missing
-    container_name: spokapilote-server
+    container_name: ${SPOKAPILOTE_CONTAINER_NAME:-spokapilote-server}
     restart: unless-stopped
     ports:
-      # Derrière un reverse proxy sur le même hôte, préférez "127.0.0.1:8080:8080".
-      - "8080:8080"
+      # Avec le profil « https » (ou un reverse proxy sur le même hôte) : SPOKAPILOTE_PORT=127.0.0.1:8080,
+      # pour que la console ne soit joignable que par le proxy.
+      - "${SPOKAPILOTE_PORT:-8080}:8080"
     environment:
       SPOKAPILOTE_ADMIN_TOKEN: ${SPOKAPILOTE_ADMIN_TOKEN:-}
       SPOKAPILOTE_AGENT_TOKEN: ${SPOKAPILOTE_AGENT_TOKEN:-}
       SPOKAPILOTE_HISTORY: ${SPOKAPILOTE_HISTORY:-20}
       SPOKAPILOTE_STALE_DAYS: ${SPOKAPILOTE_STALE_DAYS:-7}
       SPOKAPILOTE_MAX_REPORT_MB: ${SPOKAPILOTE_MAX_REPORT_MB:-5}
-      TZ: Europe/Paris
+      SPOKAPILOTE_JOB_EXPIRY_DAYS: ${SPOKAPILOTE_JOB_EXPIRY_DAYS:-7}
+      SPOKAPILOTE_JOB_TIMEOUT_HOURS: ${SPOKAPILOTE_JOB_TIMEOUT_HOURS:-6}
+      SPOKAPILOTE_AUTH_FAILURES_PER_MINUTE: ${SPOKAPILOTE_AUTH_FAILURES_PER_MINUTE:-10}
+      # Alertes (facultatif ; sinon page Paramètres de la console). Une variable définie prime sur la console.
+      SPOKAPILOTE_SMTP_HOST: ${SPOKAPILOTE_SMTP_HOST:-}
+      SPOKAPILOTE_SMTP_PORT: ${SPOKAPILOTE_SMTP_PORT:-}
+      SPOKAPILOTE_SMTP_SECURITY: ${SPOKAPILOTE_SMTP_SECURITY:-}
+      SPOKAPILOTE_SMTP_USERNAME: ${SPOKAPILOTE_SMTP_USERNAME:-}
+      SPOKAPILOTE_SMTP_PASSWORD: ${SPOKAPILOTE_SMTP_PASSWORD:-}
+      SPOKAPILOTE_SMTP_FROM: ${SPOKAPILOTE_SMTP_FROM:-}
+      SPOKAPILOTE_SMTP_TO: ${SPOKAPILOTE_SMTP_TO:-}
+      SPOKAPILOTE_WEBHOOK_URL: ${SPOKAPILOTE_WEBHOOK_URL:-}
+      SPOKAPILOTE_WEBHOOK_FORMAT: ${SPOKAPILOTE_WEBHOOK_FORMAT:-}
+      SPOKAPILOTE_DAILY_SUMMARY: ${SPOKAPILOTE_DAILY_SUMMARY:-}
+      SPOKAPILOTE_ALERT_STALE_DAYS: ${SPOKAPILOTE_ALERT_STALE_DAYS:-}
+      SPOKAPILOTE_PUBLIC_URL: ${SPOKAPILOTE_PUBLIC_URL:-}
+      # Adresse réelle des postes derrière un reverse proxy (limitation des tentatives par IP, journaux).
+      # N'activez que si la console n'est joignable QUE par le proxy (SPOKAPILOTE_PORT=127.0.0.1:8080).
+      ASPNETCORE_FORWARDEDHEADERS_ENABLED: ${SPOKAPILOTE_BEHIND_PROXY:-false}
+      TZ: ${TZ:-Europe/Paris}
     volumes:
       - spokapilote-data:/data
     read_only: true
@@ -33,5 +56,27 @@ services:
     security_opt:
       - no-new-privileges:true
 
+  # HTTPS automatique (profil facultatif « https ») : Caddy demande et renouvelle le certificat Let's Encrypt
+  # du domaine SPOKAPILOTE_DOMAIN et relaie vers la console. Démarré uniquement avec --profile https.
+  caddy:
+    image: caddy:2.10
+    profiles: ["https"]
+    container_name: ${SPOKAPILOTE_CADDY_CONTAINER_NAME:-spokapilote-caddy}
+    restart: unless-stopped
+    depends_on:
+      - spokapilote
+    ports:
+      - "${SPOKAPILOTE_HTTP_PORT:-80}:80"
+      - "${SPOKAPILOTE_HTTPS_PORT:-443}:443"
+      - "${SPOKAPILOTE_HTTPS_PORT:-443}:443/udp"
+    environment:
+      SPOKAPILOTE_DOMAIN: ${SPOKAPILOTE_DOMAIN:-}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
 volumes:
   spokapilote-data:
+  caddy-data:
+  caddy-config:

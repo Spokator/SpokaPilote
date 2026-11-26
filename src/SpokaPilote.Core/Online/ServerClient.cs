@@ -22,7 +22,46 @@ public sealed class ServerException(string message, HttpStatusCode? statusCode =
 public sealed record ServerStatus(bool Reachable, bool Authorized, string? Access, string? ServerVersion, string Message);
 
 /// <summary>Accusé de réception d'un rapport par la console.</summary>
-public sealed record ServerUploadResult(string Machine, bool Healthy, int DriverProblems, int Unresolved);
+/// <param name="ReportId">Identifiant du rapport dans l'historique de la console (consoles 3.0 et ultérieures).</param>
+public sealed record ServerUploadResult(string Machine, bool Healthy, int DriverProblems, int Unresolved, long? ReportId = null);
+
+/// <summary>Tâche à distance reçue de la console (spokapilote agent run).</summary>
+/// <param name="Type">Action demandée ; l'agent n'exécute que les types de sa propre liste blanche (AgentJobTypes).</param>
+/// <param name="DryRun">Simulation : montrer ce qui serait fait, sans rien modifier.</param>
+public sealed record AgentJob(long Id, string Type, bool DryRun, DateTimeOffset? CreatedAt, string? CreatedBy);
+
+/// <summary>Réponse de la console à l'interrogation de la file de tâches.</summary>
+/// <param name="Known">La console connaît ce poste (au moins un rapport reçu).</param>
+public sealed record AgentJobBatch(bool Known, IReadOnlyList<AgentJob> Jobs);
+
+/// <summary>Résultat d'une tâche renvoyé à la console.</summary>
+public sealed record AgentJobResult(bool Success, int ExitCode, string Message, long? ReportId = null, string? Log = null);
+
+/// <summary>Liste blanche des tâches que l'agent accepte d'exécuter (la console applique la même).</summary>
+public static class AgentJobTypes
+{
+    public const string Scan = "scan";
+    public const string InstallMissing = "install-missing";
+    public const string InstallUpdates = "install-updates";
+    public const string DeployPrinters = "deploy-printers";
+    public const string RollbackLast = "rollback-last";
+    public const string SelfUpdate = "self-update";
+
+    public static readonly IReadOnlyList<string> All = [Scan, InstallMissing, InstallUpdates, DeployPrinters, RollbackLast, SelfUpdate];
+
+    public static bool IsAllowed(string? type) => type is not null && All.Contains(type, StringComparer.Ordinal);
+
+    public static string Label(string type) => type switch
+    {
+        Scan => "analyse du poste",
+        InstallMissing => "installation des pilotes manquants",
+        InstallUpdates => "installation des pilotes manquants et des mises à jour",
+        DeployPrinters => "déploiement du profil d'imprimantes",
+        RollbackLast => "annulation de la dernière intervention",
+        SelfUpdate => "mise à jour de SpokaPilote",
+        _ => type,
+    };
+}
 
 /// <summary>
 /// Client de la console centrale SpokaPilote Server (Settings.ServerUrl + Settings.ServerToken) : envoi des rapports,
@@ -111,7 +150,8 @@ public sealed class ServerClient
                 root.TryGetProperty("machine", out var m) ? m.GetString() ?? report.System.ComputerName : report.System.ComputerName,
                 root.TryGetProperty("healthy", out var h) && h.ValueKind == JsonValueKind.True,
                 root.TryGetProperty("driverProblems", out var p) && p.TryGetInt32(out var pv) ? pv : 0,
-                root.TryGetProperty("unresolved", out var u) && u.TryGetInt32(out var uv) ? uv : 0);
+                root.TryGetProperty("unresolved", out var u) && u.TryGetInt32(out var uv) ? uv : 0,
+                root.TryGetProperty("reportId", out var r) && r.ValueKind == JsonValueKind.Number && r.TryGetInt64(out var rv) ? rv : null);
         }
         catch (JsonException)
         {
@@ -125,6 +165,62 @@ public sealed class ServerClient
 
     /// <summary>Profil d'imprimantes publié sur la console (JSON brut), ou null si aucun n'est défini.</summary>
     public Task<string?> GetPrinterProfileJsonAsync(CancellationToken ct = default) => GetDocumentAsync("api/printer-profile", "Profil d'imprimantes", ct);
+
+    // ------------------------------------------------------------------ tâches à distance (agent)
+
+    public const string MachineIdHeader = "X-SpokaPilote-Machine-Id";
+    public const string MachineNameHeader = "X-SpokaPilote-Machine";
+
+    /// <summary>
+    /// Récupère les tâches en attente de ce poste (la console les passe « en cours »). Le poste s'identifie par son
+    /// identifiant machine (MachineGuid) et son nom : il ne reçoit jamais les tâches d'un autre poste.
+    /// </summary>
+    public async Task<AgentJobBatch> GetPendingJobsAsync(string machineId, string machineName, CancellationToken ct = default)
+    {
+        using var response = await SendAsync(HttpMethod.Get, "api/agent/jobs", null, RequestTimeout, ct, identity: (machineId, machineName)).ConfigureAwait(false);
+        await EnsureSuccessAsync(response, "Récupération des tâches", ct).ConfigureAwait(false);
+        var json = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+            var known = root.TryGetProperty("known", out var k) && k.ValueKind == JsonValueKind.True;
+            var jobs = new List<AgentJob>();
+            if (root.TryGetProperty("jobs", out var list) && list.ValueKind == JsonValueKind.Array)
+                foreach (var j in list.EnumerateArray())
+                {
+                    if (!j.TryGetProperty("id", out var id) || !id.TryGetInt64(out var idValue)) continue;
+                    jobs.Add(new AgentJob(
+                        idValue,
+                        j.TryGetProperty("type", out var t) ? t.GetString() ?? "" : "",
+                        j.TryGetProperty("dryRun", out var d) && d.ValueKind == JsonValueKind.True,
+                        j.TryGetProperty("createdAt", out var c) && c.ValueKind == JsonValueKind.String && c.TryGetDateTimeOffset(out var cv) ? cv : null,
+                        j.TryGetProperty("createdBy", out var b) && b.ValueKind == JsonValueKind.String ? b.GetString() : null));
+                }
+            return new AgentJobBatch(known, jobs);
+        }
+        catch (JsonException ex)
+        {
+            throw new ServerException($"Récupération des tâches : réponse illisible de la console ({ex.Message}).");
+        }
+    }
+
+    /// <summary>Renvoie le résultat d'une tâche (succès, code de sortie, message, rapport produit, fin du journal).</summary>
+    public async Task SendJobResultAsync(long jobId, string machineId, string machineName, AgentJobResult result, CancellationToken ct = default)
+    {
+        var body = JsonSerializer.Serialize(new
+        {
+            success = result.Success,
+            exitCode = result.ExitCode,
+            message = result.Message,
+            reportId = result.ReportId,
+            log = result.Log,
+        });
+        var content = new StringContent(body, Encoding.UTF8, "application/json");
+        using var response = await SendAsync(HttpMethod.Post, $"api/agent/jobs/{jobId}/result", content, UploadTimeout, ct,
+            identity: (machineId, machineName)).ConfigureAwait(false);
+        await EnsureSuccessAsync(response, $"Envoi du résultat de la tâche {jobId}", ct).ConfigureAwait(false);
+    }
 
     /// <summary>Teste l'adresse puis le jeton ; ne lève pas d'exception pour un échec attendu (le message l'explique).</summary>
     public async Task<ServerStatus> TestAsync(CancellationToken ct = default)
@@ -171,7 +267,7 @@ public sealed class ServerClient
     }
 
     private async Task<HttpResponseMessage> SendAsync(HttpMethod method, string path, HttpContent? content, TimeSpan timeout,
-        CancellationToken ct, bool authenticate = true)
+        CancellationToken ct, bool authenticate = true, (string MachineId, string Name)? identity = null)
     {
         if (authenticate && _token is null)
             throw new ServerException("Aucun jeton d'enrôlement configuré : spokapilote config set ServerToken <jeton>.");
@@ -179,6 +275,11 @@ public sealed class ServerClient
         using var request = new HttpRequestMessage(method, new Uri(BaseUri, path)) { Content = content };
         request.Headers.Accept.ParseAdd("application/json");
         if (authenticate) request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _token);
+        if (identity is { } id)
+        {
+            request.Headers.TryAddWithoutValidation(MachineIdHeader, id.MachineId);
+            request.Headers.TryAddWithoutValidation(MachineNameHeader, id.Name);
+        }
 
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         cts.CancelAfter(timeout);
@@ -218,6 +319,9 @@ public sealed class ServerClient
             HttpStatusCode.NotFound => $"{operation} : {BaseUri} ne semble pas être une console SpokaPilote (réponse 404).",
             HttpStatusCode.RequestEntityTooLarge => $"{operation} : refusé, trop volumineux pour la console{(detail is null ? "" : $" ({detail})")}.",
             HttpStatusCode.BadRequest => $"{operation} : refusé par la console — {detail ?? "requête invalide"}.",
+            HttpStatusCode.TooManyRequests => $"{operation} : trop de tentatives avec un jeton refusé depuis cette adresse ; " +
+                                              "la console bloque temporairement les accès (réessayez dans une minute, vérifiez ServerToken).",
+            HttpStatusCode.Conflict => $"{operation} : {detail ?? "conflit"}.",
             _ => $"{operation} : erreur de la console ({code}){(detail is null ? "" : $" — {detail}")}.",
         }, response.StatusCode);
     }

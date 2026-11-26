@@ -12,8 +12,10 @@
     version: '',
     page: null,          // page affichée : { refresh?, canLeave? }
     timer: null,
-    machines: { search: '', status: 'all', sort: 'status', dir: 'asc' },
+    machines: { search: '', status: 'all', sort: 'status', dir: 'asc', selected: new Set() },
     missing: { search: '' },
+    jobs: { state: 'all', search: '' },
+    jobTypes: null,
   };
 
   // ------------------------------------------------------------------ utilitaires
@@ -24,7 +26,7 @@
   const enc = encodeURIComponent;
   const plural = (n, one, many) => `${n} ${n > 1 ? many : one}`;
   /** « Microsoft Windows 11 Professionnel 25H2 » → « Windows 11 Professionnel 25H2 » (colonnes étroites). */
-  const shortOs = (os) => String(os || '').replace(/^Microsoft\s+/i, '');
+  const shortOs = (os) => String(os || '').replace(/^Microsoft\s+/i, '').replace(/\bProfessionnel\b/, 'Pro');
 
   const dateFmt = new Intl.DateTimeFormat('fr-FR', { dateStyle: 'short', timeStyle: 'short' });
   const timeFmt = new Intl.DateTimeFormat('fr-FR', { timeStyle: 'medium' });
@@ -119,8 +121,205 @@
     if (m.stale) out.push(badge('Non vu', 'bad'));
     if (m.hardwareFaults > 0) out.push(badge('Panne matérielle', 'warn'));
     if (m.rebootRequired) out.push(badge('Redémarrage requis', 'accent'));
+    if (m.dangerousDriver) out.push(badge('Pilote dangereux', 'bad'));
+    if (m.activeJobs > 0) out.push(badge(`${m.activeJobs} tâche${m.activeJobs > 1 ? 's' : ''} en cours`, 'accent'));
     return `<div class="badges">${out.join('')}</div>`;
   }
+
+  // ------------------------------------------------------------------ santé (objet facultatif « health » des rapports)
+
+  const GRADE_KIND = { A: 'ok', B: 'ok', C: 'warn', D: 'bad', E: 'bad' };
+  const scoreKind = (s) => (s >= 80 ? 'ok' : s >= 50 ? 'warn' : 'bad');
+  /** Badge « B · 78/100 » ; vide si le poste ne transmet pas de santé. */
+  function healthBadge(score, grade) {
+    if (score == null && !grade) return '';
+    const kind = grade ? GRADE_KIND[grade] : scoreKind(score);
+    return badge([grade, score != null ? `${score}/100` : ''].filter(Boolean).join(' · '), kind);
+  }
+  const SEVERITIES = { critical: ['Critique', 'bad', 0], warning: ['Avertissement', 'warn', 1], info: ['Information', '', 2] };
+
+  // ------------------------------------------------------------------ tâches à distance
+
+  const JOB_STATES = {
+    pending: ['En attente', 'accent'],
+    running: ['En cours', 'warn'],
+    succeeded: ['Réussie', 'ok'],
+    failed: ['Échouée', 'bad'],
+    expired: ['Expirée', 'bad'],
+    cancelled: ['Annulée', ''],
+  };
+  const jobStateBadge = (s) => { const [label, kind] = JOB_STATES[s] || [s, '']; return badge(label, kind); };
+  const REQUESTER_KEY = 'spokapilote.requestedBy';
+  const getRequester = () => { try { return localStorage.getItem(REQUESTER_KEY) || ''; } catch { return ''; } };
+  const setRequester = (v) => { try { localStorage.setItem(REQUESTER_KEY, v); } catch { /* facultatif */ } };
+
+  /** Types de tâches autorisés (liste blanche du serveur), chargés une fois. */
+  async function jobTypes() {
+    if (!state.jobTypes) state.jobTypes = await api('/job-types');
+    return state.jobTypes;
+  }
+
+  /** État de l'agent du poste (dernière interrogation de la file de tâches). */
+  function agentInfo(m) {
+    if (!m.agentSeen) {
+      return `<span class="warn">Agent jamais vu sur ce poste</span> — les tâches attendront qu'il soit activé
+        (<code>spokapilote agent enable</code>, console administrateur) ou lancé à la main (<code>spokapilote agent run</code>).`;
+    }
+    const late = Date.now() - new Date(m.agentSeen).getTime() > 86400000;
+    return `<span class="${late ? 'warn' : 'ok'}">Agent ${late ? 'silencieux' : 'actif'}</span> — dernier contact ${esc(fmtAgo(m.agentSeen))}
+      (${esc(fmtDate(m.agentSeen))}).`;
+  }
+
+  // ------------------------------------------------------------------ fenêtre de dialogue
+
+  /**
+   * Ouvre la fenêtre modale. body : HTML déjà échappé. Renvoie une promesse résolue avec le formulaire de la fenêtre
+   * (lecture des champs) si l'utilisateur confirme, ou null s'il annule.
+   */
+  function openModal({ title, body, confirmLabel = 'Confirmer', danger = false, cancelLabel = 'Annuler', wide = false }) {
+    const dialog = $('#modal');
+    $('#modal-title').textContent = title;
+    $('#modal-body').innerHTML = body;
+    const ok = $('#modal-ok');
+    ok.textContent = confirmLabel;
+    ok.hidden = confirmLabel === null;
+    ok.classList.toggle('btn-danger-solid', danger);
+    $('#modal-cancel').textContent = cancelLabel;
+    dialog.classList.toggle('modal-wide', wide);
+    return new Promise((resolve) => {
+      const form = $('#modal-form');
+      const done = (value) => {
+        form.removeEventListener('submit', onSubmit);
+        $('#modal-cancel').removeEventListener('click', onCancel);
+        dialog.removeEventListener('cancel', onCancel);
+        if (dialog.open) dialog.close();
+        resolve(value);
+      };
+      const onSubmit = (e) => { e.preventDefault(); done(form); };
+      const onCancel = (e) => { e.preventDefault(); done(null); };
+      form.addEventListener('submit', onSubmit);
+      $('#modal-cancel').addEventListener('click', onCancel);
+      dialog.addEventListener('cancel', onCancel);
+      dialog.showModal();
+      (dialog.querySelector('input:not([type=checkbox]), select') || ok).focus();
+    });
+  }
+
+  /**
+   * Demande confirmation puis crée la tâche (un poste, une sélection ou « tous les postes à traiter »).
+   * target : { machines: [...] } ou { target: 'to-process', count }.
+   */
+  async function requestJob(type, target) {
+    const count = target.machines ? target.machines.length : target.count;
+    const who = target.machines
+      ? (count === 1 ? `le poste <b>${esc(target.machines[0])}</b>` : `<b>${esc(count)} postes</b> sélectionnés`)
+      : `<b>tous les postes à traiter</b> (${esc(count)} actuellement)`;
+    const form = await openModal({
+      title: type.label,
+      confirmLabel: count > 1 || !target.machines ? `Lancer sur ${count} postes` : 'Lancer la tâche',
+      danger: type.changesSystem,
+      body: `
+        <p>${esc(type.description)}</p>
+        <p>Cible : ${who}.</p>
+        ${type.changesSystem ? `<div class="notice notice-warn">Cette action <b>modifie le poste</b>. Elle sera exécutée par l'agent
+          SpokaPilote du poste (compte SYSTEM) à son prochain passage, sans intervention de l'utilisateur.</div>` : ''}
+        ${type.supportsDryRun ? `<label class="check"><input type="checkbox" name="dryRun"> Simulation : montrer ce qui serait fait,
+          sans rien modifier</label>` : ''}
+        <label class="field">Demandée par <span class="muted">(facultatif, visible dans l'historique)</span>
+          <input type="text" name="requestedBy" maxlength="60" value="${esc(getRequester())}" placeholder="Votre nom"></label>
+        <p class="hint">L'agent interroge la console toutes les 15 minutes par défaut. Une tâche non récupérée expire au bout de 7 jours.</p>`,
+    });
+    if (!form) return null;
+    const requestedBy = form.elements.requestedBy.value.trim();
+    setRequester(requestedBy);
+    try {
+      const res = await api('/jobs', {
+        method: 'POST',
+        body: JSON.stringify({
+          type: type.id,
+          machines: target.machines,
+          target: target.machines ? 'selection' : target.target,
+          dryRun: !!(form.elements.dryRun && form.elements.dryRun.checked),
+          requestedBy,
+        }),
+      });
+      const created = res.created.length;
+      const skipped = res.skipped.length;
+      toast(created === 0 ? `Aucune tâche créée : ${res.skipped[0]?.reason || 'rien à faire'}`
+        : `${plural(created, 'tâche créée', 'tâches créées')}${skipped ? ` (${skipped} ignorée${skipped > 1 ? 's' : ''} : déjà en attente)` : ''}. `
+          + 'Elle sera exécutée au prochain passage de l\'agent.', created === 0);
+      return res;
+    } catch (e) {
+      if (e.status !== 401) toast(e.message, true);
+      return null;
+    }
+  }
+
+  /** Détail d'une tâche (journal d'exécution, lien vers le rapport produit). */
+  async function showJob(id) {
+    const j = await api(`/jobs/${enc(id)}`);
+    const rows = [
+      ['Poste', machineLink(j.machine)], ['Action', esc(j.typeLabel) + (j.dryRun ? ` ${badge('simulation', 'accent')}` : '')],
+      ['État', jobStateBadge(j.state)], ['Demandée par', esc(j.createdBy)], ['Créée le', esc(fmtDate(j.createdAt))],
+      ['Démarrée le', esc(fmtDate(j.startedAt))], ['Terminée le', esc(fmtDate(j.finishedAt))],
+      ['Code de sortie', esc(j.exitCode ?? '—')],
+      ['Rapport produit', j.reportId ? `<a href="#/postes/${enc(j.machine)}/rapport/${enc(j.reportId)}">Voir le rapport</a>` : '—'],
+    ];
+    await openModal({
+      title: `Tâche n° ${j.id}`,
+      confirmLabel: null,
+      cancelLabel: 'Fermer',
+      wide: true,
+      body: `<dl class="facts">${rows.map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${v}</dd></div>`).join('')}</dl>
+        ${j.message ? `<div class="notice section-tight">${esc(j.message)}</div>` : ''}
+        <h3 class="section-tight">Journal d'exécution sur le poste</h3>
+        ${j.log ? `<pre class="log">${esc(j.log)}</pre>` : '<p class="muted">Aucun journal (tâche non exécutée ou poste antérieur à la 3.0).</p>'}`,
+    });
+  }
+
+  /** Tableau de tâches (fiche d'un poste, vue Tâches). */
+  function jobsTable(jobs, { showMachine = true, emptyText = 'Aucune tâche.' } = {}) {
+    if (jobs.length === 0) return `<div class="card empty">${esc(emptyText)}</div>`;
+    return `<div class="table-wrap"><table>
+      <thead><tr><th class="num">N°</th><th>Créée</th>${showMachine ? '<th>Poste</th>' : ''}<th>Action</th><th>État</th>
+        <th>Demandée par</th><th>Résultat</th><th></th></tr></thead>
+      <tbody>${jobs.map((j) => `
+        <tr>
+          <td class="num">${esc(j.id)}</td>
+          <td class="nowrap">${esc(fmtDate(j.createdAt))}<div class="cell-sub">${esc(fmtAgo(j.createdAt))}</div></td>
+          ${showMachine ? `<td class="nowrap cell-title">${machineLink(j.machine)}</td>` : ''}
+          <td>${esc(j.typeLabel)}${j.dryRun ? ` ${badge('simulation', 'accent')}` : ''}</td>
+          <td>${jobStateBadge(j.state)}${j.finishedAt ? `<div class="cell-sub">${esc(fmtAgo(j.finishedAt))}</div>`
+            : j.startedAt ? `<div class="cell-sub">depuis ${esc(fmtAgo(j.startedAt).replace('il y a ', ''))}</div>` : ''}</td>
+          <td class="small">${esc(j.createdBy)}</td>
+          <td class="wrap small">${esc(j.message || '')}${j.reportId ? ` <a href="#/postes/${enc(j.machine)}/rapport/${enc(j.reportId)}">rapport</a>` : ''}</td>
+          <td class="nowrap"><button class="btn btn-sm btn-ghost" type="button" data-job-detail="${esc(j.id)}">Détail</button>
+            ${j.state === 'pending' ? `<button class="btn btn-sm btn-danger" type="button" data-job-cancel="${esc(j.id)}">Annuler</button>` : ''}</td>
+        </tr>`).join('')}</tbody></table></div>`;
+  }
+
+  /** Boutons « Détail » et « Annuler » des tableaux de tâches (délégation). */
+  document.addEventListener('click', async (e) => {
+    const detail = e.target.closest('[data-job-detail]');
+    if (detail) {
+      try { await showJob(detail.dataset.jobDetail); } catch (err) { if (err.status !== 401) toast(err.message, true); }
+      return;
+    }
+    const cancel = e.target.closest('[data-job-cancel]');
+    if (cancel) {
+      const form = await openModal({
+        title: `Annuler la tâche n° ${cancel.dataset.jobCancel} ?`,
+        body: '<p>La tâche est encore en attente : elle ne sera pas exécutée par le poste.</p>',
+        confirmLabel: 'Annuler la tâche', cancelLabel: 'Garder', danger: true,
+      });
+      if (!form) return;
+      try {
+        await api(`/jobs/${enc(cancel.dataset.jobCancel)}/cancel`, { method: 'POST' });
+        toast('Tâche annulée.');
+        if (state.page?.refresh) await state.page.refresh();
+      } catch (err) { if (err.status !== 401) toast(err.message, true); }
+    }
+  });
 
   // ------------------------------------------------------------------ connexion
 
@@ -186,6 +385,8 @@
     { re: /^\/politique$/, nav: 'policy', page: () => documentPage(DOCUMENTS.policy) },
     { re: /^\/imprimantes$/, nav: 'printers', page: () => documentPage(DOCUMENTS.printers) },
     { re: /^\/enrolement$/, nav: 'enroll', page: enrollPage },
+    { re: /^\/taches$/, nav: 'jobs', page: jobsPage },
+    { re: /^\/parametres$/, nav: 'settings', page: settingsPage },
   ];
 
   let currentHash = location.hash;
@@ -270,6 +471,12 @@
           ${kpi('Pannes matérielles', f.hardwareFaults, { kind: f.hardwareFaults ? 'warn' : '', href: '#/postes?statut=hardware', sub: 'aucun pilote ne peut les corriger' })}
           ${kpi('Pilotes proposés', f.proposed, { sub: f.blocked ? `${f.blocked} bloqué(s) par la politique` : 'aucun bloqué' })}
           ${kpi('Échecs d\'installation', f.failed, { kind: f.failed ? 'bad' : '', href: '#/postes?statut=failed', sub: `${f.installed} pilote(s) installé(s)` })}
+          ${f.averageHealth != null ? kpi('Santé moyenne', `${String(f.averageHealth).replace('.', ',')}/100`,
+            { kind: scoreKind(f.averageHealth), href: '#/postes?tri=health', sub: `${plural(f.healthMachines, 'poste évalué', 'postes évalués')}` }) : ''}
+          ${f.dangerousDrivers > 0 ? kpi('Pilotes dangereux', f.dangerousDrivers, { kind: 'bad', href: '#/postes?statut=dangerous', sub: 'postes concernés' }) : ''}
+          ${kpi('Tâches à distance', f.pendingJobs + f.runningJobs, { href: '#/taches?etat=active',
+            sub: `${f.pendingJobs} en attente · ${f.runningJobs} en cours` })}
+          ${f.failedJobs24h > 0 ? kpi('Tâches échouées (24 h)', f.failedJobs24h, { kind: 'bad', href: '#/taches?etat=failed', sub: 'voir le détail et le journal' }) : ''}
         </div>
 
         <section class="section">
@@ -335,6 +542,9 @@
     hardware: ['Avec panne matérielle', (m) => m.hardwareFaults > 0],
     failed: ['Avec échec d\'installation', (m) => m.failed > 0],
     blocked: ['Avec pilote bloqué', (m) => m.blocked > 0],
+    dangerous: ['Avec pilote dangereux', (m) => m.dangerousDriver],
+    jobs: ['Avec tâche à distance en cours', (m) => m.activeJobs > 0],
+    selected: ['Sélectionnés', (m) => state.machines.selected.has(m.name)],
   };
 
   const SORTS = {
@@ -347,15 +557,20 @@
     proposed: (m) => m.proposed,
     failed: (m) => m.failed,
     lastReport: (m) => new Date(m.lastReport).getTime(),
+    health: (m) => (m.healthScore ?? 101),
   };
 
   async function machinesPage(view, _params, query) {
     const s = state.machines;
     if (query.get('statut') && STATUS_FILTERS[query.get('statut')]) s.status = query.get('statut');
+    if (query.get('tri') && SORTS[query.get('tri')]) { s.sort = query.get('tri'); s.dir = 'asc'; }
     let rows = await api('/machines');
+    const types = await jobTypes();
+    const hasHealth = () => rows.some((m) => m.healthScore != null || m.healthGrade);
 
     view.innerHTML = `
-      <div class="page-head"><div><h1>Postes</h1><p class="muted">Dernier rapport reçu de chaque poste enrôlé.</p></div></div>
+      <div class="page-head"><div><h1>Postes</h1><p class="muted">Dernier rapport reçu de chaque poste enrôlé.
+        Cochez des postes pour leur envoyer une action à distance.</p></div></div>
       <div class="toolbar">
         <input id="m-search" type="search" placeholder="Rechercher un poste, un modèle, un n° de série…" aria-label="Rechercher" value="${esc(s.search)}">
         <select id="m-status" aria-label="Filtrer par état">
@@ -363,25 +578,54 @@
         </select>
         <span id="m-count" class="muted small count"></span>
       </div>
-      <div class="table-wrap"><table>
-        <thead><tr>
+      <div class="bulkbar card">
+        <span id="m-selected" class="small"></span>
+        <select id="m-action" aria-label="Action à distance">
+          ${types.map((t) => `<option value="${esc(t.id)}">${esc(t.label)}</option>`).join('')}
+        </select>
+        <button id="m-run-selection" class="btn btn-primary btn-sm" type="button">Lancer sur la sélection</button>
+        <button id="m-run-todo" class="btn btn-sm" type="button" title="Tous les postes actuellement « à traiter », sélectionnés ou non">Lancer sur tous les postes à traiter</button>
+        <button id="m-clear" class="btn btn-ghost btn-sm" type="button">Vider la sélection</button>
+      </div>
+      <div class="table-wrap"><table class="table-compact">
+        <thead id="m-head"></thead>
+        <tbody id="m-body"></tbody>
+      </table></div>`;
+
+    let visibleNames = [];
+    function head() {
+      $('#m-head').innerHTML = `<tr>
+          <th class="check-col"><input id="m-all" type="checkbox" aria-label="Sélectionner les postes affichés"></th>
           <th class="sortable" data-sort="name">Poste</th>
           <th class="sortable" data-sort="model">Modèle</th>
           <th class="sortable" data-sort="os">Windows</th>
           <th class="sortable" data-sort="status">État</th>
+          ${hasHealth() ? '<th class="sortable" data-sort="health">Santé</th>' : ''}
           <th class="sortable num" data-sort="driverProblems">Pilotes en erreur</th>
           <th class="sortable num" data-sort="unresolved">Sans solution</th>
           <th class="sortable num" data-sort="proposed">Proposés</th>
           <th class="sortable num" data-sort="failed">Échecs</th>
           <th class="sortable" data-sort="lastReport">Dernier rapport</th>
-        </tr></thead>
-        <tbody id="m-body"></tbody>
-      </table></div>`;
+        </tr>`;
+      $$('th.sortable', view).forEach((th) => th.addEventListener('click', () => {
+        if (s.sort === th.dataset.sort) s.dir = s.dir === 'asc' ? 'desc' : 'asc';
+        else { s.sort = th.dataset.sort; s.dir = ['name', 'model', 'os', 'status', 'health'].includes(s.sort) ? 'asc' : 'desc'; }
+        draw();
+      }));
+      $('#m-all').addEventListener('change', (e) => {
+        visibleNames.forEach((n) => (e.target.checked ? s.selected.add(n) : s.selected.delete(n)));
+        draw();
+      });
+    }
 
     function draw() {
+      // La sélection ne garde que des postes encore connus.
+      const known = new Set(rows.map((m) => m.name));
+      [...s.selected].forEach((n) => { if (!known.has(n)) s.selected.delete(n); });
       const needle = s.search.trim().toLowerCase();
       const filter = STATUS_FILTERS[s.status][1];
       const key = SORTS[s.sort];
+      const health = hasHealth();
       const list = rows
         .filter(filter)
         .filter((m) => !needle || [m.name, m.model, m.serialNumber, m.os].some((v) => (v || '').toLowerCase().includes(needle)))
@@ -389,33 +633,58 @@
           const x = key(a), y = key(b);
           return (x < y ? -1 : x > y ? 1 : a.name.localeCompare(b.name)) * (s.dir === 'asc' ? 1 : -1);
         });
+      visibleNames = list.map((m) => m.name);
       $$('th.sortable', view).forEach((th) => {
         th.classList.toggle('sorted-asc', th.dataset.sort === s.sort && s.dir === 'asc');
         th.classList.toggle('sorted-desc', th.dataset.sort === s.sort && s.dir === 'desc');
       });
+      $('#m-all').checked = list.length > 0 && list.every((m) => s.selected.has(m.name));
       $('#m-count').textContent = `${list.length} / ${plural(rows.length, 'poste', 'postes')}`;
+      const todo = rows.filter((m) => !m.healthy).length;
+      $('#m-selected').textContent = s.selected.size ? `${plural(s.selected.size, 'poste sélectionné', 'postes sélectionnés')}` : 'Aucun poste sélectionné';
+      $('#m-run-selection').disabled = s.selected.size === 0;
+      $('#m-clear').disabled = s.selected.size === 0;
+      $('#m-run-todo').disabled = todo === 0;
+      $('#m-run-todo').textContent = `Lancer sur tous les postes à traiter (${todo})`;
+      const cols = health ? 11 : 10;
       $('#m-body').innerHTML = list.length === 0
-        ? `<tr><td colspan="9" class="empty">${rows.length === 0 ? 'Aucun poste enrôlé pour l\'instant (voir <a href="#/enrolement">Enrôlement</a>).' : 'Aucun poste ne correspond à ces critères.'}</td></tr>`
+        ? `<tr><td colspan="${cols}" class="empty">${rows.length === 0 ? 'Aucun poste enrôlé pour l\'instant (voir <a href="#/enrolement">Enrôlement</a>).' : 'Aucun poste ne correspond à ces critères.'}</td></tr>`
         : list.map((m) => `
-          <tr class="clickable" data-href="#/postes/${enc(m.name)}">
+          <tr class="clickable${s.selected.has(m.name) ? ' is-selected' : ''}" data-href="#/postes/${enc(m.name)}">
+            <td class="check-col"><input type="checkbox" data-select="${esc(m.name)}" aria-label="Sélectionner ${esc(m.name)}"${s.selected.has(m.name) ? ' checked' : ''}></td>
             <td class="nowrap"><div class="cell-title">${machineLink(m.name)}</div>${m.serialNumber ? `<div class="cell-sub">S/N ${esc(m.serialNumber)}</div>` : ''}</td>
             <td class="wrap">${esc(m.model)}</td>
             <td>${esc(shortOs(m.os))}<div class="cell-sub">${esc(m.osVersion || '')} ${esc(m.architecture || '')}</div></td>
             <td>${machineBadges(m)}</td>
+            ${health ? `<td>${healthBadge(m.healthScore, m.healthGrade) || '<span class="muted">—</span>'}${m.healthCritical ? `<div class="cell-sub bad">${esc(plural(m.healthCritical, 'constat critique', 'constats critiques'))}</div>` : ''}</td>` : ''}
             ${num(m.driverProblems, 'warn')}${num(m.unresolved, 'bad')}${num(m.proposed)}${num(m.failed, 'bad')}
             <td class="nowrap">${esc(fmtDate(m.lastReport))}<div class="cell-sub">${esc(fmtAgo(m.lastReport))}</div></td>
           </tr>`).join('');
+      $$('[data-select]', view).forEach((box) => box.addEventListener('change', () => {
+        if (box.checked) s.selected.add(box.dataset.select); else s.selected.delete(box.dataset.select);
+        draw();
+      }));
     }
 
+    const selectedType = () => types.find((t) => t.id === $('#m-action').value);
     $('#m-search').addEventListener('input', (e) => { s.search = e.target.value; draw(); });
     $('#m-status').addEventListener('change', (e) => { s.status = e.target.value; draw(); });
-    $$('th.sortable', view).forEach((th) => th.addEventListener('click', () => {
-      if (s.sort === th.dataset.sort) s.dir = s.dir === 'asc' ? 'desc' : 'asc';
-      else { s.sort = th.dataset.sort; s.dir = ['name', 'model', 'os', 'status'].includes(s.sort) ? 'asc' : 'desc'; }
-      draw();
-    }));
+    $('#m-clear').addEventListener('click', () => { s.selected.clear(); draw(); });
+    $('#m-run-selection').addEventListener('click', async () => {
+      if (await requestJob(selectedType(), { machines: [...s.selected] })) { s.selected.clear(); await refresh(); }
+    });
+    $('#m-run-todo').addEventListener('click', async () => {
+      if (await requestJob(selectedType(), { target: 'to-process', count: rows.filter((m) => !m.healthy).length })) await refresh();
+    });
+    let healthShown = hasHealth();
+    head();
     draw();
-    return { refresh: async () => { rows = await api('/machines'); draw(); } };
+    async function refresh() {
+      rows = await api('/machines');
+      if (hasHealth() !== healthShown) { healthShown = hasHealth(); head(); }
+      draw();
+    }
+    return { refresh };
   }
 
   // ------------------------------------------------------------------ détail d'un poste
@@ -435,19 +704,55 @@
     return badge('Aucun pilote trouvé', 'bad');
   }
 
-  async function machinePage(view, [name, historyId]) {
+  function healthSection(h) {
+    if (!h) return '';
+    const findings = [...(h.findings || [])].sort((a, b) => (SEVERITIES[a.severity]?.[2] ?? 2) - (SEVERITIES[b.severity]?.[2] ?? 2));
+    const critical = findings.filter((f) => f.severity === 'critical').length;
+    const warnings = findings.filter((f) => f.severity === 'warning').length;
+    return `
+      <section class="section">
+        <div class="section-head"><h2>Santé du poste</h2><span class="muted small">${esc(plural(findings.length, 'constat', 'constats'))}</span></div>
+        <div class="card card-pad health-card">
+          <div class="health-score is-${esc(h.grade ? GRADE_KIND[h.grade] : scoreKind(h.score ?? 0))}">
+            <div class="health-grade">${esc(h.grade || '—')}</div>
+            <div class="muted small">${h.score != null ? `${esc(h.score)} / 100` : 'score inconnu'}</div>
+          </div>
+          <div class="health-summary">
+            <div class="badges">${critical ? badge(plural(critical, 'critique', 'critiques'), 'bad') : ''}${warnings ? badge(plural(warnings, 'avertissement', 'avertissements'), 'warn') : ''}
+              ${critical + warnings === 0 ? badge('Aucun problème signalé', 'ok') : ''}</div>
+            ${findings.some((f) => f.isDangerousDriver) ? '<p class="bad"><b>Pilote dangereux détecté</b> : un pilote connu pour provoquer des pannes (écrans bleus) est présent.</p>' : ''}
+          </div>
+        </div>
+        ${findings.length === 0 ? '' : `
+        <div class="table-wrap section-tight"><table>
+          <thead><tr><th>Gravité</th><th>Constat</th><th>Détail</th><th>Périphérique</th></tr></thead>
+          <tbody>${findings.map((f) => {
+            const [label, kind] = SEVERITIES[f.severity] || SEVERITIES.info;
+            return `<tr><td>${badge(label, kind)}</td>
+              <td class="wrap"><div class="cell-title">${esc(f.title)}</div><code class="cell-sub">${esc(f.code)}</code></td>
+              <td class="wrap small">${esc(f.detail || '')}</td><td class="wrap"><code class="small">${esc(f.deviceId || '')}</code></td></tr>`;
+          }).join('')}</tbody>
+        </table></div>`}
+      </section>`;
+  }
+
+  async function machinePage(view, [name, requestedHistoryId]) {
     const data = await api(`/machines/${enc(name)}`);
+    const latestId = data.history.length ? data.history[0].id : null;
+    // Lien vers le rapport le plus récent (depuis une tâche) : c'est l'état actuel, pas un rapport antérieur.
+    const historyId = requestedHistoryId && String(requestedHistoryId) !== String(latestId) ? requestedHistoryId : undefined;
     const historic = historyId ? await api(`/machines/${enc(name)}/reports/${enc(historyId)}`) : null;
     const r = historic || data.report;
     const m = data.machine;
     const sys = r.system;
-    const latestId = data.history.length ? data.history[0].id : null;
+    const types = await jobTypes();
 
     const facts = [
       ['Constructeur', sys.manufacturer], ['Modèle', sys.model], ['Nom commercial', sys.friendlyModel],
       ['N° de série', sys.serialNumber], ['BIOS', sys.biosVersion],
       ['Windows', `${sys.osCaption || ''} ${sys.osDisplayVersion || ''}`.trim()], ['Version', sys.osVersion], ['Architecture', sys.architecture],
       ['SpokaPilote', r.appVersion], ['Rapport du', fmtDate(r.timestamp)], ['Dernier contact', `${fmtDate(m.lastSeen)} (${fmtAgo(m.lastSeen)})`],
+      ['Identifiant machine', m.machineId],
       ['Durée de l\'analyse', r.durationSeconds ? `${Math.round(r.durationSeconds)} s` : null],
       ['Sources interrogées', (r.sources || []).join(', ')],
     ].filter(([, v]) => v);
@@ -460,7 +765,8 @@
         <div>
           <h1>${esc(m.name)}</h1>
           <p class="muted">${esc(m.model)}${m.serialNumber ? ` · S/N ${esc(m.serialNumber)}` : ''}</p>
-          <div class="badges section-tight">${machineBadges({ ...m, healthy: r.healthy, hardwareFaults: r.hardwareFaults, rebootRequired: r.rebootRequired })}</div>
+          <div class="badges section-tight">${machineBadges({ ...m, healthy: r.healthy, hardwareFaults: r.hardwareFaults, rebootRequired: r.rebootRequired })}
+            ${r.health ? healthBadge(r.health.score, r.health.grade) : ''}</div>
         </div>
         <div class="actions">
           <button id="d-raw" class="btn" type="button" title="Rapport complet du dernier envoi, utilisable avec « spokapilote pack »">Rapport complet (JSON)</button>
@@ -477,6 +783,20 @@
         ${kpi(r.installation ? 'Installés / échecs' : 'Installation', r.installation ? `${r.installed} / ${r.failed}` : '—',
           { kind: r.failed ? 'bad' : '', sub: r.installation ? '' : 'analyse seule' })}
       </div>
+
+      ${healthSection(r.health)}
+
+      <section class="section">
+        <div class="section-head"><h2>Actions à distance</h2>
+          <span class="small">${agentInfo(m)}</span></div>
+        <div class="card card-pad">
+          <div class="actions">${types.map((t) => `<button class="btn${t.changesSystem ? '' : ' btn-primary'}" type="button" data-run-job="${esc(t.id)}"
+            title="${esc(t.description)}">${esc(t.label)}</button>`).join('')}</div>
+          <p class="hint">Chaque action est confirmée avant d'être envoyée, puis exécutée par l'agent du poste à son prochain passage.
+            Liste fermée : aucune commande ni script libre ne peut être envoyé.</p>
+        </div>
+        <div id="d-jobs" class="section-tight">${jobsTable(data.jobs, { showMachine: false, emptyText: 'Aucune tâche à distance pour ce poste.' })}</div>
+      </section>
 
       <section class="section">
         <div class="section-head"><h2>Système</h2></div>
@@ -561,7 +881,15 @@
         location.hash = '#/postes';
       } catch (e) { if (e.status !== 401) toast(e.message, true); }
     });
-    return {};
+    async function refreshJobs() {
+      const fresh = await api(`/machines/${enc(name)}`);
+      $('#d-jobs').innerHTML = jobsTable(fresh.jobs, { showMachine: false, emptyText: 'Aucune tâche à distance pour ce poste.' });
+    }
+    $$('[data-run-job]', view).forEach((b) => b.addEventListener('click', async () => {
+      const type = types.find((t) => t.id === b.dataset.runJob);
+      if (await requestJob(type, { machines: [m.name] })) await refreshJobs();
+    }));
+    return { refresh: refreshJobs };
   }
 
   // ------------------------------------------------------------------ matériel sans pilote
@@ -787,6 +1115,8 @@ $exe = "$env:ProgramFiles\\SpokaPilote\\spokapilote.exe"
 & $exe config set ServerUrl "${base}"
 & $exe config set ServerToken "${token}"
 & $exe server status
+& $exe scan --quiet                 # premier rapport : le poste apparaît dans la console
+& $exe agent enable --every 15      # actions à distance : la console est interrogée toutes les 15 min
 # Analyse hebdomadaire, rapport envoyé automatiquement à la console
 schtasks /Create /F /TN "SpokaPilote\\Analyse" /SC WEEKLY /D MON /ST 09:00 /RU SYSTEM /TR "\\"$exe\\" scan --quiet"`;
 
@@ -828,6 +1158,12 @@ schtasks /Create /F /TN "SpokaPilote\\Analyse" /SC WEEKLY /D MON /ST 09:00 /RU S
           ${codeBlock('spokapilote scan')}
         </div>
         <div class="card step">
+          <h2>Activer les actions à distance</h2>
+          <p>Crée la tâche planifiée <code>\\SpokaPilote\\Agent</code> (compte SYSTEM) qui récupère les actions demandées depuis cette
+            console (analyse, installation, imprimantes, annulation, mise à jour). Console <b>administrateur</b> :</p>
+          ${codeBlock('spokapilote agent enable --every 15')}
+        </div>
+        <div class="card step">
           <h2>Déployer sur le parc</h2>
           <p>Script à distribuer par Intune (script de plateforme), RMM ou GPO de démarrage, avec une analyse hebdomadaire planifiée :</p>
           <div id="c-script">${codeBlock(script(masked))}</div>
@@ -851,6 +1187,230 @@ schtasks /Create /F /TN "SpokaPilote\\Analyse" /SC WEEKLY /D MON /ST 09:00 /RU S
     };
     $('#t-show').addEventListener('click', () => { shown = !shown; renderSecrets(); });
     renderSecrets();
+    return {};
+  }
+
+  // ------------------------------------------------------------------ tâches à distance
+
+  const JOB_FILTERS = {
+    all: 'Toutes les tâches',
+    active: 'En attente ou en cours',
+    pending: 'En attente',
+    running: 'En cours',
+    finished: 'Terminées',
+    succeeded: 'Réussies',
+    failed: 'Échouées',
+    expired: 'Expirées',
+    cancelled: 'Annulées',
+  };
+
+  async function jobsPage(view, _params, query) {
+    const s = state.jobs;
+    if (query.get('etat') && JOB_FILTERS[query.get('etat')]) s.state = query.get('etat');
+    const load = () => api(`/jobs?state=${enc(s.state)}&limit=500`);
+    let jobs = await load();
+
+    view.innerHTML = `
+      <div class="page-head"><div><h1>Tâches à distance</h1>
+        <p class="muted">Actions demandées aux postes depuis la console. Chaque poste les récupère à son prochain passage
+          (<code>spokapilote agent enable</code> : toutes les 15 minutes par défaut) et renvoie le résultat et son rapport.</p></div></div>
+      <div class="toolbar">
+        <input id="j-search" type="search" placeholder="Rechercher un poste, une action, un message…" aria-label="Rechercher" value="${esc(s.search)}">
+        <select id="j-state" aria-label="Filtrer par état">
+          ${Object.entries(JOB_FILTERS).map(([k, label]) => `<option value="${k}"${k === s.state ? ' selected' : ''}>${esc(label)}</option>`).join('')}
+        </select>
+        <span id="j-count" class="muted small count"></span>
+      </div>
+      <div id="j-table"></div>
+      <p class="muted small">Une tâche jamais récupérée expire au bout de 7 jours ; une tâche « en cours » sans résultat après 6 heures
+        est déclarée expirée (poste éteint ou redémarré pendant l'exécution). Les tâches terminées sont conservées 90 jours.</p>`;
+
+    function draw() {
+      const needle = s.search.trim().toLowerCase();
+      const list = jobs.filter((j) => !needle || [j.machine, j.typeLabel, j.type, j.message, j.createdBy].some((v) => (v || '').toLowerCase().includes(needle)));
+      $('#j-count').textContent = `${list.length} / ${plural(jobs.length, 'tâche', 'tâches')}`;
+      $('#j-table').innerHTML = jobsTable(list, {
+        emptyText: jobs.length === 0 ? 'Aucune tâche. Lancez une action depuis la fiche d\'un poste ou la liste des postes.' : 'Aucune tâche ne correspond.',
+      });
+    }
+    $('#j-search').addEventListener('input', (e) => { s.search = e.target.value; draw(); });
+    $('#j-state').addEventListener('change', async (e) => { s.state = e.target.value; jobs = await load(); draw(); });
+    draw();
+    return { refresh: async () => { jobs = await load(); draw(); } };
+  }
+
+  // ------------------------------------------------------------------ paramètres (alertes)
+
+  const TRIGGERS = [
+    ['machineToProcess', 'Un poste devient « à traiter »', 'pilote en erreur ou échec d\'installation, alors qu\'il était sain'],
+    ['installFailed', 'Échec d\'installation', 'au moins un pilote n\'a pas pu être installé'],
+    ['jobFailed', 'Tâche à distance échouée', 'ou restée sans résultat'],
+    ['machineStale', 'Poste non vu', 'aucun rapport depuis le délai ci-dessous ; une alerte par période d\'absence'],
+    ['dangerousDriver', 'Pilote dangereux détecté', 'constat critique « known-bad-driver » dans la santé du poste'],
+  ];
+  const ALERT_STATUS = { 'envoyée': 'ok', partielle: 'warn', 'échec': 'bad', 'aucun canal': '' };
+
+  async function settingsPage(view) {
+    let cfg = await api('/settings/alerts');
+    let events = await api('/alerts/events');
+    const isLocked = (field) => cfg.locked.includes(field);
+    const lockNote = '<span class="lock" title="Défini par variable d\'environnement sur le serveur : modifiable uniquement là">variable d\'environnement</span>';
+    const input = (id, field, value, { type = 'text', placeholder = '', attrs = '' } = {}) =>
+      `<input id="${id}" type="${type}" value="${esc(value ?? '')}" placeholder="${esc(placeholder)}" ${isLocked(field) ? 'disabled' : ''} ${attrs}>`;
+    const label = (text, field, forId) => `<label for="${forId}">${esc(text)} ${isLocked(field) ? lockNote : ''}</label>`;
+
+    function webhookRow(w) {
+      return `<div class="webhook${w.locked ? ' is-locked' : ''}" data-id="${esc(w.id || '')}">
+        <input type="text" class="w-name" value="${esc(w.name)}" placeholder="Nom (ex. Équipe IT)" aria-label="Nom" ${w.locked ? 'disabled' : ''}>
+        <select class="w-format" aria-label="Plateforme" ${w.locked ? 'disabled' : ''}>
+          ${[['teams', 'Microsoft Teams'], ['discord', 'Discord'], ['slack', 'Slack'], ['json', 'JSON générique']]
+            .map(([v, l]) => `<option value="${v}"${v === w.format ? ' selected' : ''}>${l}</option>`).join('')}
+        </select>
+        <input type="url" class="w-url" value="" placeholder="${esc(w.url ? `${w.url} (enregistrée — laisser vide pour la garder)` : 'https://…')}" aria-label="Adresse" ${w.locked ? 'disabled' : ''}>
+        <label class="check"><input type="checkbox" class="w-enabled"${w.enabled ? ' checked' : ''} ${w.locked ? 'disabled' : ''}> actif</label>
+        ${w.locked ? lockNote : '<button class="btn btn-sm btn-danger w-remove" type="button">Retirer</button>'}
+        ${w.insecure ? '<div class="small warn w-note">Adresse en HTTP : le message (et le jeton de l\'adresse) circulent en clair.</div>' : ''}
+      </div>`;
+    }
+
+    function render() {
+      const smtp = cfg.smtp;
+      view.innerHTML = `
+        <div class="page-head"><div><h1>Paramètres</h1>
+          <p class="muted">Alertes envoyées par la console : e-mail et webhooks (Microsoft Teams, Discord, Slack, JSON générique).
+            Une même alerte n'est jamais envoyée deux fois pour le même poste en moins de 24 heures.</p></div>
+          <div class="actions"><button id="s-test" class="btn" type="button">Envoyer une alerte de test</button>
+            <button id="s-save" class="btn btn-primary" type="button">Enregistrer</button></div>
+        </div>
+        ${cfg.hasChannel ? '' : '<div class="notice notice-warn">Aucun canal configuré : aucune alerte n\'est envoyée. Renseignez un serveur e-mail ou un webhook.</div>'}
+        <div id="s-test-result"></div>
+
+        <section class="section">
+          <div class="section-head"><h2>E-mail (SMTP)</h2>${smtp.configured ? badge('configuré', 'ok') : badge('non configuré')}</div>
+          <div class="card card-pad form-grid">
+            <div>${label('Serveur SMTP', 'smtp.host', 's-host')}${input('s-host', 'smtp.host', smtp.host, { placeholder: 'smtp.office365.com' })}</div>
+            <div>${label('Port', 'smtp.port', 's-port')}${input('s-port', 'smtp.port', smtp.port, { type: 'number', attrs: 'min="1" max="65535"' })}</div>
+            <div>${label('Sécurité', 'smtp.security', 's-security')}
+              <select id="s-security" ${isLocked('smtp.security') ? 'disabled' : ''}>
+                ${[['starttls', 'STARTTLS (port 587, recommandé)'], ['ssl', 'SSL/TLS implicite (port 465)'], ['none', 'Aucune (relais interne, port 25)']]
+                  .map(([v, l]) => `<option value="${v}"${v === smtp.security ? ' selected' : ''}>${l}</option>`).join('')}
+              </select></div>
+            <div>${label('Identifiant (facultatif)', 'smtp.username', 's-user')}${input('s-user', 'smtp.username', smtp.username, { attrs: 'autocomplete="off"' })}</div>
+            <div>${label('Mot de passe', 'smtp.password', 's-pass')}${input('s-pass', 'smtp.password', '', { type: 'password',
+              placeholder: smtp.passwordSet ? '•••••••• (enregistré — laisser vide pour le garder)' : '', attrs: 'autocomplete="new-password"' })}
+              ${smtp.passwordSet && !isLocked('smtp.password') ? '<label class="check small"><input id="s-pass-clear" type="checkbox"> effacer le mot de passe enregistré</label>' : ''}</div>
+            <div>${label('Expéditeur', 'smtp.from', 's-from')}${input('s-from', 'smtp.from', smtp.from, { type: 'email', placeholder: 'spokapilote@mon-entreprise.fr' })}</div>
+            <div class="span-2">${label('Destinataires (séparés par des virgules)', 'smtp.to', 's-to')}${input('s-to', 'smtp.to', (smtp.to || []).join(', '), { placeholder: 'support-it@mon-entreprise.fr' })}</div>
+          </div>
+        </section>
+
+        <section class="section">
+          <div class="section-head"><h2>Webhooks</h2><button id="s-add-hook" class="btn btn-sm" type="button">Ajouter un webhook</button></div>
+          <div class="card card-pad">
+            <div id="s-hooks">${cfg.webhooks.length ? cfg.webhooks.map(webhookRow).join('') : '<p class="muted" id="s-no-hook">Aucun webhook.</p>'}</div>
+            <p class="hint">Teams : flux « Publier dans un canal lorsqu'une requête webhook est reçue » (application Workflows) ou webhook entrant.
+              Discord : Paramètres du salon › Intégrations › Webhooks. Slack : application « Incoming Webhooks ».
+              JSON générique : un objet <code>{ event, severity, title, message, machine, url, details }</code> envoyé en POST.
+              Les adresses contiennent un secret : elles ne sont jamais réaffichées.</p>
+          </div>
+        </section>
+
+        <section class="section">
+          <div class="section-head"><h2>Déclencheurs</h2></div>
+          <div class="card card-pad">
+            ${TRIGGERS.map(([k, t, d]) => `<label class="check block"><input type="checkbox" data-trigger="${k}"${cfg.triggers[k] ? ' checked' : ''}>
+              <b>${esc(t)}</b> <span class="muted small">— ${esc(d)}</span></label>`).join('')}
+            <div class="form-grid section-tight">
+              <div>${label('Poste « non vu » après (jours, 0 = jamais)', 'staleDays', 's-stale')}${input('s-stale', 'staleDays', cfg.staleDays, { type: 'number', attrs: 'min="0" max="3650"' })}</div>
+              <div>${label('Résumé quotidien à (vide = aucun)', 'dailySummaryTime', 's-daily')}${input('s-daily', 'dailySummaryTime', cfg.dailySummaryTime, { type: 'time' })}</div>
+              <div class="span-2">${label('Adresse publique de la console (liens des alertes)', 'consoleUrl', 's-url')}
+                <div class="inline">${input('s-url', 'consoleUrl', cfg.consoleUrl, { type: 'url', placeholder: 'https://spokapilote.mon-entreprise.fr' })}
+                ${isLocked('consoleUrl') ? '' : '<button id="s-url-here" class="btn btn-sm" type="button">Adresse actuelle</button>'}</div></div>
+            </div>
+          </div>
+        </section>
+
+        <section class="section">
+          <div class="section-head"><h2>Dernières alertes</h2></div>
+          ${events.length === 0 ? '<div class="card empty">Aucune alerte envoyée pour l\'instant.</div>' : `
+          <div class="table-wrap"><table>
+            <thead><tr><th>Date</th><th>Motif</th><th>Alerte</th><th>Envoi</th><th>Détail</th></tr></thead>
+            <tbody>${events.map((ev) => `<tr><td class="nowrap">${esc(fmtDate(ev.createdAt))}</td><td>${esc(ev.reasonLabel)}</td>
+              <td class="wrap">${ev.machine ? `${machineLink(ev.machine)} — ` : ''}${esc(ev.title)}</td>
+              <td>${badge(ev.status, ALERT_STATUS[ev.status] ?? '')}</td><td class="wrap small muted">${esc(ev.detail || '')}</td></tr>`).join('')}</tbody>
+          </table></div>`}
+        </section>`;
+
+      $('#s-add-hook').addEventListener('click', () => {
+        $('#s-no-hook')?.remove();
+        $('#s-hooks').insertAdjacentHTML('beforeend', webhookRow({ id: '', name: '', format: 'teams', url: '', enabled: true }));
+        $('#s-hooks .webhook:last-child .w-name').focus();
+      });
+      $('#s-hooks').addEventListener('click', (e) => { if (e.target.closest('.w-remove')) e.target.closest('.webhook').remove(); });
+      $('#s-url-here')?.addEventListener('click', () => {
+        $('#s-url').value = `${location.origin}${location.pathname.replace(/[^/]*$/, '')}`.replace(/\/$/, '');
+      });
+      $('#s-save').addEventListener('click', save);
+      $('#s-test').addEventListener('click', test);
+    }
+
+    function collect() {
+      const v = (id) => $(id).value.trim();
+      const pass = $('#s-pass').value;
+      return {
+        smtp: {
+          host: v('#s-host'),
+          port: Number(v('#s-port')) || 587,
+          security: $('#s-security').value,
+          username: v('#s-user'),
+          // null = mot de passe inchangé ; '' = effacé.
+          password: $('#s-pass-clear')?.checked ? '' : pass === '' ? null : pass,
+          from: v('#s-from'),
+          to: v('#s-to').split(/[,;\s]+/).filter(Boolean),
+        },
+        webhooks: $$('#s-hooks .webhook:not(.is-locked)').map((row) => ({
+          id: row.dataset.id || null,
+          name: $('.w-name', row).value.trim(),
+          format: $('.w-format', row).value,
+          url: $('.w-url', row).value.trim() || null,
+          enabled: $('.w-enabled', row).checked,
+        })),
+        triggers: Object.fromEntries($$('[data-trigger]').map((c) => [c.dataset.trigger, c.checked])),
+        staleDays: Number(v('#s-stale')) || 0,
+        dailySummaryTime: v('#s-daily') || null,
+        consoleUrl: v('#s-url') || null,
+      };
+    }
+
+    async function save() {
+      try {
+        cfg = await api('/settings/alerts', { method: 'PUT', body: JSON.stringify(collect()) });
+        events = await api('/alerts/events');
+        render();
+        toast('Paramètres enregistrés.');
+        return true;
+      } catch (e) {
+        if (e.status !== 401) toast(e.message, true);
+        return false;
+      }
+    }
+
+    async function test() {
+      const out = $('#s-test-result');
+      out.innerHTML = '<div class="notice">Envoi de l\'alerte de test…</div>';
+      try {
+        const res = await api('/alerts/test', { method: 'POST' });
+        out.innerHTML = `<div class="notice">${res.results.map((r) => `<div>${badge(r.success ? 'OK' : 'Échec', r.success ? 'ok' : 'bad')}
+          <b>${esc(r.channel)}</b> — ${esc(r.message)}</div>`).join('')}
+          <div class="hint">Le test utilise les paramètres enregistrés : enregistrez d'abord vos modifications.</div></div>`;
+        events = await api('/alerts/events');
+      } catch (e) {
+        out.innerHTML = '';
+        if (e.status !== 401) toast(e.message, true);
+      }
+    }
+
+    render();
     return {};
   }
 

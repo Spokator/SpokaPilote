@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using SpokaPilote.Server;
+using SpokaPilote.Server.Alerts;
 using SpokaPilote.Server.Api;
 using SpokaPilote.Server.Security;
 using SpokaPilote.Server.Storage;
@@ -16,6 +17,9 @@ builder.Services.AddSingleton(sp => new ServerStore(sp.GetRequiredService<Server
 builder.Services.AddSingleton(sp => TokenService.Initialize(
     sp.GetRequiredService<IConfiguration>(), sp.GetRequiredService<ServerOptions>(),
     sp.GetRequiredService<ILoggerFactory>().CreateLogger("SpokaPilote.Jetons")));
+builder.Services.AddSingleton<AuthFailureLimiter>();
+// Alertes (e-mail, webhooks) et tâches périodiques : expiration des tâches à distance, postes non vus, résumé quotidien.
+builder.Services.AddSpokaPiloteAlerts();
 // Limite globale de Kestrel (la limite fine, après décompression, est appliquée par BodyReader).
 builder.Services.AddOptions<KestrelServerOptions>().Configure<ServerOptions>((k, o) => k.Limits.MaxRequestBodySize = o.MaxReportBytes + 64 * 1024);
 

@@ -62,6 +62,7 @@ internal static partial class Program
                 "health" or "sante" or "santé" => await HealthAsync(a, cts.Token),
                 "device" or "peripherique" or "périphérique" => await DeviceAsync(a, cts.Token),
                 "driverstore" or "driver-store" or "magasin" => await DriverStoreAsync(a, cts.Token),
+                "agent" => await AgentAsync(a, cts.Token),
                 "version" or "--version" => Version(),
                 _ => Help(),
             };
@@ -756,6 +757,12 @@ internal static partial class Program
                                           [--startup-delay 10] [--max-duration 120] [--on-battery]
               spokapilote schedule status | run-now | disable
               spokapilote maintenance --mode missing|updates|scan [...]   exécution immédiate (celle de la tâche)
+
+            ACTIONS À DISTANCE (tâche \SpokaPilote\Agent, compte SYSTEM ; sans console configurée, ne fait rien)
+              spokapilote agent enable [--every 15]        interroge la console toutes les N minutes (5 à 1440)
+              spokapilote agent run                        récupère et exécute maintenant les tâches demandées depuis la console
+                                   (analyse, installation, profil d'imprimantes, annulation, mise à jour — liste fermée)
+              spokapilote agent status | run-now | disable
 
             CONFIGURATION
               spokapilote config [show | set <clé> <valeur> | add-repo <chemin> | remove-repo <chemin>]
