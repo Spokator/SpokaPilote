@@ -25,6 +25,12 @@ if (-not $iscc) {
     $iscc = "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe"
 }
 
+# Signature facultative : rien ne change si aucune configuration n'est présente (voir docs\SIGNATURE.md).
+. "$PSScriptRoot\signing.ps1"
+$signing = Get-SigningConfig
+if ($signing) { Write-Host "Signature : $($signing.Description)" -ForegroundColor Cyan }
+else { Write-Host "Signature : non configurée (installeurs non signés, voir docs\SIGNATURE.md)" -ForegroundColor DarkGray }
+
 $archs = if ($Arch -eq "all") { @("x64", "arm64") } else { @($Arch) }
 $first = $true
 foreach ($a in $archs) {
@@ -33,9 +39,19 @@ foreach ($a in $archs) {
     if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { throw "La publication $a a échoué." }
     $first = $false
 
-    # 2. Inno Setup.
-    & $iscc "/DAppVersion=$version" "/DAppArch=$a" /Qp "$root\installer\SpokaPilote.iss"
-    if ($LASTEXITCODE -ne 0) { throw "La compilation de l'installeur $a a échoué." }
+    # 2. Inno Setup (l'installeur et son désinstalleur sont signés si une signature est configurée).
+    $isccArgs = @("/DAppVersion=$version", "/DAppArch=$a", "/Qp")
+    if ($signing) { $isccArgs += @("/DSign=1", "/Sspokasign=$(Get-InnoSignCommand $signing)") }
+    # Le stderr d'ISCC ne doit pas devenir une exception (on lit le code de sortie) ; un mot de passe éventuel est masqué.
+    $ErrorActionPreference = "Continue"
+    & $iscc @isccArgs "$root\installer\SpokaPilote.iss" 2>&1 | ForEach-Object { if ($signing) { Hide-SigningSecret $signing "$_" } else { "$_" } }
+    $isccExit = $LASTEXITCODE
+    $ErrorActionPreference = "Stop"
+    if ($isccExit -ne 0) { throw "La compilation de l'installeur $a a échoué." }
     $suffix = if ($a -eq "arm64") { "-arm64" } else { "" }
-    $kind = if ($a -eq "arm64") { "Installer" } else { "Setup" }; Write-Host "OK -> $root\dist\SpokaPilote-$kind-$version$suffix.exe" -ForegroundColor Green
+    $kind = if ($a -eq "arm64") { "Installer" } else { "Setup" }
+    $setup = "$root\dist\SpokaPilote-$kind-$version$suffix.exe"
+    if ($signing) { Test-CodeSignature $signing $setup }
+    $state = if ($signing) { "signé" } else { "non signé" }
+    Write-Host "OK -> $setup ($state)" -ForegroundColor Green
 }
