@@ -1,0 +1,23 @@
+# Caddy — HTTPS automatique pour la console SpokaPilote (profil « https » de docker-compose.yml).
+# Le domaine vient de la variable SPOKAPILOTE_DOMAIN (fichier server/.env). Caddy obtient le certificat
+# Let's Encrypt au premier démarrage, le renouvelle seul et redirige HTTP vers HTTPS.
+# Domaine interne non joignable depuis Internet : ajoutez « tls internal » dans le bloc du domaine
+# (autorité de Caddy, à approuver sur les postes) ou « tls /certs/cert.pem /certs/key.pem » (certificat de votre AD CS).
+
+# Adresse de contact Let's Encrypt (facultative, avis d'expiration) : décommentez le bloc suivant.
+# {
+# 	email it@mon-entreprise.fr
+# }
+
+{$SPOKAPILOTE_DOMAIN:localhost} {
+	encode gzip
+	# Rapports : 5 Mo par défaut côté console.
+	request_body {
+		max_size 110MB
+	}
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		-Server
+	}
+	reverse_proxy spokapilote:8080
+}
