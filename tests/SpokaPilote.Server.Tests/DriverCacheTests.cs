@@ -222,12 +222,13 @@ public sealed class DriverCacheTests : IDisposable
         var client = _host.Client(AgentToken);
 
         var requests = Enumerable.Range(0, 20).Select(_ => client.GetAsync(FileRoute(DellFile, Sha256(data)), HttpCompletionOption.ResponseHeadersRead)).ToList();
-        // Tous les postes reçoivent déjà les premiers octets pendant que la console télécharge.
-        var first = await requests[0];
-        Assert.Equal(HttpStatusCode.OK, first.StatusCode);
-        await Task.Delay(200);
+        // Tous les postes reçoivent déjà leur réponse (en-têtes, premiers octets) pendant que la console télécharge :
+        // on attend qu'ils aient tous rejoint le téléchargement en cours avant de libérer la source (pas de délai fixe,
+        // qui échouait par intermittence sur une machine chargée).
+        var joined = Task.WhenAll(requests);
+        Assert.Same(joined, await Task.WhenAny(joined, Task.Delay(TimeSpan.FromSeconds(60))));
         gate.SetResult();
-        var responses = await Task.WhenAll(requests);
+        var responses = await joined;
         foreach (var r in responses)
         {
             Assert.Equal(HttpStatusCode.OK, r.StatusCode);
