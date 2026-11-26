@@ -66,6 +66,31 @@ public sealed class TrustPolicy
         "Zebra Technologies",
     };
 
+    /// <summary>
+    /// Pages d'information officielles des constructeurs (fiches de téléchargement, notes de version) : affichées comme
+    /// liens dans les rapports, jamais utilisées pour télécharger un paquet.
+    /// </summary>
+    public static readonly string[] OfficialInfoHosts =
+    {
+        "www.dell.com",
+        "support.hp.com",
+        "pcsupport.lenovo.com",
+        "support.lenovo.com",
+    };
+
+    /// <summary>
+    /// Lien affichable dans un rapport : HTTPS vers un domaine officiel (hôtes de téléchargement intégrés ou pages
+    /// d'information des constructeurs). Renvoie l'URL normalisée, ou null si elle n'est pas officielle.
+    /// </summary>
+    public static string? OfficialLink(string? url)
+    {
+        if (string.IsNullOrWhiteSpace(url)) return null;
+        if (!Uri.TryCreate(url.Trim(), UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps) return null;
+        var host = uri.Host.ToLowerInvariant();
+        var builtIn = new TrustPolicy(new Settings());
+        return builtIn.IsTrustedHost(uri) || OfficialInfoHosts.Contains(host, StringComparer.Ordinal) ? uri.ToString() : null;
+    }
+
     private readonly List<string> _hosts;
     private readonly List<string> _publishers;
 

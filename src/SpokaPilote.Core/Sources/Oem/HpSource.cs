@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Xml.Linq;
+using SpokaPilote.Core.Firmware;
 using SpokaPilote.Core.Infrastructure;
 using SpokaPilote.Core.Install;
 using SpokaPilote.Core.Models;
@@ -84,7 +85,33 @@ public sealed class HpSource : IDriverSource
             if (id is null || url is null) continue;
 
             var isDriver = category.StartsWith("Driver", StringComparison.OrdinalIgnoreCase) || category.Contains("Driver", StringComparison.OrdinalIgnoreCase);
-            var isFirmware = category.StartsWith("BIOS", StringComparison.OrdinalIgnoreCase) || category.Contains("Firmware", StringComparison.OrdinalIgnoreCase);
+            var isBios = category.StartsWith("BIOS", StringComparison.OrdinalIgnoreCase);
+            var isFirmware = isBios || category.Contains("Firmware", StringComparison.OrdinalIgnoreCase);
+
+            // État du BIOS et firmwares d'accessoires : toujours évalués (information), même sans --include-firmware.
+            var (importance, importanceLabel) = ReleaseType(u);
+            if (isBios && !isDriver)
+            {
+                context.BiosEntries.Add(new BiosCatalogEntry
+                {
+                    Title = V("Name") ?? id,
+                    Version = V("Version"),
+                    Date = DateTime.TryParse(V("DateReleased"), CultureInfo.InvariantCulture, DateTimeStyles.None, out var bd) ? bd : null,
+                    Importance = importance,
+                    ImportanceLabel = importanceLabel,
+                    DownloadUrl = TrustPolicy.NormalizeUrl(url).ToString(),
+                    InfoUrl = V("ReleaseNotesUrl") is { } biosNotes ? TrustPolicy.NormalizeUrl(biosNotes).ToString() : null,
+                    CandidateId = $"hp:{id}",
+                });
+            }
+            else if (isFirmware && !isDriver && BiosEvaluator.AccessoryKind(V("Name"), category) is { } accessory)
+            {
+                BiosEvaluator.AddComponent(context, accessory, V("Name") ?? id, V("Version"),
+                    DateTime.TryParse(V("DateReleased"), CultureInfo.InvariantCulture, DateTimeStyles.None, out var ad) ? ad : null,
+                    importance, importanceLabel, TrustPolicy.NormalizeUrl(url).ToString(),
+                    V("ReleaseNotesUrl") is { } accNotes ? TrustPolicy.NormalizeUrl(accNotes).ToString() : null,
+                    deviceIdsBySoftpaq.TryGetValue(id, out var accIds) ? accIds : new List<string>());
+            }
             if (!isDriver && !(isFirmware && includeFirmware)) continue;
 
             var candidate = new DriverCandidate
@@ -122,7 +149,15 @@ public sealed class HpSource : IDriverSource
             }
             results.Add(candidate);
         }
+        BiosEvaluator.Finish(context, OemVendor.HP, results);
         Log.Info($"Référence HP : {results.Count} SoftPaq(s) applicable(s).");
         return results;
+    }
+
+    /// <summary>Type de publication du SoftPaq (« Critical », « Recommended », « Routine »).</summary>
+    private static (VendorImportance Importance, string? Label) ReleaseType(XElement u)
+    {
+        var text = (u.Element("ReleaseType") ?? u.Element("Criticality") ?? u.Element("Severity"))?.Value?.Trim();
+        return string.IsNullOrEmpty(text) ? (VendorImportance.Unknown, null) : (BiosEvaluator.ImportanceFromText(text), text);
     }
 }

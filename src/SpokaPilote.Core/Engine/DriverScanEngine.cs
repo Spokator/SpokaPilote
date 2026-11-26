@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using SpokaPilote.Core.Firmware;
 using SpokaPilote.Core.Health;
 using SpokaPilote.Core.Infrastructure;
 using SpokaPilote.Core.Install;
@@ -26,6 +27,8 @@ public sealed class ScanResult
     public List<CandidateDecision> PolicyDecisions { get; init; } = new();
     /// <summary>Santé des pilotes (score, note, constats), calculée en fin d'analyse ; null si le calcul a échoué.</summary>
     public HealthReport? Health { get; init; }
+    /// <summary>État du BIOS et des firmwares (catalogue du constructeur) ; null si aucune source constructeur n'a été interrogée.</summary>
+    public FirmwareStatus? Firmware { get; init; }
 
     public IEnumerable<DeviceInfo> ProblemDevices => Devices.Where(d => d.IsPresent && d.HasProblem);
 
@@ -130,7 +133,8 @@ public sealed class DriverScanEngine
         foreach (var (source, warning) in context.Warnings) errors.TryAdd(source, warning);
 
         var (merged, decisions) = ApplyPolicy(all, devices, policy.Effective);
-        var health = ComputeHealth(devices, merged, policy.Effective);
+        var firmware = context.BuildFirmwareStatus();
+        var health = ComputeHealth(devices, merged, policy.Effective, firmware);
         sw.Stop();
         var blocked = merged.Count(c => c.BlockedReason is not null);
         var hidden = decisions.Count(d => d.Decision.Verdict == PolicyVerdict.Hidden);
@@ -148,11 +152,12 @@ public sealed class DriverScanEngine
             Policy = policy,
             PolicyDecisions = decisions,
             Health = health,
+            Firmware = firmware,
         };
     }
 
     /// <summary>Santé des pilotes du poste : ne fait jamais échouer l'analyse.</summary>
-    private static HealthReport? ComputeHealth(IReadOnlyList<DeviceInfo> devices, IReadOnlyList<DriverCandidate> candidates, DriverPolicy policy)
+    private static HealthReport? ComputeHealth(IReadOnlyList<DeviceInfo> devices, IReadOnlyList<DriverCandidate> candidates, DriverPolicy policy, FirmwareStatus? firmware)
     {
         try
         {
@@ -160,6 +165,7 @@ public sealed class DriverScanEngine
             {
                 OriginalInfNames = DriverStoreCleaner.ReadOriginalInfNames(),
                 Interventions = InterventionHistory.List(),
+                Firmware = firmware,
             });
         }
         catch (Exception ex)

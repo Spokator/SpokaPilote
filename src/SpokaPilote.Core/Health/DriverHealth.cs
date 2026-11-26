@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
+using SpokaPilote.Core.Firmware;
 using SpokaPilote.Core.Install;
 using SpokaPilote.Core.Models;
 using SpokaPilote.Core.Policy;
@@ -31,6 +32,11 @@ public static class HealthCodes
     public const string OldDriver = "old-driver";
     /// <summary>Mise à jour de pilote (ou de firmware) proposée par une source officielle et autorisée par la politique.</summary>
     public const string UpdateAvailable = "update-available";
+    /// <summary>
+    /// BIOS plus ancien que la dernière version publiée au catalogue du constructeur pour ce modèle (attention si le
+    /// constructeur la déclare critique / urgente, information sinon). Jamais installé sans --include-firmware.
+    /// </summary>
+    public const string BiosOutdated = "bios-outdated";
 }
 
 /// <summary>Constat de santé. Seuls severity, code, title, detail et deviceId sont publiés dans le rapport JSON.</summary>
@@ -113,6 +119,8 @@ public sealed class HealthOptions
     public IReadOnlyDictionary<string, string>? OriginalInfNames { get; init; }
     /// <summary>Historique des interventions SpokaPilote : permet de proposer « rollback » pour un pilote dangereux installé par SpokaPilote.</summary>
     public IReadOnlyList<Intervention>? Interventions { get; init; }
+    /// <summary>État du BIOS et des firmwares (catalogue du constructeur), pour le constat « bios-outdated ».</summary>
+    public FirmwareStatus? Firmware { get; init; }
 }
 
 /// <summary>
@@ -125,6 +133,7 @@ public sealed class HealthOptions
 /// <item>pilote non signé (« unsigned-driver ») : −15 chacun ;</item>
 /// <item>pilote tiers de plus de <see cref="OldDriverYears"/> ans (« old-driver ») : −3 chacun, −15 au total au maximum ; les dates fictives (avant 2000, ex. INF du chipset Intel datés de 1968) sont ignorées ;</item>
 /// <item>mise à jour disponible (« update-available ») : −2 chacune, −10 au total au maximum ;</item>
+/// <item>BIOS obsolète (« bios-outdated ») : −5 si le constructeur déclare la mise à jour critique / urgente (attention), −2 sinon (info) ;</item>
 /// <item>panne matérielle, périphérique désactivé : information seule, 0 point.</item>
 /// </list>
 /// Note : A ≥ 90, B ≥ 75, C ≥ 60, D ≥ 40, E en dessous. Un poste sans constat obtient 100/A.
@@ -146,6 +155,8 @@ public static partial class DriverHealth
     public const int MaxPenaltyOldDrivers = 15;
     public const int PenaltyUpdate = 2;
     public const int MaxPenaltyUpdates = 10;
+    public const int PenaltyBiosOutdatedCritical = 5;
+    public const int PenaltyBiosOutdated = 2;
     /// <summary>Score maximal lorsqu'un pilote dangereux est installé (note D au mieux).</summary>
     public const int KnownBadScoreCap = 59;
 
@@ -166,7 +177,14 @@ public static partial class DriverHealth
 
     /// <summary>Santé à partir d'une analyse (inventaire, pilotes proposés, politique appliquée).</summary>
     public static HealthReport Compute(Engine.ScanResult scan, HealthOptions? options = null) =>
-        Compute(scan.Devices, scan.Candidates, scan.Policy?.Effective, options);
+        Compute(scan.Devices, scan.Candidates, scan.Policy?.Effective,
+            options is { Firmware: not null } || scan.Firmware is null ? options : new HealthOptions
+            {
+                Now = options?.Now,
+                OriginalInfNames = options?.OriginalInfNames,
+                Interventions = options?.Interventions,
+                Firmware = scan.Firmware,
+            });
 
     /// <param name="devices">Inventaire du poste.</param>
     /// <param name="candidates">Pilotes proposés par l'analyse (vide si les sources n'ont pas été interrogées).</param>
@@ -309,10 +327,34 @@ public static partial class DriverHealth
             });
         }
 
-        // 5. Mises à jour disponibles (autorisées par la politique, installables automatiquement).
+        // 5. BIOS obsolète (catalogue officiel du constructeur, comparaison fiable seulement).
+        var bios = options.Firmware?.Bios is { State: BiosState.Outdated } outdated ? outdated : null;
+        if (bios is not null)
+        {
+            var link = bios.Link;
+            var recommendation = "Planifiez la mise à jour (secteur branché, BitLocker suspendu) ; SpokaPilote ne l'installe " +
+                                 "qu'avec --include-firmware." + (link is null ? "" : $" Page officielle : {link}");
+            findings.Add(new HealthFinding
+            {
+                Severity = bios.IsCritical ? HealthSeverity.Warning : HealthSeverity.Info,
+                Code = HealthCodes.BiosOutdated,
+                Title = $"BIOS à mettre à jour : {bios.InstalledVersion} installé, {bios.LatestVersion} disponible",
+                Detail = $"{bios.Title ?? "BIOS"} {bios.LatestVersion}" +
+                         (bios.LatestDate is { } ld ? $" du {ld:dd/MM/yyyy}" : "") +
+                         $" ({bios.Vendor}, importance : {bios.ImportanceText}) ; installé : {bios.InstalledVersion}" +
+                         (bios.InstalledDate is { } id ? $" du {id:dd/MM/yyyy}" : "") + $". → {recommendation}",
+                Penalty = bios.IsCritical ? PenaltyBiosOutdatedCritical : PenaltyBiosOutdated,
+                Recommendation = recommendation,
+                AdvisoryUrl = link,
+            });
+        }
+
+        // 6. Mises à jour disponibles (autorisées par la politique, installables automatiquement).
+        // Le BIOS déjà signalé par « bios-outdated » n'est pas compté une deuxième fois.
         var updateBudget = MaxPenaltyUpdates;
         foreach (var c in candidates.Where(c => c.BlockedReason is null && !c.IsInformational && c.Kind is CandidateKind.Update or CandidateKind.Firmware))
         {
+            if (bios is not null && c.Kind == CandidateKind.Firmware && bios.CandidateIds.Contains(c.Id)) continue;
             var penalty = Math.Min(PenaltyUpdate, updateBudget);
             updateBudget -= penalty;
             var target = c.TargetDeviceIds.FirstOrDefault();

@@ -19,6 +19,8 @@ public sealed class SystemInfo
     public string? BaseBoardProduct { get; init; }
     public string? BaseBoardManufacturer { get; init; }
     public string? BiosVersion { get; init; }
+    /// <summary>Date de publication du BIOS installé (Win32_BIOS.ReleaseDate), null si illisible.</summary>
+    public DateTime? BiosReleaseDate { get; init; }
     public string? SerialNumber { get; init; }
     public string OsCaption { get; init; } = "";
     public Version OsVersion { get; init; } = Environment.OSVersion.Version;
