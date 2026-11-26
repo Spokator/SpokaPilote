@@ -1,13 +1,51 @@
 # Journal des versions
 
-## Non publié
+## 4.0.0 — 27/11/2026
 
-- **Profils d'imprimantes** : conditions par **site Active Directory** (`adSites`) et par **unité d'organisation**
-  (`organizationalUnits`), lues dans le registre du poste (sans requête réseau). Un profil qui les utilise porte
-  `"version": 2` ; les profils existants (version 1) sont inchangés.
-- Moteur partagé avec **SpokaPrint** (déploiement d'imprimantes) : identité de produit (dossier de données, journal,
-  mises à jour, tâches planifiées propres à chaque produit), lecture SNMP des compteurs et consommables (Printer-MIB),
-  réglages du balayage réseau (parallélisme, délai, communauté SNMP). Aucun changement de comportement pour SpokaPilote.
+SpokaPilote se recentre : un logiciel clair pour les pilotes, une console taillée pour les très grands parcs, et un
+nouveau produit, **SpokaPrint**, pour les imprimantes.
+
+**Interface simplifiée**
+- Nouvel **Accueil** : modèle du PC, note de santé, état du BIOS et un seul bouton qui s'adapte (Analyser ce poste →
+  Installer N pilotes → Tout est à jour), progression et résultats en clair, redémarrage proposé quand il le faut.
+- Navigation réduite à six pages dans une barre latérale façon Windows 11 : Accueil, Pilotes (filtres manquants / mises
+  à jour / bloqués), Périphériques (réparation guidée visible tout de suite), Historique, Outils (dépôt, packs
+  constructeur, pack hors ligne, rapport de parc, nettoyage du magasin, maintenance et agent, console, journal
+  technique), Paramètres. Raccourcis Ctrl+1 à Ctrl+6, F5, F1 ; thème sombre corrigé.
+- **Imprimantes → SpokaPrint** : la page Imprimantes quitte SpokaPilote. Les commandes `spokapilote printers …` restent
+  disponibles pour les scripts existants.
+
+**SpokaPrint 1.0** (nouveau produit, dépôt [Spokator/SpokaPrint](https://github.com/Spokator/SpokaPrint))
+- Découverte réseau (modèle exact, n° de série, compteurs, consommables), installation avec pilote officiel vérifié,
+  profils de déploiement par site, sous-réseau, nom de poste, **site Active Directory** ou **unité d'organisation**,
+  inventaire et nettoyage, ligne de commande `spokaprint` et tâche planifiée. Même moteur de confiance que SpokaPilote.
+- Profils d'imprimantes : conditions `adSites` / `organizationalUnits` (un profil qui les utilise porte
+  `"version": 2` ; les versions plus anciennes le refusent au lieu de l'appliquer partout).
+
+**Console centrale : très grands parcs**
+- **Mesurée sur 20 000 postes** (essai à 100 000) : indicateurs précalculés à l'arrivée de chaque rapport, listes
+  paginées, filtrées et triées par le serveur, rapports stockés compressés, écritures sérialisées, index. Interrogation
+  d'un agent 1 150 ms → 3 ms (p95), liste des postes 2,6 s → 7 ms, 81 → 660 rapports/s, mémoire divisée par deux,
+  base deux fois plus petite. Délestage propre (`503` + `Retry-After` étalé) quand des milliers de postes arrivent en
+  même temps.
+- **Anneaux de déploiement** : Pilote, Précoce, Général (modifiables, liés aux groupes) ; une nouvelle version de
+  pilote n'atteint chaque anneau qu'après son délai, et éventuellement après validation dans l'anneau précédent.
+  **Disjoncteur** : trop d'échecs d'installation (ou de périphériques en erreur après installation) et la version est
+  suspendue sur tout le parc, avec alerte et journal d'audit ; reprise ou maintien du blocage en un clic. Page
+  « Déploiement » dans la console ; les pilotes retenus apparaissent sur le poste avec la date à laquelle ils seront
+  autorisés.
+- **Cache de pilotes et de catalogues sur le réseau local** : la console télécharge chaque fichier officiel et chaque
+  catalogue (Microsoft Update Catalog, Dell, HP, Lenovo, NVIDIA) une seule fois et le sert aux postes. Elle n'est
+  qu'un relais : chaque poste revérifie empreinte, signature et matériel, et télécharge directement si la console ne
+  répond pas. Fini le blocage du catalogue Microsoft quand des milliers de PC sortent par la même adresse.
+  Préchargement pour les sites isolés.
+- Supervision (`/api/metrics`, format Prometheus), sauvegarde à chaud planifiable, compactage, exports CSV en continu.
+- Migration automatique depuis la 3.x ; les postes 3.x continuent de fonctionner (politique prudente pour eux).
+
+**Poste**
+- Paramètre `UseConsoleCache` (auto / on / off), visible dans les Paramètres et `spokapilote server status`.
+- Le poste renvoie son rapport sans compression si un intermédiaire la refuse, et patiente quand la console est
+  surchargée.
 
 ## 3.1.0 — 26/11/2026
 
