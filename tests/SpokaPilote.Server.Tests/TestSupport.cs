@@ -66,6 +66,41 @@ internal sealed class TestServerHost : IDisposable
         return client;
     }
 
+    public const string Password = "Mot-de-passe-de-test-42";
+
+    /// <summary>Crée un compte nominatif avec le jeton administrateur.</summary>
+    public async Task CreateUserAsync(string login, string role, string password = Password, bool enabled = true)
+    {
+        var r = await Client(AdminToken).PostAsync("/api/users", Json(new { login, role, password, enabled }));
+        Assert.Equal(HttpStatusCode.Created, r.StatusCode);
+    }
+
+    /// <summary>
+    /// Client connecté par session (cookie géré par le client de test) ; le jeton anti-CSRF de la session est ajouté à
+    /// toutes ses requêtes, comme le fait la console.
+    /// </summary>
+    public async Task<HttpClient> LoginAsync(string login, string password = Password, string? ip = null)
+    {
+        var client = Factory.CreateClient();
+        if (ip is not null) client.DefaultRequestHeaders.Add("X-Test-Ip", ip);
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/session") { Content = Json(new { login, password }) };
+        request.Headers.Add("X-SpokaPilote-CSRF", "1");
+        var r = await client.SendAsync(request);
+        Assert.Equal(HttpStatusCode.OK, r.StatusCode);
+        client.DefaultRequestHeaders.Add("X-SpokaPilote-CSRF", (await ReadJson(r)).GetProperty("csrf").GetString());
+        return client;
+    }
+
+    /// <summary>Tentative de connexion (statut seulement), sans gestion de cookie.</summary>
+    public async Task<HttpResponseMessage> TryLoginAsync(string login, string password, string? ip = null, bool withHeader = true)
+    {
+        var client = Factory.CreateClient(new WebApplicationFactoryClientOptions { HandleCookies = false });
+        if (ip is not null) client.DefaultRequestHeaders.Add("X-Test-Ip", ip);
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/session") { Content = Json(new { login, password }) };
+        if (withHeader) request.Headers.Add("X-SpokaPilote-CSRF", "1");
+        return await client.SendAsync(request);
+    }
+
     public void Dispose()
     {
         Factory.Dispose();
