@@ -157,6 +157,12 @@ Sans la clé, le point de restauration Windows créé avant l'intervention reste
 - **Mise à jour automatique** : aucun installeur n'est jamais lancé depuis la clé (voir ci-dessous). Une demande
   de mise à jour envoyée par la console centrale est refusée.
 
+Le **cache de pilotes de la console** (4.0, `UseConsoleCache`) reste facultatif en mode portable : sans console
+configurée (`ServerUrl` et `ServerToken` dans `Data\settings.json` de la clé), tout se télécharge directement comme
+avant. Avec une console joignable depuis le site visité, la clé en profite (fichiers et catalogues servis par la
+console, toujours vérifiés sur le poste) ; si la console ne répond pas, le téléchargement direct prend le relais.
+Voir [CONSOLE-CENTRALE.md, § 12](CONSOLE-CENTRALE.md#12-cache-de-pilotes).
+
 ---
 
 ## 8. Mise à jour de la copie portable
