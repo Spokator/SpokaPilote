@@ -4,6 +4,11 @@ namespace SpokaPilote.Server.Fleet;
 public sealed class SystemSnapshot
 {
     public string ComputerName { get; set; } = "";
+    /// <summary>
+    /// Identifiant stable du poste (MachineGuid de Windows, en minuscules), absent des rapports antérieurs à la 3.0.
+    /// Il survit à un changement de nom : la console s'en sert en priorité pour reconnaître le poste.
+    /// </summary>
+    public string? MachineId { get; set; }
     public string? Manufacturer { get; set; }
     public string? Model { get; set; }
     public string? FriendlyModel { get; set; }
@@ -74,6 +79,38 @@ public sealed class OutcomeEntry
     public bool IsFailure => Status is "Failed" or "Blocked";
 }
 
+/// <summary>Constat de l'analyse de santé du poste (objet facultatif « health » des rapports).</summary>
+public sealed class HealthFinding
+{
+    /// <summary>« critical », « warning » ou « info ».</summary>
+    public string Severity { get; set; } = "info";
+    public string Code { get; set; } = "";
+    public string Title { get; set; } = "";
+    public string? Detail { get; set; }
+    public string? DeviceId { get; set; }
+
+    public const string KnownBadDriverCode = "known-bad-driver";
+
+    /// <summary>Ordre d'affichage : critique d'abord.</summary>
+    public int Rank => Severity switch { "critical" => 0, "warning" => 1, _ => 2 };
+    public bool IsDangerousDriver => Severity == "critical" && Code.Equals(KnownBadDriverCode, StringComparison.OrdinalIgnoreCase);
+}
+
+/// <summary>
+/// Santé du poste, calculée par le poste (contrat partagé : score 0-100, note A à E, constats). Facultative : sans elle,
+/// la console se comporte exactement comme avant.
+/// </summary>
+public sealed class HealthInfo
+{
+    public int? Score { get; set; }
+    public string? Grade { get; set; }
+    public List<HealthFinding> Findings { get; set; } = new();
+
+    public int Critical => Findings.Count(f => f.Severity == "critical");
+    public int Warnings => Findings.Count(f => f.Severity == "warning");
+    public bool HasDangerousDriver => Findings.Any(f => f.IsDangerousDriver);
+}
+
 /// <summary>
 /// Rapport normalisé d'un poste : uniquement ce qui sert à la console (quelques Ko au lieu des ~200 Ko du rapport brut),
 /// avec les indicateurs déjà calculés.
@@ -93,6 +130,8 @@ public sealed class MachineReport
     public List<CandidateEntry> Candidates { get; set; } = new();
     /// <summary>Résultats d'installation (null = analyse seule).</summary>
     public List<OutcomeEntry>? Installation { get; set; }
+    /// <summary>Santé du poste (null = rapport sans objet « health »).</summary>
+    public HealthInfo? Health { get; set; }
 
     /// <summary>Périphériques en erreur à cause d'un pilote (hors pannes matérielles).</summary>
     public int DriverProblems => ProblemDevices.Count(d => !d.IsHardwareFault);

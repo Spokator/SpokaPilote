@@ -44,6 +44,7 @@ public static class ReportParser
         var snapshot = new SystemSnapshot
         {
             ComputerName = Str(system, "computerName")?.Trim() ?? "",
+            MachineId = NormalizeMachineId(Str(system, "machineId")),
             Manufacturer = Str(system, "manufacturer"),
             Model = Str(system, "model"),
             FriendlyModel = Str(system, "friendlyModel"),
@@ -98,6 +99,8 @@ public static class ReportParser
                 RebootRequired = Prop(o, "rebootRequired") is { ValueKind: JsonValueKind.True },
             }).ToList();
 
+        report.Health = ParseHealth(Prop(root, "health"));
+
         // Pilotes autorisés / bloqués par ID d'instance, pour savoir quels périphériques en erreur ont une solution.
         var allowed = new HashSet<string>(report.Candidates.Where(c => !c.IsBlocked).SelectMany(c => c.DeviceIds), StringComparer.OrdinalIgnoreCase);
         var blocked = new HashSet<string>(report.Candidates.Where(c => c.IsBlocked).SelectMany(c => c.DeviceIds), StringComparer.OrdinalIgnoreCase);
@@ -131,6 +134,46 @@ public static class ReportParser
         }
         return report;
     }
+
+    /// <summary>
+    /// Objet facultatif « health » (contrat partagé) : { score 0-100, grade "A".."E", findings [...] }. Lecture tolérante :
+    /// valeurs hors bornes ramenées dans les bornes, gravité inconnue traitée comme « info », 200 constats au plus.
+    /// </summary>
+    internal static HealthInfo? ParseHealth(JsonElement? element)
+    {
+        if (element is not { ValueKind: JsonValueKind.Object } health) return null;
+        var info = new HealthInfo();
+        if (Prop(health, "score") is { ValueKind: JsonValueKind.Number } score && score.TryGetDouble(out var s) && double.IsFinite(s))
+            info.Score = (int)Math.Round(Math.Clamp(s, 0, 100));
+        var grade = Str(health, "grade")?.Trim().ToUpperInvariant();
+        info.Grade = grade is "A" or "B" or "C" or "D" or "E" ? grade : null;
+        if (Prop(health, "findings") is { ValueKind: JsonValueKind.Array } findings)
+            info.Findings = findings.EnumerateArray()
+                .Where(f => f.ValueKind == JsonValueKind.Object)
+                .Take(200)
+                .Select(f => new HealthFinding
+                {
+                    Severity = Str(f, "severity")?.Trim().ToLowerInvariant() switch
+                    {
+                        "critical" => "critical",
+                        "warning" => "warning",
+                        _ => "info",
+                    },
+                    Code = Truncate(Str(f, "code"), 100) ?? "",
+                    Title = Truncate(Str(f, "title"), 300) ?? "",
+                    Detail = Truncate(Str(f, "detail"), 2000),
+                    DeviceId = Truncate(Str(f, "deviceId"), 400),
+                })
+                .OrderBy(f => f.Rank)
+                .ToList();
+        return info;
+    }
+
+    private static string? Truncate(string? value, int max) => value is null ? null : value.Length <= max ? value : value[..max] + "…";
+
+    /// <summary>MachineGuid au format GUID, en minuscules ; toute autre valeur est ignorée.</summary>
+    public static string? NormalizeMachineId(string? value) =>
+        Guid.TryParse(value?.Trim(), out var g) && g != Guid.Empty ? g.ToString("D") : null;
 
     /// <summary>Même règle que SpokaPilote.Core (DeviceInfo.HasProblem) : erreur, sauf 0 (OK) et 22 (désactivé volontairement).</summary>
     public static bool HasProblem(int errorCode) => errorCode is not (0 or 22);

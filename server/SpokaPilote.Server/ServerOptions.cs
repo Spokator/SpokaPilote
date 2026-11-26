@@ -15,6 +15,12 @@ public sealed class ServerOptions
     public long MaxDocumentBytes { get; init; } = 1024 * 1024;
     /// <summary>Un poste sans rapport depuis ce nombre de jours est signalé « non vu ».</summary>
     public int StaleDays { get; init; } = 7;
+    /// <summary>Une tâche à distance jamais récupérée par son poste expire après ce nombre de jours.</summary>
+    public int JobExpiryDays { get; init; } = 7;
+    /// <summary>Une tâche « en cours » sans résultat après ce nombre d'heures est considérée comme bloquée (expirée).</summary>
+    public int JobRunningTimeoutHours { get; init; } = 6;
+    /// <summary>Tentatives d'authentification refusées tolérées par adresse IP et par minute (0 = pas de limite).</summary>
+    public int AuthFailuresPerMinute { get; init; } = 10;
 
     public string DatabasePath => Path.Combine(DataDirectory, "spokapilote.db");
 
@@ -30,6 +36,9 @@ public sealed class ServerOptions
             HistoryPerMachine = Int(config, "SPOKAPILOTE_HISTORY", 20, 1, 1000),
             MaxReportBytes = Int(config, "SPOKAPILOTE_MAX_REPORT_MB", 5, 1, 100) * 1024L * 1024L,
             StaleDays = Int(config, "SPOKAPILOTE_STALE_DAYS", 7, 0, 3650),
+            JobExpiryDays = Int(config, "SPOKAPILOTE_JOB_EXPIRY_DAYS", 7, 1, 365),
+            JobRunningTimeoutHours = Int(config, "SPOKAPILOTE_JOB_TIMEOUT_HOURS", 6, 1, 168),
+            AuthFailuresPerMinute = Int(config, "SPOKAPILOTE_AUTH_FAILURES_PER_MINUTE", 10, 0, 10000),
         };
     }
 }

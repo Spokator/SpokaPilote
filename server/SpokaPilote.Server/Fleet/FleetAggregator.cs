@@ -1,12 +1,17 @@
 namespace SpokaPilote.Server.Fleet;
 
 /// <summary>Poste connu de la console : dernier rapport reçu et date de dernier contact.</summary>
-public sealed record StoredMachine(string Name, DateTimeOffset LastSeen, int ReportCount, MachineReport Report);
+/// <param name="Id">Clé interne du poste (stable même si le poste change de nom).</param>
+/// <param name="MachineId">Identifiant Windows du poste (MachineGuid), null pour un poste qui n'a envoyé que des rapports antérieurs à la 3.0.</param>
+/// <param name="AgentSeen">Dernière interrogation de la file de tâches par l'agent du poste (null = agent jamais vu).</param>
+public sealed record StoredMachine(string Name, DateTimeOffset LastSeen, int ReportCount, MachineReport Report,
+    long Id = 0, string? MachineId = null, DateTimeOffset? AgentSeen = null);
 
 /// <summary>Ligne de la liste des postes (indicateurs uniquement, sans le détail des périphériques).</summary>
 public sealed class MachineRow
 {
     public string Name { get; init; } = "";
+    public string? MachineId { get; init; }
     public string Model { get; init; } = "";
     public string? SerialNumber { get; init; }
     public string? Os { get; init; }
@@ -30,6 +35,17 @@ public sealed class MachineRow
     public bool Healthy { get; init; }
     /// <summary>Poste qui n'a pas envoyé de rapport depuis le délai configuré (7 jours par défaut).</summary>
     public bool Stale { get; init; }
+    /// <summary>Score de santé 0-100 (null = rapport sans objet « health »).</summary>
+    public int? HealthScore { get; init; }
+    public string? HealthGrade { get; init; }
+    public int HealthCritical { get; init; }
+    public int HealthWarnings { get; init; }
+    /// <summary>Un pilote connu pour être dangereux (constat critique « known-bad-driver ») est présent.</summary>
+    public bool DangerousDriver { get; init; }
+    /// <summary>Dernière interrogation de la file de tâches par l'agent (null = agent jamais vu).</summary>
+    public DateTimeOffset? AgentSeen { get; init; }
+    /// <summary>Tâches à distance en attente ou en cours pour ce poste (renseigné par l'API).</summary>
+    public int ActiveJobs { get; set; }
 }
 
 /// <summary>Matériel sans pilote trouvé, agrégé par ID matériel sur tout le parc : la liste de ce qu'il reste à trouver.</summary>
@@ -71,6 +87,14 @@ public sealed class FleetSummary
     public int Installed { get; init; }
     public int Failed { get; init; }
     public int RebootRequired { get; init; }
+    /// <summary>Santé moyenne des postes qui la transmettent (null = aucun).</summary>
+    public double? AverageHealth { get; init; }
+    public int HealthMachines { get; init; }
+    public int DangerousDrivers { get; init; }
+    /// <summary>Tâches à distance (renseigné par l'API).</summary>
+    public int PendingJobs { get; set; }
+    public int RunningJobs { get; set; }
+    public int FailedJobs24h { get; set; }
     public List<MachineRow> ToProcessMachines { get; init; } = new();
     public List<MachineRow> StaleMachines { get; init; } = new();
     public List<MissingHardware> MissingDrivers { get; init; } = new();
@@ -87,6 +111,7 @@ public static class FleetAggregator
         return new MachineRow
         {
             Name = m.Name,
+            MachineId = m.MachineId ?? s.MachineId,
             Model = s.DisplayModel,
             SerialNumber = s.SerialNumber,
             Os = $"{s.OsCaption} {s.OsDisplayVersion}".Trim(),
@@ -109,6 +134,12 @@ public static class FleetAggregator
             RebootRequired = r.RebootRequired,
             Healthy = r.Healthy,
             Stale = IsStale(m.LastSeen, now, staleDays),
+            HealthScore = r.Health?.Score,
+            HealthGrade = r.Health?.Grade,
+            HealthCritical = r.Health?.Critical ?? 0,
+            HealthWarnings = r.Health?.Warnings ?? 0,
+            DangerousDriver = r.Health?.HasDangerousDriver ?? false,
+            AgentSeen = m.AgentSeen,
         };
     }
 
@@ -152,6 +183,7 @@ public static class FleetAggregator
     public static FleetSummary Summarize(IReadOnlyCollection<StoredMachine> machines, DateTimeOffset now, int staleDays)
     {
         var rows = Rows(machines, now, staleDays);
+        var scored = rows.Where(r => r.HealthScore is not null).ToList();
         return new FleetSummary
         {
             GeneratedAt = now,
@@ -169,6 +201,9 @@ public static class FleetAggregator
             Installed = rows.Sum(r => r.Installed),
             Failed = rows.Sum(r => r.Failed),
             RebootRequired = rows.Count(r => r.RebootRequired),
+            AverageHealth = scored.Count == 0 ? null : Math.Round(scored.Average(r => r.HealthScore!.Value), 1),
+            HealthMachines = scored.Count,
+            DangerousDrivers = rows.Count(r => r.DangerousDriver),
             ToProcessMachines = rows.Where(r => !r.Healthy).ToList(),
             StaleMachines = rows.Where(r => r.Stale).OrderBy(r => r.LastSeen).ToList(),
             MissingDrivers = MissingDrivers(machines),
