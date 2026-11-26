@@ -45,6 +45,18 @@ services:
       SPOKAPILOTE_RETRY_AFTER_SECONDS: ${SPOKAPILOTE_RETRY_AFTER_SECONDS:-}
       SPOKAPILOTE_BACKUP_TIME: ${SPOKAPILOTE_BACKUP_TIME:-}
       SPOKAPILOTE_BACKUP_KEEP: ${SPOKAPILOTE_BACKUP_KEEP:-}
+      # Cache de pilotes et de catalogues (4.0) : actif par défaut, dans /data/cache (voir docs/CONSOLE-CENTRALE.md, § 12).
+      # Vide = réglage de la page Paramètres de la console (ou valeur par défaut) ; une variable définie y est verrouillée.
+      SPOKAPILOTE_CACHE_ENABLED: ${SPOKAPILOTE_CACHE_ENABLED:-}
+      SPOKAPILOTE_CACHE_MAX_GB: ${SPOKAPILOTE_CACHE_MAX_GB:-}
+      SPOKAPILOTE_CACHE_MIN_FREE_GB: ${SPOKAPILOTE_CACHE_MIN_FREE_GB:-}
+      SPOKAPILOTE_CACHE_CATALOGS: ${SPOKAPILOTE_CACHE_CATALOGS:-}
+      SPOKAPILOTE_CACHE_CATALOG_HOURS: ${SPOKAPILOTE_CACHE_CATALOG_HOURS:-}
+      SPOKAPILOTE_CACHE_FILE_DAYS: ${SPOKAPILOTE_CACHE_FILE_DAYS:-}
+      SPOKAPILOTE_CACHE_MAX_DOWNLOADS: ${SPOKAPILOTE_CACHE_MAX_DOWNLOADS:-}
+      # Proxy sortant de la console vers les sources officielles (si le serveur n'a pas d'accès direct à Internet).
+      HTTPS_PROXY: ${SPOKAPILOTE_HTTPS_PROXY:-}
+      NO_PROXY: ${SPOKAPILOTE_NO_PROXY:-}
       # Alertes (facultatif ; sinon page Paramètres de la console). Une variable définie prime sur la console.
       SPOKAPILOTE_SMTP_HOST: ${SPOKAPILOTE_SMTP_HOST:-}
       SPOKAPILOTE_SMTP_PORT: ${SPOKAPILOTE_SMTP_PORT:-}

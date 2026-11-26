@@ -19,8 +19,9 @@ public static class OperationsEndpoints
         var admin = api.MapGroup("").RequireAccess(Access.Admin);
 
         admin.MapGet("/metrics", (string? format, ServerStore store, ServerOptions options, AdmissionControl admission, RequestMetrics requests,
-            BackupService backups, StorageMaintenance maintenance, TimeProvider clock) =>
+            BackupService backups, StorageMaintenance maintenance, Cache.DriverCacheStore driverCache, TimeProvider clock) =>
         {
+            var cacheStats = driverCache.Stats();
             var now = clock.GetUtcNow();
             var db = store.GetDatabaseStats();
             var fleet = store.GetFleetCounters(now, options.StaleDays);
@@ -29,7 +30,8 @@ public static class OperationsEndpoints
             var (hits, misses) = store.FleetCacheStats;
             var routes = requests.Snapshot();
             if (string.Equals(format, "prometheus", StringComparison.OrdinalIgnoreCase))
-                return Results.Text(Prometheus(db, fleet, admission, routes, process, hits, misses, backups), "text/plain; version=0.0.4; charset=utf-8");
+                return Results.Text(Prometheus(db, fleet, admission, routes, process, hits, misses, backups) + Cache.DriverCacheEndpoints.Prometheus(cacheStats),
+                    "text/plain; version=0.0.4; charset=utf-8");
             return Results.Ok(new
             {
                 version = ApiEndpoints.Version,
@@ -77,6 +79,16 @@ public static class OperationsEndpoints
                 },
                 requests = new { inFlight = requests.InFlight, routes },
                 backup = new { running = backups.IsRunning, last = backups.Last, count = backups.List().Count, schedule = options.BackupTime },
+                // Cache de pilotes (4.0) : taille, taux de réussite, octets évités, garde d'espace disque.
+                driverCache = new
+                {
+                    enabled = cacheStats.Enabled, catalogs = cacheStats.Catalogs, sizeBytes = cacheStats.SizeBytes, maxBytes = cacheStats.MaxBytes,
+                    files = cacheStats.Files, catalogEntries = cacheStats.CatalogEntries, hits = cacheStats.Hits, misses = cacheStats.Misses,
+                    hitRatio = cacheStats.HitRatio is { } ratio ? Math.Round(ratio, 4) : (double?)null, bytesSaved = cacheStats.BytesServedFromCache,
+                    bytesFromOrigin = cacheStats.BytesFromOrigin, bypassed = cacheStats.Bypassed, refused = cacheStats.Refused, errors = cacheStats.Errors,
+                    hashMismatches = cacheStats.HashMismatches, downloadsInProgress = cacheStats.DownloadsInProgress, freeBytes = cacheStats.FreeBytes,
+                    diskGuardActive = cacheStats.DiskGuardActive,
+                },
             });
         });
 

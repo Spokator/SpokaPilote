@@ -19,4 +19,11 @@
   <ItemGroup>
     <InternalsVisibleTo Include="SpokaPilote.Server.Tests" />
   </ItemGroup>
+  <ItemGroup>
+    <!--
+      Cache de pilotes : la console n'accepte que les domaines officiels que le client accepte lui-même. La liste est
+      partagée (même fichier source, sans dépendance à Windows) plutôt que recopiée ; le Dockerfile copie ce seul fichier.
+    -->
+    <Compile Include="..\..\src\SpokaPilote.Core\Infrastructure\OfficialHosts.cs" Link="Cache\OfficialHosts.cs" />
+  </ItemGroup>
 </Project>

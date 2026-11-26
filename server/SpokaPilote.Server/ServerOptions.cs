@@ -48,6 +48,14 @@ public sealed class ServerOptions
     /// <summary>Heure de la sauvegarde automatique quotidienne (« 03:00 », fuseau du serveur) ; vide = pas de sauvegarde automatique.</summary>
     public string? BackupTime { get; init; }
 
+    // ------------------------------------------------------------------ cache de pilotes (4.0)
+
+    /// <summary>Dossier du cache de pilotes et de catalogues (par défaut /data/cache).</summary>
+    public string? CacheDirectoryOverride { get; init; }
+    /// <summary>Téléchargements simultanés au plus depuis les sources officielles pour le cache (au-delà : le poste télécharge directement).</summary>
+    public int CacheMaxDownloads { get; init; } = 8;
+    public string CacheDirectory => CacheDirectoryOverride ?? Path.Combine(DataDirectory, "cache");
+
     public string DatabasePath => Path.Combine(DataDirectory, "spokapilote.db");
     public string BackupDirectory => Path.Combine(DataDirectory, "backups");
 
@@ -77,6 +85,8 @@ public sealed class ServerOptions
             RetryAfterSeconds = Int(config, "SPOKAPILOTE_RETRY_AFTER_SECONDS", 60, 5, 3600),
             BackupKeep = Int(config, "SPOKAPILOTE_BACKUP_KEEP", 7, 1, 365),
             BackupTime = string.IsNullOrWhiteSpace(config["SPOKAPILOTE_BACKUP_TIME"]) ? null : config["SPOKAPILOTE_BACKUP_TIME"]!.Trim(),
+            CacheDirectoryOverride = string.IsNullOrWhiteSpace(config["SPOKAPILOTE_CACHE_DIR"]) ? null : Path.GetFullPath(config["SPOKAPILOTE_CACHE_DIR"]!.Trim()),
+            CacheMaxDownloads = Int(config, "SPOKAPILOTE_CACHE_MAX_DOWNLOADS", 8, 1, 256),
         };
     }
 }

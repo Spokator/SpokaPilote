@@ -7,31 +7,8 @@ namespace SpokaPilote.Core.Infrastructure;
 /// </summary>
 public sealed class TrustPolicy
 {
-    public static readonly string[] BuiltInHosts =
-    {
-        // Microsoft (Windows Update / Microsoft Update Catalog)
-        "catalog.update.microsoft.com",
-        "www.catalog.update.microsoft.com",
-        "catalog.s.download.windowsupdate.com",
-        "download.windowsupdate.com",
-        "*.download.windowsupdate.com",
-        "download.microsoft.com",
-        "*.download.microsoft.com",
-        // Constructeurs PC
-        "downloads.dell.com",
-        "dl.dell.com",
-        "ftp.hp.com",
-        "ftp.ext.hp.com",
-        "hpia.hpcloud.hp.com",
-        "download.lenovo.com",
-        // Fondeurs
-        "downloadmirror.intel.com",
-        "drivers.amd.com",
-        // NVIDIA : miroir principal servi par son service de pilotes (DownloadURLAdmin) et miroir international
-        // hébergeant les mêmes paquets signés « NVIDIA Corporation ».
-        "us.download.nvidia.com",
-        "international.download.nvidia.com",
-    };
+    /// <summary>Domaines officiels de téléchargement (liste partagée avec la console centrale : <see cref="OfficialHosts"/>).</summary>
+    public static readonly string[] BuiltInHosts = OfficialHosts.Download;
 
     public static readonly string[] BuiltInPublishers =
     {

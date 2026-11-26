@@ -1648,8 +1648,10 @@ schtasks /Create /F /TN "SpokaPilote\\Analyse" /SC WEEKLY /D MON /ST 09:00 /RU S
           </table></div>`}
         </section>
 
-        <section class="section" id="s-ops"></section>`;
+        <section class="section" id="s-ops"></section>
+        <section class="section" id="s-cache"></section>`;
       renderOps();
+      renderDriverCache($('#s-cache')); // cache de pilotes (4.0)
 
       $('#s-add-hook').addEventListener('click', () => {
         $('#s-no-hook')?.remove();
@@ -1754,6 +1756,111 @@ schtasks /Create /F /TN "SpokaPilote\\Analyse" /SC WEEKLY /D MON /ST 09:00 /RU S
     render();
     return {};
   }
+
+  // ------------------------------------------------------------------ cache de pilotes et de catalogues (4.0)
+  // Bloc autonome (appelé par la page Paramètres) : état, réglages, fichiers les plus demandés, purge, préchargement.
+
+  const CACHE_FIELDS = [
+    ['maxSizeGb', 'Taille maximale (Go)', 'min="0.01" max="100000" step="0.5"'],
+    ['catalogTtlHours', 'Conservation des catalogues (heures)', 'min="1" max="168"'],
+    ['fileMaxAgeDays', 'Ancienneté maximale d\'un fichier (jours)', 'min="1" max="3650"'],
+    ['minFreeGb', 'Espace libre minimal du volume (Go)', 'min="0" max="100000" step="0.5"'],
+  ];
+
+  async function renderDriverCache(box) {
+    if (!box) return;
+    let c;
+    try { c = await api('/settings/cache'); } catch (e) { fail(e); return; }
+    const size = (n) => (n >= 1073741824
+      ? `${(n / 1073741824).toLocaleString('fr-FR', { maximumFractionDigits: 1 })} Go`
+      : `${(n / 1048576).toLocaleString('fr-FR', { maximumFractionDigits: 1 })} Mo`);
+    const st = c.stats;
+    const locked = (f) => c.locked.includes(f);
+    const lockNote = (f) => (locked(f) ? ` <span class="lock" title="${esc(c.variables[f])}">variable d'environnement</span>` : '');
+    const ratio = st.hitRatio == null ? '—' : `${Math.round(st.hitRatio * 100)} %`;
+    const fileName = (url) => decodeURIComponent(String(url).split('?')[0].split('/').pop() || url);
+    const p = c.prefetch;
+    box.innerHTML = `
+      <div class="section-head"><h2>Cache de pilotes et de catalogues</h2>
+        ${c.settings.enabled ? badge('actif', 'ok') : badge('désactivé')}
+        <div class="actions"><button id="c-purge" class="btn btn-sm btn-danger" type="button">Vider le cache</button>
+          <button id="c-save" class="btn btn-sm btn-primary" type="button">Enregistrer</button></div></div>
+      ${st.diskGuardActive ? '<div class="notice notice-warn">Espace disque insuffisant sur le volume de la console : plus aucun fichier n\'est mis en cache (les postes téléchargent directement).</div>' : ''}
+      <div class="card card-pad">
+        <dl class="facts">
+          <div><dt>Taille</dt><dd>${esc(size(st.sizeBytes))} sur ${esc(size(st.maxBytes))} · ${esc(plural(st.files, 'fichier', 'fichiers'))} · ${esc(plural(st.catalogEntries, 'catalogue', 'catalogues'))}</dd></div>
+          <div><dt>Réussite</dt><dd>${esc(ratio)} (${esc(st.fileHits + st.catalogHits)} servis par la console, ${esc(st.fileMisses + st.catalogMisses)} demandés à la source)</dd></div>
+          <div><dt>Téléchargements évités</dt><dd>${esc(size(st.bytesSaved))} servis depuis le cache · ${esc(size(st.bytesFromOrigin))} téléchargés depuis les sources</dd></div>
+          <div><dt>Volume</dt><dd>${esc(size(st.freeBytes))} libres sur ${esc(size(st.volumeBytes))}</dd></div>
+          <div><dt>Renvoyés en direct · erreurs</dt><dd>${esc(st.bypassed)} · ${esc(st.errors)}${st.hashMismatches ? ` · <span class="bad">${esc(st.hashMismatches)} empreinte(s) refusée(s)</span>` : ''}</dd></div>
+          ${st.microsoftCatalogPausedUntil ? `<div><dt>Microsoft Update Catalog</dt><dd class="warn">en pause jusqu'à ${esc(fmtDate(st.microsoftCatalogPausedUntil))} (« Too many search requests »)</dd></div>` : ''}
+        </dl>
+        <div class="form-grid section-tight">
+          <div><label class="check"><input id="c-enabled" type="checkbox"${c.settings.enabled ? ' checked' : ''}${locked('enabled') ? ' disabled' : ''}> Cache actif${lockNote('enabled')}</label>
+            <label class="check"><input id="c-catalogs" type="checkbox"${c.settings.catalogs ? ' checked' : ''}${locked('catalogs') ? ' disabled' : ''}> Relayer les catalogues${lockNote('catalogs')}</label></div>
+          ${CACHE_FIELDS.map(([f, l, attrs]) => `<div><label for="c-${f}">${esc(l)}${lockNote(f)}</label>
+            <input id="c-${f}" type="number" ${attrs} value="${esc(c.settings[f])}"${locked(f) ? ' disabled' : ''}></div>`).join('')}
+        </div>
+        <p class="hint">Les postes 4.0 demandent à la console les fichiers officiels (Microsoft, Dell, HP, Lenovo, NVIDIA…) et les catalogues :
+          un seul téléchargement Internet pour tout le parc. La console n'est qu'un relais : chaque poste revérifie l'empreinte, la signature
+          et le matériel, et télécharge directement si la console ne répond pas. Dossier : <code>${esc(c.directory)}</code> ·
+          ${esc(c.maxConcurrentDownloads)} téléchargements simultanés au plus vers les sources.</p>
+      </div>
+      ${c.top.length ? `<div class="table-wrap section-tight"><table>
+        <thead><tr><th>Fichier le plus demandé</th><th>Type</th><th>Taille</th><th>Demandes servies</th><th>Évité</th><th>Dernière demande</th></tr></thead>
+        <tbody>${c.top.map((t) => `<tr><td class="wrap" title="${esc(t.url)}">${esc(fileName(t.url))}</td><td>${t.kind === 'file' ? 'paquet' : 'catalogue'}</td>
+          <td class="nowrap">${esc(size(t.size))}</td><td>${esc(t.hits)}</td><td class="nowrap">${esc(size(t.bytesSaved))}</td><td class="nowrap">${esc(fmtDate(t.lastAccess))}</td></tr>`).join('')}</tbody>
+      </table></div>` : ''}
+      <div class="card card-pad section-tight">
+        <div class="inline"><input id="c-models" type="text" placeholder="Modèles à précharger (ex. Latitude 7440, HP EliteBook 840 G10), séparés par des virgules" aria-label="Modèles à précharger">
+          <button id="c-prefetch" class="btn btn-sm" type="button"${p?.running ? ' disabled' : ''}>Précharger</button>
+          <button id="c-prefetch-all" class="btn btn-sm" type="button"${p?.running ? ' disabled' : ''}>Tous les modèles du parc</button></div>
+        <p class="hint">Préchargement (site isolé, réseau à préserver) : catalogues constructeur de ces modèles et paquets proposés dans les derniers rapports de leurs postes.
+          ${p ? `<br>Dernier : ${esc(fmtDate(p.startedAt))} par ${esc(p.by)} — ${esc(p.message)}` : ''}</p>
+      </div>`;
+
+    $('#c-save', box).addEventListener('click', async () => {
+      const body = {};
+      if (!locked('enabled')) body.enabled = $('#c-enabled', box).checked;
+      if (!locked('catalogs')) body.catalogs = $('#c-catalogs', box).checked;
+      for (const [f] of CACHE_FIELDS) if (!locked(f)) body[f] = Number($(`#c-${f}`, box).value);
+      try {
+        await api('/settings/cache', { method: 'PUT', body: JSON.stringify(body) });
+        toast('Réglages du cache enregistrés.');
+        renderDriverCache(box);
+      } catch (e) { fail(e); }
+    });
+    $('#c-purge', box).addEventListener('click', async () => {
+      const form = await openModal({
+        title: 'Vider le cache de pilotes',
+        body: `<p>Les fichiers et catalogues gardés par la console (${esc(size(st.sizeBytes))}) seront supprimés ; ils seront retéléchargés à la prochaine demande d'un poste.</p>
+          <div class="radio-list">${[['all', 'Tout le cache'], ['files', 'Paquets seulement'], ['catalogs', 'Catalogues seulement']]
+            .map(([v, l], i) => `<label class="check block"><input type="radio" name="scope" value="${v}"${i === 0 ? ' checked' : ''}> ${l}</label>`).join('')}</div>`,
+        confirmLabel: 'Vider', danger: true,
+      });
+      if (!form) return;
+      try {
+        const r = await api(`/cache/purge?scope=${enc(form.querySelector('input[name=scope]:checked').value)}`, { method: 'POST' });
+        toast(`Cache vidé : ${plural(r.entries, 'entrée', 'entrées')}, ${size(r.bytes)} libérés.`);
+        renderDriverCache(box);
+      } catch (e) { fail(e); }
+    });
+    const prefetch = async (body) => {
+      try {
+        await api('/cache/prefetch', { method: 'POST', body: JSON.stringify(body) });
+        toast('Préchargement lancé en arrière-plan.');
+        setTimeout(() => renderDriverCache(box), 2000);
+      } catch (e) { fail(e); }
+    };
+    $('#c-prefetch', box).addEventListener('click', () => {
+      const models = $('#c-models', box).value.split(',').map((m) => m.trim()).filter(Boolean);
+      if (!models.length) { toast('Indiquez au moins un modèle.', true); return; }
+      prefetch({ models });
+    });
+    $('#c-prefetch-all', box).addEventListener('click', () => prefetch({ all: true }));
+  }
+
+  // ------------------------------------------------------------------ fin du cache de pilotes
 
   // ------------------------------------------------------------------ groupes de postes (3.1)
 

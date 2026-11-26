@@ -79,13 +79,27 @@ public static partial class MicrosoftCatalogClient
     [GeneratedRegex(@"\s+")]
     private static partial Regex Spaces();
 
-    private static async Task<List<CatalogEntry>> SearchOnceAsync(string query, CancellationToken ct)
+    internal static async Task<List<CatalogEntry>> SearchOnceAsync(string query, CancellationToken ct)
     {
         var cacheFile = Path.Combine(AppPaths.Ensure(Path.Combine(AppPaths.Cache, "catalog")), AppPaths.SafeName(query, 120) + ".json");
         if (File.Exists(cacheFile) && DateTime.UtcNow - File.GetLastWriteTimeUtc(cacheFile) < TimeSpan.FromHours(12))
         {
             try { return JsonSerializer.Deserialize<List<CatalogEntry>>(await File.ReadAllTextAsync(cacheFile, ct)) ?? new(); }
             catch { /* cache corrompu : on relance la recherche */ }
+        }
+
+        // Console 4.0 : la recherche passe par son cache (une requête vers Microsoft pour tout le parc, requêtes espacées).
+        if (Online.ConsoleCache.Current is { Catalogs: true } console)
+        {
+            var viaConsole = await console.TryCatalogSearchAsync(query, ct).ConfigureAwait(false);
+            if (viaConsole is { Status: Online.ConsoleCatalogStatus.RateLimited } limited)
+            {
+                RateLimitedUntil = DateTime.UtcNow + (limited.RetryAfter is { } r && r > TimeSpan.Zero && r < TimeSpan.FromMinutes(30) ? r : TimeSpan.FromMinutes(3));
+                Log.Warn("Le Microsoft Update Catalog limite temporairement les recherches (signalé par la console) : pause.");
+                throw new CatalogRateLimitedException();
+            }
+            if (viaConsole is { Status: Online.ConsoleCatalogStatus.Ok, Text: { } page })
+                return HandleSearchPage(query, page, cacheFile, viaConsole.FetchedAt);
         }
 
         if (IsRateLimited) throw new CatalogRateLimitedException();
@@ -115,28 +129,52 @@ public static partial class MicrosoftCatalogClient
                 return new();
             }
 
-            if (html.Contains("Too many search requests", StringComparison.OrdinalIgnoreCase))
-            {
-                RateLimitedUntil = DateTime.UtcNow.AddMinutes(3);
-                Log.Warn("Le Microsoft Update Catalog limite temporairement les recherches : pause de 3 minutes.");
-                throw new CatalogRateLimitedException();
-            }
-
-            var entries = ParseSearchResults(html);
-            // On ne met en cache un résultat vide que si la page indique explicitement « aucun résultat ».
-            var cacheable = entries.Count > 0 || (html.Contains("ctl00_catalogBody_noResults", StringComparison.OrdinalIgnoreCase)
-                                              && html.Contains("Search tips", StringComparison.OrdinalIgnoreCase));
-            if (cacheable)
-            {
-                try { await File.WriteAllTextAsync(cacheFile, JsonSerializer.Serialize(entries), ct); } catch { /* cache facultatif */ }
-            }
-            return entries;
+            return HandleSearchPage(query, html, cacheFile, null);
         }
         finally
         {
             Throttle.Release();
         }
     }
+
+    /// <summary>
+    /// Page de résultats (directe ou relayée par la console) : « Too many search requests » → pause de 3 minutes, jamais
+    /// mise en cache ; résultats → cache local de 12 h (daté de l'obtention par la console, le cas échéant).
+    /// </summary>
+    private static List<CatalogEntry> HandleSearchPage(string query, string html, string cacheFile, DateTimeOffset? fetchedAt)
+    {
+        if (html.Contains("Too many search requests", StringComparison.OrdinalIgnoreCase))
+        {
+            RateLimitedUntil = DateTime.UtcNow.AddMinutes(3);
+            Log.Warn("Le Microsoft Update Catalog limite temporairement les recherches : pause de 3 minutes.");
+            throw new CatalogRateLimitedException();
+        }
+
+        var entries = ParseSearchResults(html);
+        // On ne met en cache un résultat vide que si la page indique explicitement « aucun résultat ».
+        var cacheable = entries.Count > 0 || (html.Contains("ctl00_catalogBody_noResults", StringComparison.OrdinalIgnoreCase)
+                                          && html.Contains("Search tips", StringComparison.OrdinalIgnoreCase));
+        if (cacheable)
+        {
+            try
+            {
+                File.WriteAllText(cacheFile, JsonSerializer.Serialize(entries));
+                if (fetchedAt is { } f && f.UtcDateTime <= DateTime.UtcNow) File.SetLastWriteTimeUtc(cacheFile, f.UtcDateTime);
+            }
+            catch
+            {
+                /* cache facultatif */
+            }
+        }
+        else
+        {
+            Log.Debug($"Catalogue Microsoft : page inattendue pour « {query} » (non mise en cache).");
+        }
+        return entries;
+    }
+
+    /// <summary>Tests : fin de la pause « Too many search requests ».</summary>
+    internal static void ResetRateLimit() => RateLimitedUntil = DateTime.MinValue;
 
     internal static List<CatalogEntry> ParseSearchResults(string html)
     {
@@ -173,6 +211,14 @@ public static partial class MicrosoftCatalogClient
     /// <summary>Résout les URLs de téléchargement (.cab) d'une entrée du catalogue.</summary>
     public static async Task<List<string>> GetDownloadUrlsAsync(string updateId, CancellationToken ct = default)
     {
+        if (Online.ConsoleCache.Current is { Catalogs: true } console &&
+            await console.TryCatalogDownloadDialogAsync(updateId, ct).ConfigureAwait(false) is { Status: Online.ConsoleCatalogStatus.Ok, Text: { } dialog })
+        {
+            var fromConsole = DownloadUrlRegex().Matches(dialog).Select(m => m.Groups["url"].Value).Distinct().ToList();
+            // Les liens doivent rester des domaines officiels (le téléchargement le revérifie de toute façon).
+            if (fromConsole.Count > 0 && fromConsole.All(u => Uri.TryCreate(u, UriKind.Absolute, out var x) && OfficialHosts.IsOfficialDownload(x)))
+                return fromConsole;
+        }
         var payload = $"[{{\"size\":0,\"languages\":\"\",\"uidInfo\":\"{updateId}\",\"updateID\":\"{updateId}\"}}]";
         using var content = new FormUrlEncodedContent(new[] { new KeyValuePair<string, string>("updateIDs", payload) });
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);

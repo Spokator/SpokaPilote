@@ -25,6 +25,10 @@ installations, et l'équipe IT suit le parc en temps réel depuis un navigateur.
 - **Grands parcs** (3.2) : listes paginées et filtrées par le serveur, indicateurs précalculés, rapports compressés,
   afflux de postes maîtrisés (`503` + `Retry-After`), supervision (`/api/metrics`, Prometheus), sauvegarde à chaud ;
   mesuré sur 20 000 postes × 20 rapports (§ 11).
+- **Cache de pilotes et de catalogues** (4.0) : les postes demandent à la console les fichiers officiels (pilote NVIDIA
+  de 1 Go, paquets Dell, HP, Lenovo, Microsoft Update Catalog) et les catalogues ; un seul téléchargement Internet pour
+  tout le parc, plus de limitation du Microsoft Update Catalog pour des milliers de postes derrière une même adresse
+  IP. La console n'est qu'un transport : chaque poste revérifie tout comme pour un téléchargement direct (§ 12).
 
 Le serveur est un unique conteneur Linux (ASP.NET Core, .NET 10) avec une base SQLite dans un volume. Aucune base de
 données externe, aucun service tiers.
@@ -54,7 +58,8 @@ La console répond sur `http://<serveur>:8080`. L'image :
 - est construite en plusieurs étapes (`sdk:10.0` → `aspnet:10.0`) et s'exécute sous l'utilisateur non root `app`
   (UID 1654) ;
 - écoute sur le port **8080** ;
-- conserve toutes ses données dans le volume **`/data`** (`spokapilote.db`, `admin-token.txt`, `agent-token.txt`) ;
+- conserve toutes ses données dans le volume **`/data`** (`spokapilote.db`, `admin-token.txt`, `agent-token.txt`,
+  `backups/`, et `cache/` pour le cache de pilotes, § 12) ;
 - déclare un `HEALTHCHECK` sur `GET /api/health` (état visible dans `docker ps`) ;
 - fonctionne avec un système de fichiers racine en lecture seule (`read_only: true` dans le fichier Compose).
 
@@ -83,6 +88,15 @@ La console répond sur `http://<serveur>:8080`. L'image :
 | `SPOKAPILOTE_RETRY_AFTER_SECONDS` | `60` | (3.2) Délai conseillé aux postes refusés, étalé au hasard entre la moitié et une fois et demie |
 | `SPOKAPILOTE_BACKUP_TIME` | — | (3.2) Heure de la sauvegarde automatique quotidienne (`03:00`, fuseau `TZ`) ; vide = pas de sauvegarde automatique |
 | `SPOKAPILOTE_BACKUP_KEEP` | `7` | (3.2) Sauvegardes conservées dans `/data/backups` |
+| `SPOKAPILOTE_CACHE_ENABLED` | `true` | (4.0) Cache de pilotes et de catalogues (§ 12) ; une variable `SPOKAPILOTE_CACHE_*` définie verrouille le réglage dans la console |
+| `SPOKAPILOTE_CACHE_MAX_GB` | `20` | (4.0) Taille maximale du cache ; au-delà, les fichiers les moins récemment demandés sont supprimés |
+| `SPOKAPILOTE_CACHE_MIN_FREE_GB` | `10` | (4.0) Espace toujours laissé libre sur le volume (et au moins 5 % du volume) ; en dessous, plus rien n'est mis en cache |
+| `SPOKAPILOTE_CACHE_CATALOGS` | `true` | (4.0) Relais des catalogues (Microsoft Update Catalog, Dell, HP, Lenovo, NVIDIA) |
+| `SPOKAPILOTE_CACHE_CATALOG_HOURS` | `12` | (4.0) Conservation d'un catalogue avant de le redemander à la source (1 à 168) |
+| `SPOKAPILOTE_CACHE_FILE_DAYS` | `30` | (4.0) Un fichier plus ancien est retéléchargé à la demande suivante (même contenu : aucun doublon) |
+| `SPOKAPILOTE_CACHE_MAX_DOWNLOADS` | `8` | (4.0) Téléchargements simultanés au plus vers les sources ; au-delà, les postes téléchargent directement |
+| `SPOKAPILOTE_CACHE_DIR` | `/data/cache` | (4.0) Dossier du cache (par ex. un second volume) |
+| `HTTPS_PROXY`, `NO_PROXY` | — | (4.0) Proxy sortant de la console vers les sources officielles (Compose : `SPOKAPILOTE_HTTPS_PROXY`, `SPOKAPILOTE_NO_PROXY`) |
 | `SPOKAPILOTE_PORT` | `8080` | (Compose) port publié sur l'hôte ; `127.0.0.1:8080` derrière un reverse proxy |
 | `SPOKAPILOTE_BEHIND_PROXY` | `false` | (Compose) `true` derrière un reverse proxy : adresse réelle des postes (§ 4) |
 | `SPOKAPILOTE_DOMAIN` | — | (Compose, profil `https`) nom DNS public de la console pour le certificat automatique (§ 4) |
@@ -500,7 +514,8 @@ La page **Journal d'audit** (rôle Administrateur) consigne qui a fait quoi, qua
 | Actions à distance | action lancée (type, cible, nombre de tâches), tâche annulée |
 | Planifications | création, modification, suppression, chaque exécution (acteur « Planificateur ») |
 | Groupes | création, modification (nom, règles), membres ajoutés ou retirés, suppression |
-| Paramètres et alertes | réglages des alertes, alerte de test |
+| Paramètres et alertes | réglages des alertes, alerte de test, réglages du cache de pilotes (avant → après) |
+| Cache de pilotes | vidage (portée, place libérée), préchargement (modèles) |
 | Politique et profil d'imprimantes | enregistrement, suppression |
 | Postes | suppression d'un poste |
 | Journal d'audit | export CSV |
@@ -554,7 +569,7 @@ webhooks : conservez les sauvegardes en lieu sûr.
 # Sauvegarde (archive datée dans le dossier courant)
 docker compose -f server/docker-compose.yml stop
 docker run --rm -v server_spokapilote-data:/data -v "$PWD":/backup alpine \
-  tar czf /backup/spokapilote-$(date +%F).tar.gz -C /data .
+  tar czf /backup/spokapilote-$(date +%F).tar.gz --exclude=./cache -C /data .
 docker compose -f server/docker-compose.yml start
 
 # Restauration
@@ -565,7 +580,8 @@ docker compose -f server/docker-compose.yml start
 ```
 
 Le nom du volume dépend du nom du projet Compose (`server_spokapilote-data` par défaut ; `docker volume ls` pour le
-vérifier). L'archive contient les jetons : conservez-la en lieu sûr.
+vérifier). L'archive contient les jetons : conservez-la en lieu sûr. Le cache de pilotes (`/data/cache`, § 12) en est
+exclu : il se reconstitue tout seul.
 
 Volume perdu sans sauvegarde : les postes réapparaissent à leur prochain rapport, mais la politique, le profil
 d'imprimantes et l'historique sont perdus, et de nouveaux jetons sont générés (sauf s'ils sont fixés par variable).
@@ -609,7 +625,9 @@ conservés). Sauvegardez le volume avant une mise à jour majeure.
 
 ## 9. API
 
-Toutes les routes sont sous `/api` ; réponses JSON (camelCase).
+Toutes les routes sont sous `/api` ; réponses JSON (camelCase). `GET /api/metrics` contient aussi (4.0) un objet
+`driverCache` (taille, réussites, octets évités et téléchargés, renvois en direct, empreintes refusées, garde d'espace
+disque) et, au format Prometheus, les séries `spokapilote_cache_*`.
 
 Colonne **Accès** : « admin » = jeton administrateur ou compte Administrateur ; « tech » = Technicien et au-delà ;
 « lecture » = tout compte (et le jeton administrateur) ; « poste » = jeton d'enrôlement. Avec une session (cookie), les
@@ -667,6 +685,13 @@ requêtes POST, PUT et DELETE exigent l'en-tête `X-SpokaPilote-CSRF` (§ 2.1).
 | `GET /api/admin/backups` | admin | (3.2) Sauvegardes présentes et résultat de la dernière |
 | `POST /api/admin/backup?wait=` | admin | (3.2) Sauvegarde à chaud (`202` en arrière-plan, `wait=true` : attend et renvoie le résultat ; `409` si une sauvegarde est en cours) |
 | `POST /api/admin/vacuum` | admin | (3.2) Compactage de la base (bloque les écritures pendant sa durée : période creuse) |
+| `GET /api/cache/status` | poste ou lecture | (4.0) État du cache : actif, taille, nombre de fichiers, taux de réussite, octets évités (aucune adresse de fichier) |
+| `GET /api/cache/file?url=&sha256=&sha1=&md5=&size=` | poste | (4.0) Fichier officiel par son adresse HTTPS (§ 12) ; `Range` accepté une fois le fichier en cache ; en-tête `X-SpokaPilote-Cache` : `hit`, `miss`, `wait`, `bypass` (`503` : téléchargez directement), `refused` (`403`), `disabled` (`404`) |
+| `GET /api/cache/catalog?url=` | poste | (4.0) Catalogue ou métadonnée officielle (Dell, HP, Lenovo, NVIDIA) ; `404` + `X-SpokaPilote-Origin-Status: 404` si absent de la source ; `X-SpokaPilote-Fetched-At` : date d'obtention |
+| `GET /api/cache/catalog/mscatalog-search?q=` / `mscatalog-download?updateId=` | poste | (4.0) Recherche et liens de téléchargement du Microsoft Update Catalog ; `429` + `Retry-After` pendant une pause « Too many search requests » |
+| `GET`, `PUT /api/settings/cache` | admin | (4.0) Réglages, statistiques, fichiers les plus demandés, dernier préchargement : `{ "enabled", "catalogs", "maxSizeGb", "catalogTtlHours", "fileMaxAgeDays", "minFreeGb" }` (`null` = inchangé) |
+| `POST /api/cache/purge?scope=` | admin | (4.0) Vide le cache : `all`, `files` (paquets) ou `catalogs` |
+| `POST /api/cache/prefetch` | admin | (4.0) Préchargement en arrière-plan : `{ "models": ["Latitude 7440"] }` ou `{ "all": true }`, `"packages": false` pour les seuls catalogues (`202`) |
 
 `POST /api/reports` renvoie aussi `reportId` (à indiquer dans le résultat d'une tâche) et `renamedFrom` (ancien nom si le
 poste, reconnu par son identifiant, a été renommé).
@@ -864,3 +889,145 @@ défini) ; `PRAGMA optimize` (statistiques de l'optimiseur, `ANALYZE` si nécess
 (`VACUUM`) n'est jamais automatique : il bloque les écritures pendant sa durée (17 s pour 20 000 postes, les postes
 reçoivent alors des `503` et réessaient). Lancez-le en période creuse après une grosse suppression ou après la migration
 depuis la 3.1, quand `freeRatio` de `/api/metrics` dépasse 30 % : `POST /api/admin/vacuum`.
+
+## 12. Cache de pilotes
+
+Sans cache, 5 000 postes téléchargent chacun le même pilote NVIDIA de 1 Go, le même `CatalogPC.cab` de Dell, les mêmes
+références HP ; et des milliers de postes derrière une même adresse IP publique se font limiter par le Microsoft Update
+Catalog (« Too many search requests »). Avec la console 4.0 et des postes 4.0, **la console télécharge une fois, les
+postes se servent chez elle** (réseau local), et elle relaie les catalogues avec une durée de conservation.
+
+### Fonctionnement
+
+- **Fichiers** (`GET /api/cache/file`, jeton d'enrôlement) : le poste demande l'adresse officielle du fichier (et
+  l'empreinte publiée par la source quand elle existe). La console :
+  - n'accepte que les adresses que le poste accepte lui-même : HTTPS, port standard, sans identifiants, vers la **même
+    liste de domaines officiels** que le client (fichier source partagé, `OfficialHosts.cs`) ; chaque **redirection** est
+    revérifiée, une redirection vers un autre domaine est refusée ;
+  - télécharge **une seule fois** par adresse : les demandes simultanées rejoignent le téléchargement en cours et
+    reçoivent les octets **au fil de l'eau** (pas d'attente de la fin, pas de mise en mémoire : quelques tampons de 1 Mo) ;
+  - vérifie l'**empreinte publiée** (SHA-256, SHA-1 ou MD5) ; les derniers 64 Ko ne partent qu'après la vérification,
+    et en cas de discordance la connexion est coupée et rien n'est gardé ;
+  - range le fichier **sous son empreinte SHA-256** dans `/data/cache/blobs` : un même fichier atteint par deux adresses
+    n'est stocké qu'une fois ; index dans `/data/cache/index.json` (rapproché du disque au démarrage) ;
+  - sert ensuite le fichier depuis le disque, avec **`Range`** (reprise d'un transfert interrompu, `ETag` = empreinte) ;
+  - supprime les fichiers **les moins récemment demandés** au-delà de `SPOKAPILOTE_CACHE_MAX_GB` ; un fichier plus
+    volumineux que 90 % du cache n'est pas gardé (le poste le télécharge directement) ;
+  - **ne remplit jamais le volume** : elle laisse toujours `SPOKAPILOTE_CACHE_MIN_FREE_GB` (10 Go) et au moins 5 % du
+    volume libres pour la base, ses sauvegardes et son compactage ; en dessous, plus rien n'est mis en cache (la page
+    Paramètres l'indique, `diskGuardActive` dans `/api/metrics`) et les postes téléchargent directement ;
+  - limite ses téléchargements simultanés vers les sources (`SPOKAPILOTE_CACHE_MAX_DOWNLOADS`, 8) : au-delà, le poste
+    télécharge directement.
+- **Catalogues** (`/api/cache/catalog*`) : `CatalogPC.cab` et `DriverPackCatalog.cab` (Dell), références et catalogue
+  des packs HP, catalogues Lenovo et descripteurs de paquets, réponses du service NVIDIA, pages de recherche et liens de
+  téléchargement du Microsoft Update Catalog (clé : la recherche normalisée — casse et espaces). Chaque catalogue est
+  gardé `SPOKAPILOTE_CACHE_CATALOG_HOURS` heures (12 par défaut) puis redemandé une fois pour tout le parc ; un catalogue
+  absent de la source (`404`) est mémorisé une heure ; si la source est injoignable, la dernière copie est servie.
+  Le poste date sa copie locale du moment où la console l'a obtenue : l'âge maximal compte depuis la source.
+- **Microsoft Update Catalog** : la console fait ses recherches deux à la fois, espacées de 400 ms. Une page
+  « Too many search requests » **n'est jamais mise en cache** : la console suspend ses recherches 3 minutes et répond
+  `429` + `Retry-After` (ou sert la copie précédente) ; le poste applique alors sa pause habituelle (et, en mode
+  automatisé, attend puis reprend, comme pour une limitation directe). Une page inattendue (erreur, maintenance) est
+  transmise sans être gardée.
+
+### Modèle de sécurité : la console n'est qu'un transport
+
+Une console compromise ne doit pas pouvoir faire installer à un poste ce qu'il n'aurait pas accepté de la source
+officielle. Côté poste (`Online/ConsoleCache`, `Install/Downloader`) :
+
+1. Seules les adresses que le poste juge officielles (`TrustPolicy`) sont demandées à la console ; le jeton
+   d'enrôlement ne part que vers `ServerUrl` (pas de redirection suivie, HTTPS obligatoire hors localhost).
+2. Un fichier reçu de la console n'est **gardé que si le poste peut le vérifier seul, avant tout usage** : empreinte
+   publiée par la source (catalogue Dell, HP, Lenovo, nom de fichier du Microsoft Update Catalog, MD5 de NVIDIA), ou à
+   défaut **signature Authenticode valide d'un éditeur approuvé** (`.exe`, `.msi`, `.cab`, `.msu`). Un fichier sans
+   empreinte et non signable (ex. `.zip`) ne passe jamais par la console.
+3. Copie refusée → avertissement dans le journal du poste (« Copie fournie par la console REFUSÉE… ») et
+   **téléchargement direct** depuis la source officielle ; les copies refusées par la console elle-même sont comptées
+   dans `hashMismatches`.
+4. Ensuite, **les contrôles habituels s'appliquent sans changement** : empreinte, signature Authenticode et éditeur
+   approuvé de l'installeur, signature du catalogue `.cat` et ID matériel déclaré par l'INF.
+5. Catalogues : un `.cab` (Dell, HP) reçu de la console doit porter une signature valide d'un éditeur approuvé, sinon il
+   est refusé et téléchargé directement ; les descripteurs Lenovo restent vérifiés par l'empreinte du catalogue ; les
+   liens de téléchargement du Microsoft Update Catalog doivent pointer vers des domaines officiels. Limite connue : les
+   catalogues non signés par leur éditeur (pages du Microsoft Update Catalog, XML Lenovo, réponses NVIDIA) ne peuvent
+   pas être authentifiés ; une console compromise pourrait donc **orienter le choix** vers un autre paquet officiel,
+   signé par un éditeur approuvé et correspondant au matériel (par exemple une version plus ancienne) — jamais vers un
+   fichier non officiel, non signé ou destiné à un autre matériel. C'est moins que ce qu'une console compromise peut
+   déjà faire (publier une politique de pilotes, lancer des actions à distance) ; pour l'exclure,
+   `ConsoleCacheCatalogs = false` sur les postes (ou `SPOKAPILOTE_CACHE_CATALOGS=false`) garde les fichiers en cache
+   et interroge les catalogues directement.
+6. **Jamais d'échec à cause du cache** : console injoignable, trop lente (60 s sans en-têtes ou sans octet), en erreur,
+   refusant le fichier (`403`, `502`, `503`), cache désactivé ou console 3.x → téléchargement direct (journalisé). Une
+   console injoignable ou figée n'est plus sollicitée pendant 5 minutes ; une console 3.x pendant une heure. Un
+   transfert interrompu d'un fichier en cache reprend une fois là où il s'était arrêté (`Range` + `If-Range`).
+
+Les tests le prouvent : copie altérée (même taille, empreinte différente ; fichier non signé sans empreinte) refusée et
+remplacée par le fichier officiel, catalogue `.cab` non signé refusé, redirection vers un domaine non officiel refusée
+par la console, empreinte publiée différente → rien en cache.
+
+### Réglages
+
+**Console** (variables d'environnement, ou page **Paramètres** → « Cache de pilotes et de catalogues » ; une variable
+définie y est verrouillée) : `SPOKAPILOTE_CACHE_ENABLED`, `SPOKAPILOTE_CACHE_MAX_GB`, `SPOKAPILOTE_CACHE_MIN_FREE_GB`,
+`SPOKAPILOTE_CACHE_CATALOGS`, `SPOKAPILOTE_CACHE_CATALOG_HOURS`, `SPOKAPILOTE_CACHE_FILE_DAYS`,
+`SPOKAPILOTE_CACHE_MAX_DOWNLOADS`, `SPOKAPILOTE_CACHE_DIR` (§ 1). La console doit pouvoir joindre les sources
+officielles en HTTPS (directement ou par `HTTPS_PROXY`). La page affiche la taille, le taux de réussite, les octets
+évités, l'espace libre, les fichiers les plus demandés ; **Vider le cache** (tout, paquets ou catalogues) et chaque
+modification des réglages sont inscrits au journal d'audit.
+
+**Cache actif par défaut**, parce qu'il est sûr par construction (transport seulement, vérification indépendante sur
+chaque poste, repli automatique) et que son bénéfice est maximal sans rien configurer. Il ne consomme rien tant
+qu'aucun poste 4.0 ne s'en sert, et il ne prend jamais la place réservée à la base. Désactivez-le
+(`SPOKAPILOTE_CACHE_ENABLED=false`) si la console est hébergée hors du réseau des postes (cloud, autre site) : les
+postes iraient chercher les gros fichiers chez elle plutôt que sur les CDN des constructeurs.
+
+**Postes** (`settings.json`, déployable par GPO / Intune, ou page Paramètres de l'application) :
+
+| Réglage | Défaut | Rôle |
+|---|---|---|
+| `UseConsoleCache` | `auto` | `auto` : utilisé quand `ServerUrl` et `ServerToken` sont configurés et que le cache de la console est actif ; `on` : idem, avec un avertissement dans le journal à chaque repli sur le téléchargement direct ; `off` : jamais |
+| `ConsoleCacheCatalogs` | `true` | Demander aussi les catalogues à la console (voir la limite du point 5 ci-dessus) |
+
+```powershell
+spokapilote config set UseConsoleCache auto
+spokapilote server status
+#   ✓ Cache de pilotes : actif, 12,4 Go sur 20, 93 % de réussite, 380,2 Go évités ; catalogues relayés
+```
+
+**Préchargement** (site isolé, réseau à préserver aux heures de bureau) : page Paramètres, ou
+`POST /api/cache/prefetch` avec `{ "models": ["Latitude 7440"] }` ou `{ "all": true }`. La console lit les derniers
+rapports des postes de ces modèles (25 par modèle au plus), télécharge leurs catalogues constructeur (Dell, référence HP
+de la plateforme et de la version de Windows, catalogue Lenovo du type de machine) puis les paquets qui leur sont
+proposés (dans la limite de 80 % du cache). Les candidats du Microsoft Update Catalog, résolus à l'installation, n'y
+figurent pas.
+
+### Compatibilité
+
+- **Postes 3.x avec une console 4.0** : inchangés (ils ignorent le cache et téléchargent directement).
+- **Postes 4.0 avec une console 3.x** : `GET /api/cache/status` répond `404` ; le poste le note pour une heure et
+  télécharge directement, sans message d'erreur.
+- **Mode portable** : facultatif, voir [MODE-PORTABLE.md](MODE-PORTABLE.md) § 7.
+- Volume : rien à faire ; le dossier `/data/cache` est créé au démarrage. Il n'a pas besoin d'être sauvegardé (il se
+  reconstitue), et la sauvegarde à chaud (`/data/backups`) ne le contient pas.
+
+### Mesures
+
+Banc d'essai (`DriverCacheBenchmark`, lancé à la demande avec `SPOKAPILOTE_CACHE_BENCH=1 dotnet test
+tests\SpokaPilote.Server.Tests --filter DriverCacheBenchmark`) : vraie console (Kestrel) sur la boucle locale, source
+« officielle » simulée par un serveur local que seul le test substitue à `downloads.dell.com`, **200 postes demandent en
+même temps le même fichier de 500 Mo** ; console, postes et source dans le même processus, sur un poste de travail
+(Core i7-11700K, 16 fils, 32 Go, SSD NVMe).
+
+| Scénario | Durée totale | Premier octet (p50 / p95) | Fin par poste (p50 / p95) | Requêtes vers la source | Mémoire (pic, tout compris) |
+|---|---:|---:|---:|---:|---:|
+| Cache vide, source illimitée | 46,2 s | 0,56 / 0,59 s | 44,9 / 46,1 s | **1** (500 Mo) | 571 Mo |
+| Cache vide, source à 800 Mbit/s | 47,9 s | 1,19 / 1,24 s | 46,7 / 47,7 s | **1** (500 Mo) | 569 Mo |
+| Fichier en cache | 52,0 s | 0,06 / 0,16 s | 51,4 / 51,9 s | 0 | 595 Mo |
+
+- 97,7 Go servis par passage (~2 Go/s agrégés, limite de la boucle locale et du processeur partagé par les 200 postes
+  simulés) ; **une seule requête vers la source** pour les 200 postes ; empreinte SHA-256 vérifiée côté poste.
+- Les postes reçoivent les octets pendant que la console télécharge : avec une source à 800 Mbit/s (5 s pour 500 Mo),
+  la durée est celle de la distribution sur le réseau local, pas celle de la source.
+- La mémoire ne dépend pas de la taille du fichier (tampons de 1 Mo par poste, aucun fichier en mémoire).
+- Sur un vrai réseau, le débit est celui du lien de la console : un lien de 10 Gbit/s sert ces 200 postes en ~80 s,
+  au lieu de 97,7 Go téléchargés depuis Internet.

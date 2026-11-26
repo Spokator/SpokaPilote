@@ -624,6 +624,9 @@ internal static partial class Program
                 if (key is null || value is null) throw new ArgumentException("Usage : spokapilote config set <clé> <valeur>");
                 var prop = typeof(Settings).GetProperties().FirstOrDefault(p => p.Name.Equals(key, StringComparison.OrdinalIgnoreCase))
                            ?? throw new ArgumentException($"Clé inconnue : {key}");
+                if (prop.Name == nameof(Settings.UseConsoleCache) && !Core.Online.ConsoleCache.IsValidMode(value))
+                    throw new ArgumentException("UseConsoleCache : auto (défaut), on ou off.");
+                if (prop.Name == nameof(Settings.UseConsoleCache)) value = value.Trim().ToLowerInvariant();
                 object converted = prop.PropertyType == typeof(bool) ? bool.Parse(value)
                     : prop.PropertyType == typeof(int) ? int.Parse(value)
                     : prop.PropertyType == typeof(string) ? value
@@ -850,6 +853,8 @@ internal static partial class Program
             CONFIGURATION
               spokapilote config [show | set <clé> <valeur> | add-repo <chemin> | remove-repo <chemin>]
                                    « show » indique aussi l'emplacement des données (installé ou mode portable)
+              spokapilote config set UseConsoleCache auto|on|off   cache de pilotes de la console centrale (4.0) ;
+                                   « server status » en donne l'état (taille, taux de réussite)
 
             MODE PORTABLE (clé USB, voir docs/MODE-PORTABLE.md)
               Archive SpokaPilote-Portable-<version>-<arch>.zip : données dans <clé>\SpokaPilote\Data (un dossier par

@@ -70,11 +70,25 @@ public sealed class SettingsViewModel : ObservableObject
             ServerStatusText = Loc.T("Test en cours...");
             var status = await new Core.Online.ServerClient(Settings).TestAsync();
             ServerStatusText = (status.Reachable && status.Authorized ? "✓ " : "✗ ") + status.Message;
+            if (status.Authorized && await CacheStatusTextAsync() is { } cache) ServerStatusText += Environment.NewLine + cache;
         }
         catch (Exception ex)
         {
             ServerStatusText = "✗ " + ex.Message;
         }
+    }
+
+    /// <summary>Ligne « Cache de pilotes » (consoles 4.0) ; null si ce poste ne l'utilise pas.</summary>
+    private async Task<string?> CacheStatusTextAsync()
+    {
+        if (Core.Online.ConsoleCache.From(Settings) is not { } cache) return null;
+        var s = await cache.GetStatusAsync();
+        if (s is null) return Loc.T("Cache de pilotes : indisponible (console antérieure à 4.0 ou injoignable) — téléchargements directs.");
+        if (!s.Enabled) return Loc.T("Cache de pilotes : désactivé sur la console — téléchargements directs.");
+        var size = (s.SizeBytes / 1073741824.0).ToString("0.0", System.Globalization.CultureInfo.CurrentUICulture);
+        return s.HitRatio is { } r
+            ? Loc.F("✓ Cache de pilotes : actif, {0} Go, {1} % de réussite.", size, Math.Round(r * 100))
+            : Loc.F("✓ Cache de pilotes : actif, {0} Go (aucune demande pour l'instant).", size);
     }
 
     // ------------------------------------------------------------------ à propos et mise à jour

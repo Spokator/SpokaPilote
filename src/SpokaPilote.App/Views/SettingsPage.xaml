@@ -83,6 +83,17 @@
                         <TextBox Text="{Binding Settings.ServerToken, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="Jeton d'enrôlement des postes" />
                         <TextBlock Text="Source de la politique (fichier, \\serveur\partage\driver-policy.json ou URL HTTPS ; vide = console centrale)" Margin="0,12,0,4" TextWrapping="Wrap" />
                         <TextBox Text="{Binding Settings.PolicySource, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="Source de la politique de pilotes" />
+                        <TextBlock Text="Cache de pilotes de la console" Margin="0,12,0,4" />
+                        <ComboBox SelectedValue="{Binding Settings.UseConsoleCache}" SelectedValuePath="Tag" Width="420" HorizontalAlignment="Left"
+                                  AutomationProperties.Name="Cache de pilotes de la console">
+                            <ComboBoxItem Tag="auto" Content="Automatique (si la console le propose)" />
+                            <ComboBoxItem Tag="on" Content="Activé (avertir à chaque téléchargement direct)" />
+                            <ComboBoxItem Tag="off" Content="Désactivé (toujours télécharger directement)" />
+                        </ComboBox>
+                        <CheckBox Content="Demander aussi les catalogues à la console (Microsoft Update Catalog, Dell, HP, Lenovo, NVIDIA)"
+                                  IsChecked="{Binding Settings.ConsoleCacheCatalogs}" Margin="0,6,0,0" />
+                        <TextBlock Style="{StaticResource Caption}" Margin="0,4,0,0" TextWrapping="Wrap"
+                                   Text="La console ne sert que de relais : chaque fichier reste vérifié sur ce poste (empreinte, signature, matériel). Si elle ne répond pas, le téléchargement se fait directement depuis la source officielle." />
                         <DockPanel Margin="0,12,0,0">
                             <Button DockPanel.Dock="Left" Content="Tester la connexion" Command="{Binding TestServerCommand}" Margin="0,0,12,0" />
                             <TextBlock VerticalAlignment="Center" TextWrapping="Wrap" Text="{Binding ServerStatusText, Mode=OneWay}" AutomationProperties.LiveSetting="Polite" />

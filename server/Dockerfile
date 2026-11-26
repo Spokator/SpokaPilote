@@ -15,6 +15,8 @@ COPY server/SpokaPilote.Server/SpokaPilote.Server.csproj server/SpokaPilote.Serv
 RUN dotnet restore server/SpokaPilote.Server/SpokaPilote.Server.csproj
 
 COPY server/SpokaPilote.Server/ server/SpokaPilote.Server/
+# Liste des domaines officiels partagée avec le client (cache de pilotes).
+COPY src/SpokaPilote.Core/Infrastructure/OfficialHosts.cs src/SpokaPilote.Core/Infrastructure/
 RUN dotnet publish server/SpokaPilote.Server/SpokaPilote.Server.csproj \
       -c Release -o /app --no-restore -p:UseAppHost=false
 
