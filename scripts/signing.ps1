@@ -137,6 +137,13 @@ function Get-SigningConfig {
         foreach ($field in "Endpoint", "CodeSigningAccountName", "CertificateProfileName") {
             if (-not $meta.$field) { throw "$azure : champ « $field » manquant (voir docs\SIGNATURE.md)." }
         }
+        # La bibliothèque Azure refuse un JSON précédé d'un BOM UTF-8 (Bloc-notes, Set-Content -Encoding UTF8) : copie sans BOM.
+        $bytes = [System.IO.File]::ReadAllBytes($azure)
+        if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) {
+            $clean = Join-Path $env:TEMP "spokapilote-artifact-metadata.json"
+            [System.IO.File]::WriteAllBytes($clean, $bytes[3..($bytes.Length - 1)])
+            $azure = $clean
+        }
         $dlib = Find-ArtifactSigningDlib
         $modeArgs = @("/dlib", $dlib, "/dmdf", $azure)
         $mode = "Azure"; $description = "Azure Artifact Signing (compte $($meta.CodeSigningAccountName), profil $($meta.CertificateProfileName))"
@@ -195,6 +202,7 @@ function Test-CodeSignature($Config, [string]$Path) {
         $text = $output -join "`n"
         if ($text -match 'not trusted|non approuv|0x800B0109') {
             Write-Host "Signature présente mais certificat non approuvé sur ce poste (normal avec un certificat de test) : $name" -ForegroundColor Yellow
+            $global:LASTEXITCODE = 0 # ne pas faire croire à un échec au script appelant
             return
         }
         throw "Signature invalide pour $name :`n$text"
