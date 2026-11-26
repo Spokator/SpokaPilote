@@ -1,12 +1,13 @@
 # Boîte à outils du technicien
 
-Trois outils pour diagnostiquer et remettre en ordre un poste, sans rien installer :
+Quatre outils pour diagnostiquer et remettre en ordre un poste, sans rien installer :
 
 | Outil | Commande | À quoi ça sert |
 |---|---|---|
 | **Santé des pilotes** | `spokapilote health` | Une note de A à E et la liste de ce qui ne va pas, du plus grave au moins grave |
 | **Réparation guidée** | `spokapilote device ...` | Comprendre pourquoi un périphérique est en erreur et appliquer la bonne action |
 | **Nettoyage du magasin** | `spokapilote driverstore ...` | Retirer les anciennes versions de pilotes devenues inutiles |
+| **État du BIOS** | `spokapilote health` | Savoir si le BIOS est en retard sur le catalogue Dell / HP / Lenovo, sans jamais le flasher |
 
 Toutes les commandes de lecture (`health`, `device list`, `device info`, `driverstore list`, `driverstore clean --dry-run`)
 fonctionnent **sans droits administrateur** et ne modifient rien. Les actions réelles demandent une console
@@ -51,6 +52,8 @@ On part de 100 points :
 | Pilote non signé (`unsigned-driver`) | attention | −15 chacun |
 | Pilote tiers de plus de 5 ans (`old-driver`) | info | −3 chacun, −15 au maximum |
 | Mise à jour disponible (`update-available`) | info | −2 chacune, −10 au maximum |
+| BIOS obsolète, mise à jour déclarée critique / urgente par le constructeur (`bios-outdated`) | attention | −5 (voir § 4 ci-dessous) |
+| BIOS obsolète, autre importance (`bios-outdated`) | info | −2 |
 | Panne matérielle (`hardware-fault`) | info | 0 (ce n'est pas un problème de pilote) |
 | Périphérique désactivé (`device-disabled`) | info | 0 (souvent volontaire) |
 
@@ -215,6 +218,119 @@ l'historique (`spokapilote history`, type « nettoyage du magasin de pilotes »)
 
 ---
 
+## 4. État du BIOS et des firmwares
+
+Un BIOS en retard laisse souvent des failles de sécurité ouvertes. SpokaPilote **signale** un BIOS obsolète, mais ne
+le **flashe jamais par surprise** : l'installation reste soumise à `--include-firmware` (réglage « Proposer aussi les
+mises à jour de BIOS et de firmware », désactivé par défaut), exactement comme avant.
+
+```
+spokapilote health                 # ligne « BIOS : ... » après les constats
+spokapilote scan --sources oem     # même ligne dans la synthèse de l'analyse
+```
+```
+BIOS : 1.12.0 installé, 1.18.0 disponible (critique) → https://www.dell.com/support/home/.../DriversDetails?driverId=...
+  ⚠ Avant de mettre à jour le BIOS : secteur branché (batterie chargée), BitLocker suspendu (Suspend-BitLocker ...
+```
+
+L'état apparaît aussi dans le rapport HTML (carte « BIOS et firmwares »), dans l'onglet **Ce poste** de l'interface
+(carte « Santé des pilotes », avec un bouton vers la page officielle) et dans le rapport JSON (objet `firmware`).
+
+### Comment c'est vérifié
+
+Quand la source du constructeur est interrogée (Dell, HP ou Lenovo, catalogue officiel déjà utilisé pour les pilotes),
+l'entrée BIOS du **modèle exact** (SKU Dell, plateforme HP, type-machine Lenovo) est **toujours** lue, même sans
+`--include-firmware`, puis comparée au BIOS installé (`Win32_BIOS` : version SMBIOS et date de publication) :
+
+| Constructeur | BIOS installé (SMBIOS) | Catalogue | Règle de comparaison |
+|---|---|---|---|
+| Dell | `1.23.0` (anciens : `A12`) | `vendorVersion` du composant `BIOS` | numérique partie par partie (`1.9.0` < `1.23.0`) ; `A12` ne se compare qu'à `Axx` |
+| HP | `T37 Ver. 01.15.00` (grand public : `F.60`) | `<Version>` du SoftPaq de catégorie `BIOS` | numérique ; révision du SoftPaq ignorée (`01.17.00 Rev.A` = `01.17.00`) ; famille `T37` comparée à celle de l'intitulé `(T37)` si présente ; `F.60` ne se compare qu'à `F.xx` |
+| Lenovo | `N2XET39W (1.29 )` | paquet de type 3 (BIOS) : niveaux `_Bios` / `Level` (`N2XET41W^`) et attribut `version` | l'identifiant de build fait foi s'il existe des deux côtés (même famille `N2XET` obligatoire), sinon la version entre parenthèses |
+
+Principe : **dans le doute, aucune conclusion**. Formats différents (`A12` contre `1.2.0`), famille de BIOS différente,
+version illisible, ou version « plus récente » au catalogue alors que le BIOS installé est daté de plus de 60 jours
+après elle : l'état est « impossible de comparer », sans constat ni pénalité, avec la raison.
+
+| État (`firmware.bios.state`) | Signification | Constat de santé |
+|---|---|---|
+| `outdated` | une version plus récente est publiée pour ce modèle | `bios-outdated` |
+| `upToDate` | le BIOS installé est la dernière version | aucun |
+| `installedNewer` | le BIOS installé est plus récent que le catalogue (catalogue en retard) | aucun |
+| `unknown` | comparaison impossible de façon fiable (raison dans `reason`) | aucun |
+| `notInCatalog` | aucun BIOS pour ce modèle dans le catalogue | aucun |
+
+Sans catalogue lu (poste d'une autre marque, source non interrogée ou indisponible), la ligne indique
+« non vérifié » et l'objet `firmware` est absent du rapport.
+
+**Importance** : celle déclarée par le constructeur — Dell `<Criticality>` (« Urgent » → critique, « Recommended »,
+« Optional »), HP `<ReleaseType>` (« Critical » → critique, « Recommended », « Routine »), Lenovo `<Severity type>`
+(1 = critique, 2 = recommandée, 3 = facultative). Si une version **intermédiaire** entre le BIOS installé et la
+dernière est critique, la mise à jour est considérée critique. Constat `bios-outdated` : **attention (−5)** si
+critique, **info (−2)** sinon. Avec `--include-firmware`, le candidat « BIOS / Firmware » n'est pas compté une
+deuxième fois en `update-available`, et il n'est plus proposé si le BIOS installé est déjà à jour (comparaison fiable).
+
+**Liens** : seuls des liens HTTPS vers des domaines officiels sont publiés (hôtes de téléchargement de la politique de
+confiance, et pages d'information `www.dell.com`, `support.hp.com`, `pcsupport.lenovo.com`, `support.lenovo.com`) ;
+un lien `http://` du catalogue est réécrit en HTTPS.
+
+### Avant de mettre à jour un BIOS
+
+SpokaPilote **ne suspend pas BitLocker** : son installation de BIOS (avec `--include-firmware`) exécute l'outil
+officiel du constructeur, sans autre préparation. À faire avant :
+- brancher le **secteur** (batterie chargée pour un portable) et ne pas éteindre pendant l'opération ;
+- **suspendre BitLocker** pour un redémarrage : `Suspend-BitLocker -MountPoint C: -RebootCount 1` (console
+  administrateur), sinon la clé de récupération sera demandée au redémarrage ;
+- de préférence, déployer le BIOS par l'outil du constructeur ou votre outil de gestion de parc ; la politique
+  `allowFirmware: false` interdit toute installation de BIOS / firmware par SpokaPilote ([POLITIQUE.md](POLITIQUE.md)).
+
+Ce rappel est affiché par `spokapilote health`, par `install` quand la sélection contient un BIOS / firmware, et par
+l'interface avant l'installation.
+
+### Stations d'accueil et Thunderbolt
+
+Les firmwares de stations d'accueil (Dell « Docks/Stands », HP « Dock », Lenovo) et de contrôleurs Thunderbolt du
+catalogue du modèle sont listés **pour information** (jamais installés par cette fonction) uniquement si les
+**identifiants matériels** indiqués par le catalogue (Dell `PCIInfo`, HP section `<Devices>`, Lenovo `_PnPID`)
+correspondent à un périphérique présent. Une entrée **sans identifiant matériel** (cas fréquent des stations Dell
+WD19 / WD22, reconnues par Dell Command | Update par d'autres moyens) n'est **pas** listée : deviner d'après le nom
+produirait des faux positifs. Le rapport le signale dans `firmware.notes`. La version du firmware en place n'étant pas
+lisible de façon fiable, aucune comparaison n'est faite.
+
+### Format JSON (objet facultatif `firmware` du rapport d'analyse)
+
+```json
+"system": { "biosVersion": "1.12.0", "biosReleaseDate": "2025-02-01T00:00:00", ... },
+"firmware": {
+  "bios": {
+    "vendor": "Dell", "state": "outdated",
+    "installedVersion": "1.12.0", "installedDate": "2025-02-01T00:00:00",
+    "latestVersion": "1.18.0", "latestDate": "2026-09-15T04:42:33Z",
+    "title": "Dell Latitude 7420/7520 System BIOS",
+    "importance": "critical", "importanceLabel": "Urgent",
+    "downloadUrl": "https://downloads.dell.com/...", "infoUrl": "https://www.dell.com/support/home/..."
+  },
+  "components": [
+    { "kind": "thunderbolt", "title": "...", "version": "37.0", "importance": "recommended", "devices": [ "..." ], "deviceIds": [ "PCI\\VEN_8086&..." ] }
+  ],
+  "notes": [ "1 firmware(s) de station d'accueil / Thunderbolt du catalogue Dell sans identifiant matériel : non listé(s)..." ]
+}
+```
+`state` : `upToDate`, `outdated`, `installedNewer`, `unknown`, `notInCatalog` ; `importance` : `critical`,
+`recommended`, `optional`, `unknown` ; `reason` explique un état `unknown` ou `notInCatalog`. L'objet `firmware` et
+`biosReleaseDate` sont absents des rapports des versions précédentes, qui se relisent sans changement ; le contrat
+`health` ne change pas (seul le code `bios-outdated` s'ajoute, sans `deviceId`).
+
+### Limites
+
+- Postes Dell, HP et Lenovo seulement (catalogues officiels déjà utilisés pour les pilotes). Microsoft Surface : les
+  firmwares UEFI arrivent par les packs pilotes et firmwares (voir [PACKS-ET-IMAGES.md](PACKS-ET-IMAGES.md)), sans
+  comparaison de version du BIOS.
+- HP : la plateforme doit avoir une référence HP Image Assistant ; Lenovo : seuls les modèles ayant un catalogue par
+  type-machine (gamme professionnelle) sont couverts. Les BIOS grand public Lenovo (`GGCN51WW`) ne sont pas comparés.
+
+---
+
 ## Pour l'intégration (interface, scripts)
 
 API du cœur (`SpokaPilote.Core`), sans dépendance à l'interface :
@@ -223,4 +339,5 @@ API du cœur (`SpokaPilote.Core`), sans dépendance à l'interface :
 |---|---|
 | Santé | `ScanResult.Health` (calculée par `DriverScanEngine.ScanAsync`), ou `DriverHealth.Compute(devices, candidates, policy, options)` → `HealthReport` (`Score`, `Grade`, `GradeLabel`, `Summary`, `Findings`) |
 | Réparation | `DeviceRepair.Plan(device, allDevices)` → `RepairPlan` (`Diagnosis`, `Advice`, `Actions`, `IsCritical`, `CriticalReason`) ; `DeviceRepair.ExecuteAsync(plan, action, new RepairOptions { DryRun, ConfirmCritical })` → `RepairResult` |
+| BIOS et firmwares | `ScanResult.Firmware` → `FirmwareStatus` (`Bios` : `State`, `InstalledVersion`, `LatestVersion`, `Importance`, `Link`, `Summary` ; `Components` ; `Notes`) ; `FirmwareStatus.Describe(status, system)` (ligne « BIOS : ... ») ; `BiosVersionComparer.Compare(vendor, installed, catalogVersion, buildIds, title)` ; `BiosStatus.UpdateWarning` |
 | Magasin | `DriverStoreCleaner.AnalyzeThisPc()` → `DriverStoreAnalysis` (`Entries`, `Candidates`, `ReclaimableBytes`, `Summary`) ; `DriverStoreCleaner.CleanAsync(analysis.Candidates, new DriverStoreCleanOptions { DryRun, Backup })` |
