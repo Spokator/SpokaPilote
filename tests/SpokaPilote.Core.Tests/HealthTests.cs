@@ -158,6 +158,13 @@ public class HealthTests
     }
 
     [Fact]
+    public void Placeholder_dates_of_intel_chipset_infs_are_not_old_drivers()
+    {
+        var chipset = Device("Intel(R) SMBus - 43A3", @"PCI\VEN_8086&DEV_43A3\3", date: new DateTime(1968, 7, 18), inf: "oem20.inf", provider: "INTEL");
+        Assert.Empty(Compute(new[] { chipset }).Findings);
+    }
+
+    [Fact]
     public void Old_driver_and_update_penalties_are_capped()
     {
         var devices = Enumerable.Range(1, 12)

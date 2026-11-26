@@ -365,24 +365,30 @@ public static partial class DriverStoreCleaner
             .Where(x => x.Original is not null)
             .ToDictionary(x => x.Key, x => x.Original!, StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>oemNN.inf → identifiant du paquet actif (HKLM\SYSTEM\DriverDatabase\DriverInfFiles).</summary>
+    /// <summary>
+    /// oemNN.inf → identifiant du paquet actif. La base est répartie entre la ruche DRIVERS
+    /// (HKLM\DRIVERS\DriverDatabase, Windows 10 et suivants) et HKLM\SYSTEM\DriverDatabase : les deux sont lues.
+    /// </summary>
     private static Dictionary<string, string> ReadPackageIds()
     {
         var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        try
+        foreach (var path in new[] { @"DRIVERS\DriverDatabase\DriverInfFiles", @"SYSTEM\DriverDatabase\DriverInfFiles" })
         {
-            using var root = Registry.LocalMachine.OpenSubKey(@"SYSTEM\DriverDatabase\DriverInfFiles");
-            if (root is null) return map;
-            foreach (var name in root.GetSubKeyNames().Where(n => OemInf().IsMatch(n)))
+            try
             {
-                using var key = root.OpenSubKey(name);
-                var active = key?.GetValue("Active") as string ?? (key?.GetValue("") as string[])?.LastOrDefault();
-                if (!string.IsNullOrWhiteSpace(active)) map[name] = active;
+                using var root = Registry.LocalMachine.OpenSubKey(path);
+                if (root is null) continue;
+                foreach (var name in root.GetSubKeyNames().Where(n => OemInf().IsMatch(n) && !map.ContainsKey(n)))
+                {
+                    using var key = root.OpenSubKey(name);
+                    var active = key?.GetValue("Active") as string ?? (key?.GetValue("") as string[])?.LastOrDefault();
+                    if (!string.IsNullOrWhiteSpace(active)) map[name] = active;
+                }
             }
-        }
-        catch (Exception ex)
-        {
-            Log.Debug($"Base des pilotes illisible : {ex.Message}");
+            catch (Exception ex)
+            {
+                Log.Debug($"Base des pilotes illisible ({path}) : {ex.Message}");
+            }
         }
         return map;
     }

@@ -123,7 +123,7 @@ public sealed class HealthOptions
 /// <item>pilote dangereux installé (« known-bad-driver », critique) : −30 chacun, et la note est plafonnée à D (score ≤ 59) ;</item>
 /// <item>périphérique sans pilote ou en erreur (« missing-driver », « device-error ») : −15 chacun ;</item>
 /// <item>pilote non signé (« unsigned-driver ») : −15 chacun ;</item>
-/// <item>pilote tiers de plus de <see cref="OldDriverYears"/> ans (« old-driver ») : −3 chacun, −15 au total au maximum ;</item>
+/// <item>pilote tiers de plus de <see cref="OldDriverYears"/> ans (« old-driver ») : −3 chacun, −15 au total au maximum ; les dates fictives (avant 2000, ex. INF du chipset Intel datés de 1968) sont ignorées ;</item>
 /// <item>mise à jour disponible (« update-available ») : −2 chacune, −10 au total au maximum ;</item>
 /// <item>panne matérielle, périphérique désactivé : information seule, 0 point.</item>
 /// </list>
@@ -133,6 +133,11 @@ public sealed class HealthOptions
 public static partial class DriverHealth
 {
     public const int OldDriverYears = 5;
+    /// <summary>
+    /// Dates antérieures ignorées pour l'âge : certains INF portent volontairement une date fictive (les INF du chipset
+    /// Intel sont datés du 18/07/1968 pour ne jamais passer devant un vrai pilote) ; ce ne sont pas des pilotes anciens.
+    /// </summary>
+    public static readonly DateTime PlaceholderDateLimit = new(2000, 1, 1);
 
     public const int PenaltyKnownBadDriver = 30;
     public const int PenaltyMissingOrError = 15;
@@ -282,7 +287,7 @@ public static partial class DriverHealth
         // 4. Pilotes tiers très anciens (les pilotes intégrés à Windows, souvent datés de 2006, sont ignorés).
         var limit = now.AddYears(-OldDriverYears);
         var oldBudget = MaxPenaltyOldDrivers;
-        foreach (var d in present.Where(d => d.IsHardware && IsThirdPartyDriver(d) && d.DriverDate is { } date && date < limit && !knownBad.Contains(d.InstanceId))
+        foreach (var d in present.Where(d => d.IsHardware && IsThirdPartyDriver(d) && d.DriverDate is { } date && date < limit && date >= PlaceholderDateLimit && !knownBad.Contains(d.InstanceId))
                                  .OrderBy(d => d.DriverDate))
         {
             var penalty = Math.Min(PenaltyOldDriver, oldBudget);
@@ -297,7 +302,7 @@ public static partial class DriverHealth
                 Severity = HealthSeverity.Info,
                 Code = HealthCodes.OldDriver,
                 Title = $"Pilote ancien : {d.Name}",
-                Detail = $"Pilote {d.DriverVersion} du {d.DriverDate:dd/MM/yyyy} ({years} ans, {d.DriverProvider ?? "fournisseur inconnu"}). → {recommendation}",
+                Detail = $"Pilote {d.DriverVersion} du {d.DriverDate:dd/MM/yyyy} (plus de {years} ans, {d.DriverProvider ?? "fournisseur inconnu"}). → {recommendation}",
                 DeviceId = d.InstanceId,
                 Penalty = penalty,
                 Recommendation = recommendation,
