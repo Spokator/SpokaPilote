@@ -1,0 +1,86 @@
+# Généré par scripts/winget-manifest.ps1 — ne pas modifier à la main.
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.10.0.schema.json
+
+PackageIdentifier: Spoka.SpokaPilote
+PackageVersion: 4.0.0
+PackageLocale: fr-FR
+Publisher: Spoka
+PublisherUrl: https://github.com/Spokator
+PublisherSupportUrl: https://github.com/Spokator/SpokaPilote/issues
+Author: Spokator
+PackageName: SpokaPilote
+PackageUrl: https://spokator.github.io/SpokaPilote/
+License: MIT
+LicenseUrl: https://github.com/Spokator/SpokaPilote/blob/main/LICENSE
+Copyright: Copyright (c) 2026 Spokator
+ShortDescription: Les bons pilotes pour tout le poste et les imprimantes d'entreprise, depuis les sources officielles uniquement.
+Description: |-
+  SpokaPilote inventorie le poste, identifie chaque composant par son identifiant matériel exact et va chercher le pilote
+  chez Microsoft (Windows Update, Microsoft Update Catalog), chez le constructeur du PC (Dell, HP, Lenovo) ou chez NVIDIA.
+  Chaque pilote est vérifié (domaine officiel en HTTPS, empreinte, signature numérique, compatibilité réelle) avant
+  installation, avec point de restauration, sauvegarde et annulation en un clic. SpokaPilote configure aussi les
+  imprimantes et copieurs réseau et remonte l'état du parc dans une console centrale auto-hébergée.
+  Interface graphique et commande « spokapilote » pour les scripts de déploiement.
+Moniker: spokapilote
+Tags:
+- pilotes
+- drivers
+- imprimantes
+- printers
+- windows-update
+- parc-informatique
+- deploiement
+- administration
+ReleaseNotes: |-
+  SpokaPilote se recentre : un logiciel clair pour les pilotes, une console taillée pour les très grands parcs, et un
+  nouveau produit, **SpokaPrint**, pour les imprimantes.
+
+  **Interface simplifiée**
+  - Nouvel **Accueil** : modèle du PC, note de santé, état du BIOS et un seul bouton qui s'adapte (Analyser ce poste →
+    Installer N pilotes → Tout est à jour), progression et résultats en clair, redémarrage proposé quand il le faut.
+  - Navigation réduite à six pages dans une barre latérale façon Windows 11 : Accueil, Pilotes (filtres manquants / mises
+    à jour / bloqués), Périphériques (réparation guidée visible tout de suite), Historique, Outils (dépôt, packs
+    constructeur, pack hors ligne, rapport de parc, nettoyage du magasin, maintenance et agent, console, journal
+    technique), Paramètres. Raccourcis Ctrl+1 à Ctrl+6, F5, F1 ; thème sombre corrigé.
+  - **Imprimantes → SpokaPrint** : la page Imprimantes quitte SpokaPilote. Les commandes `spokapilote printers …` restent
+    disponibles pour les scripts existants.
+
+  **SpokaPrint 1.0** (nouveau produit, dépôt [Spokator/SpokaPrint](https://github.com/Spokator/SpokaPrint))
+  - Découverte réseau (modèle exact, n° de série, compteurs, consommables), installation avec pilote officiel vérifié,
+    profils de déploiement par site, sous-réseau, nom de poste, **site Active Directory** ou **unité d'organisation**,
+    inventaire et nettoyage, ligne de commande `spokaprint` et tâche planifiée. Même moteur de confiance que SpokaPilote.
+  - Profils d'imprimantes : conditions `adSites` / `organizationalUnits` (un profil qui les utilise porte
+    `"version": 2` ; les versions plus anciennes le refusent au lieu de l'appliquer partout).
+
+  **Console centrale : très grands parcs**
+  - **Mesurée sur 20 000 postes** (essai à 100 000) : indicateurs précalculés à l'arrivée de chaque rapport, listes
+    paginées, filtrées et triées par le serveur, rapports stockés compressés, écritures sérialisées, index. Interrogation
+    d'un agent 1 150 ms → 3 ms (p95), liste des postes 2,6 s → 7 ms, 81 → 660 rapports/s, mémoire divisée par deux,
+    base deux fois plus petite. Délestage propre (`503` + `Retry-After` étalé) quand des milliers de postes arrivent en
+    même temps.
+  - **Anneaux de déploiement** : Pilote, Précoce, Général (modifiables, liés aux groupes) ; une nouvelle version de
+    pilote n'atteint chaque anneau qu'après son délai, et éventuellement après validation dans l'anneau précédent.
+    **Disjoncteur** : trop d'échecs d'installation (ou de périphériques en erreur après installation) et la version est
+    suspendue sur tout le parc, avec alerte et journal d'audit ; reprise ou maintien du blocage en un clic. Page
+    « Déploiement » dans la console ; les pilotes retenus apparaissent sur le poste avec la date à laquelle ils seront
+    autorisés. Conçu pour l'échelle : un poste 4.0 demande une décision pour ses seuls pilotes (quelques Ko, 1 à 10 ms,
+    quelle que soit la taille du parc, et décisions gardées en cache s'il perd la console) ; les postes 3.x reçoivent une
+    politique bornée qui ne leur laisse jamais installer une version pas encore autorisée.
+  - **Cache de pilotes et de catalogues sur le réseau local** : la console télécharge chaque fichier officiel et chaque
+    catalogue (Microsoft Update Catalog, Dell, HP, Lenovo, NVIDIA) une seule fois et le sert aux postes. Elle n'est
+    qu'un relais : chaque poste revérifie empreinte, signature et matériel, et télécharge directement si la console ne
+    répond pas. Fini le blocage du catalogue Microsoft quand des milliers de PC sortent par la même adresse.
+    Préchargement pour les sites isolés.
+  - Supervision (`/api/metrics`, format Prometheus), sauvegarde à chaud planifiable, compactage, exports CSV en continu.
+  - Migration automatique depuis la 3.x ; les postes 3.x continuent de fonctionner (politique prudente pour eux).
+
+  **Poste**
+  - Paramètre `UseConsoleCache` (auto / on / off), visible dans les Paramètres et `spokapilote server status`.
+  - Le poste renvoie son rapport sans compression si un intermédiaire la refuse, et patiente quand la console est
+    surchargée.
+ReleaseNotesUrl: https://github.com/Spokator/SpokaPilote/releases/tag/v4.0.0
+Documentations:
+- DocumentLabel: Documentation
+  DocumentUrl: https://spokator.github.io/SpokaPilote/documentation.html
+ManifestType: defaultLocale
+ManifestVersion: 1.10.0

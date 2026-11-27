@@ -1,0 +1,33 @@
+# Généré par scripts/winget-manifest.ps1 — ne pas modifier à la main.
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.locale.1.10.0.schema.json
+
+PackageIdentifier: Spoka.SpokaPilote
+PackageVersion: 4.0.0
+PackageLocale: en-US
+Publisher: Spoka
+PublisherUrl: https://github.com/Spokator
+PublisherSupportUrl: https://github.com/Spokator/SpokaPilote/issues
+Author: Spokator
+PackageName: SpokaPilote
+PackageUrl: https://github.com/Spokator/SpokaPilote
+License: MIT
+LicenseUrl: https://github.com/Spokator/SpokaPilote/blob/main/LICENSE
+Copyright: Copyright (c) 2026 Spokator
+ShortDescription: Trusted drivers for the whole PC and for business printers, from official sources only.
+Description: |-
+  SpokaPilote inventories the PC, identifies each device by its exact hardware ID and fetches the driver from Microsoft
+  (Windows Update, Microsoft Update Catalog), from the PC manufacturer (Dell, HP, Lenovo) or from NVIDIA. Every driver is
+  verified (official HTTPS domain, hash, digital signature, real hardware compatibility) before installation, with a
+  restore point, a backup and one-click rollback. It also sets up network printers and copiers and reports the state of
+  the fleet to a self-hosted central console. The user interface is in French; a "spokapilote" command is provided for
+  deployment scripts.
+Tags:
+- drivers
+- printers
+- windows-update
+- device-management
+- fleet-management
+- sysadmin
+ReleaseNotesUrl: https://github.com/Spokator/SpokaPilote/releases/tag/v4.0.0
+ManifestType: locale
+ManifestVersion: 1.10.0
