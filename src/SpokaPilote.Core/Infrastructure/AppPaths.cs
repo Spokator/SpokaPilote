@@ -88,6 +88,8 @@ public static class AppPaths
     public static string SettingsFile => Path.Combine(Ensure(Root), "settings.json");
     /// <summary>Dernière politique de pilotes valide (fonctionnement hors ligne).</summary>
     public static string PolicyCache => Path.Combine(Ensure(Root), "policy-cache.json");
+    /// <summary>Dernières décisions de diffusion par anneaux reçues de la console (poste hors ligne).</summary>
+    public static string RolloutDecisionsCache => Path.Combine(Ensure(Root), "rollout-decisions.json");
     public static string UiPreferencesFile => Layout.UiPreferencesFile;
 
     /// <summary>

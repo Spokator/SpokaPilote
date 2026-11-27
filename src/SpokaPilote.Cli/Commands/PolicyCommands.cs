@@ -126,6 +126,10 @@ internal static partial class Program
                           $"{r.MaxFailures} échec(s) toléré(s))", ConsoleColor.Gray);
             if (r.HoldUnknown)
                 WriteLine("  Nouveautés : une version jamais vue par la console est retenue jusqu'à ce qu'un rapport la lui signale.", ConsoleColor.Gray);
+            if (r.Decisions)
+                WriteLine("  Décisions  : la console décide pilote par pilote, à chaque analyse (« policy test » ou « scan » affichent les " +
+                          "pilotes retenus et leur date) ; hors ligne, les dernières décisions connues s'appliquent et les autres pilotes sont retenus.",
+                    ConsoleColor.Gray);
         }
         else
         {

@@ -98,6 +98,8 @@ La console répond sur `http://<serveur>:8080`. L'image :
 | `SPOKAPILOTE_CACHE_FILE_DAYS` | `30` | (4.0) Un fichier plus ancien est retéléchargé à la demande suivante (même contenu : aucun doublon) |
 | `SPOKAPILOTE_CACHE_MAX_DOWNLOADS` | `8` | (4.0) Téléchargements simultanés au plus vers les sources ; au-delà, les postes téléchargent directement |
 | `SPOKAPILOTE_CACHE_DIR` | `/data/cache` | (4.0) Dossier du cache (par ex. un second volume) |
+| `SPOKAPILOTE_ROLLOUT_MAX_RULES` | `2000` | (4.0) Règles de diffusion par anneaux au plus dans la politique d'un poste 3.x (ou 4.0 sans décisions) ; au-delà, forme compacte (voir [POLITIQUE.md](POLITIQUE.md#ce-que-reçoit-le-poste)) ; 50 à 20 000 |
+| `SPOKAPILOTE_ROLLOUT_MAX_KB` | `1024` | (4.0) Taille maximale de cette politique, en Ko (64 à 1 900 : les postes refusent une politique de plus de 2 Mo) |
 | `HTTPS_PROXY`, `NO_PROXY` | — | (4.0) Proxy sortant de la console vers les sources officielles (Compose : `SPOKAPILOTE_HTTPS_PROXY`, `SPOKAPILOTE_NO_PROXY`) |
 | `SPOKAPILOTE_PORT` | `8080` | (Compose) port publié sur l'hôte ; `127.0.0.1:8080` derrière un reverse proxy |
 | `SPOKAPILOTE_BEHIND_PROXY` | `false` | (Compose) `true` derrière un reverse proxy : adresse réelle des postes (§ 4) |
@@ -455,8 +457,9 @@ disjoncteur, régressions, limites) : [POLITIQUE.md, « Anneaux de déploiement 
   (catégorie « Déploiement ») et dans l'**historique** de la page.
 - **Suspension automatique** : pastille rouge sur « Déploiement » dans le menu, encart sur la vue d'ensemble et en tête de
   la page, ligne surlignée ; alerte « Pilote suspendu automatiquement » (§ 6).
-- **Aperçu** : `GET /api/rollout/preview?machine=NOM` renvoie la politique exacte que reçoit un poste (anneau, retenues,
-  familles, taille).
+- **Aperçu** : `GET /api/rollout/preview?machine=NOM` renvoie ce que reçoit un poste : son anneau, la décision de la
+  console pour chaque proposition de son dernier rapport (postes 4.0), et la taille et la forme de la politique servie aux
+  postes 3.x (complète, compacte ou sources retenues en bloc).
 
 ## 6. Alertes
 
@@ -696,7 +699,8 @@ requêtes POST, PUT et DELETE exigent l'en-tête `X-SpokaPilote-CSRF` (§ 2.1).
 | `GET /api/machines/{nom}/raw` | lecture | Dernier rapport complet tel qu'envoyé (pour `spokapilote pack`) |
 | `DELETE /api/machines/{nom}` | admin | Retire le poste et son historique |
 | `GET /api/enrollment` | admin | Jeton d'enrôlement et réglages de rétention |
-| `GET /api/policy` | poste ou lecture | Politique de pilotes (JSON brut ; `204` si aucune). (4.0) Avec le jeton d'enrôlement : politique **effective** du poste (retenues et suspensions de la diffusion en tête ; en-têtes facultatifs `X-SpokaPilote-Machine-Id`, `X-SpokaPilote-Machine` ; section `rollout` si `X-SpokaPilote-Rollout: 1` ; réponse compressée si `Accept-Encoding: gzip` ; en-tête de réponse `X-SpokaPilote-Ring`) ; sans anneau actif ni suspension, le document tel quel |
+| `GET /api/policy` | poste ou lecture | Politique de pilotes (JSON brut ; `204` si aucune). (4.0) Avec le jeton d'enrôlement : politique **effective** du poste (retenues et suspensions de la diffusion en tête ; en-têtes facultatifs `X-SpokaPilote-Machine-Id`, `X-SpokaPilote-Machine` ; section `rollout` si `X-SpokaPilote-Rollout: 1` ; avec `X-SpokaPilote-Rollout-Decisions: 1` en plus (postes 4.0), suspensions seules et `rollout.decisions: true` — les retenues sont alors demandées par `POST /api/rollout/decide` ; réponse compressée si `Accept-Encoding: gzip` ; en-tête de réponse `X-SpokaPilote-Ring`) ; sans anneau actif ni suspension, le document tel quel. Document **borné** (`SPOKAPILOTE_ROLLOUT_MAX_RULES`, `SPOKAPILOTE_ROLLOUT_MAX_KB`) quelle que soit la taille du parc |
+| `POST /api/rollout/decide` | poste | (4.0) Décisions de diffusion pour les propositions d'un poste : `{ "candidates": [ { "source": "WindowsUpdate", "title", "version", "kind": "Update" } ] }` (1 000 au plus, `Content-Encoding: gzip` accepté) ; en-têtes `X-SpokaPilote-Machine-Id`, `X-SpokaPilote-Machine` (sinon anneau le plus prudent) ; réponse : anneau (`ring`, `delayDays`, `holdUnknown`…) et `decisions` dans l'ordre des propositions, chacune `{ "status": "allowed" \| "held" \| "suspended" \| "unknown", "availableAt", "reason" }`. Lecture seule : rien n'est enregistré |
 | `PUT /api/policy` / `DELETE /api/policy` | admin | Enregistre (JSON valide exigé, 1 Mo max) / supprime la politique |
 | `GET`, `PUT`, `DELETE /api/printer-profile` | idem | Profil d'imprimantes (même fonctionnement) |
 | `GET /api/job-types` | lecture | Actions à distance autorisées (liste fermée) |
@@ -747,7 +751,7 @@ requêtes POST, PUT et DELETE exigent l'en-tête `X-SpokaPilote-CSRF` (§ 2.1).
 | `POST /api/rollout/versions/{id}/suspend` · `/resume` · `/acknowledge` | tech | (4.0) Suspendre (`{ "reason" }`), reprendre, maintenir le blocage (`{ "comment" }`) |
 | `POST /api/rollout/versions/{id}/approve` · `/unapprove` | admin | (4.0) Diffuser partout maintenant / revenir à la diffusion progressive |
 | `GET /api/rollout/history?offset=&limit=` | lecture | (4.0) Historique (suspensions, reprises, diffusions forcées, activation) |
-| `GET /api/rollout/preview?machine=` | lecture | (4.0) Politique effective d'un poste (anneau, nombre de retenues et de familles, taille, document) |
+| `GET /api/rollout/preview?machine=` | lecture | (4.0) Ce que reçoit un poste : anneau, politique 4.0 (`bytes`, `policy`), `decisions` pour les propositions de son dernier rapport (`items` : statut, date, motif), et taille / forme des documents sans décisions (`withoutDecisions`) et 3.x (`legacy` : `bytes`, `rules`, `form`, `sourceHolds`, `undatedHolds`, `omittedFamilies`, plafonds) |
 
 `POST /api/reports` renvoie aussi `reportId` (à indiquer dans le résultat d'une tâche) et `renamedFrom` (ancien nom si le
 poste, reconnu par son identifiant, a été renommé).
@@ -881,7 +885,12 @@ simultanés : 620 rapports/s, p99 0,68 s ; création d'un groupe par règle : 0,
 2 000 postes pris au hasard **p50 0,33 ms, p95 0,78 ms, p99 1,2 ms** (un document par anneau, en cache ; une requête ne
 fait que chercher l'anneau du poste) ; document de l'anneau le plus tardif 146 Ko, **7 Ko compressés** (anneau pilote :
 0,5 Ko) ; recalcul complet de l'état de diffusion 2 ms ; enregistrement d'un rapport de 15 propositions et
-5 installations p50 1,9 ms, p95 3,5 ms (coût proportionnel au rapport, pas au parc).
+5 installations p50 1,9 ms, p95 3,5 ms (coût proportionnel au rapport, pas au parc). Sur une console Docker alimentée par
+`tools/LoadTest rollout` (20 000 postes, parc réaliste de 1 500 familles : 3 117 versions en cours de diffusion ; parc
+extrême : 160 022) : décisions pour les 20 propositions d'un poste 4.0 p50 1,9 ms, p95 8,1 ms, 0,6 Ko envoyés et 1,2 Ko
+reçus (compressés) ; politique d'un poste 4.0 5 Ko (suspensions seules), d'un poste 3.x 711 Ko au plus (2 000 règles,
+plafond) ; avant, 1,9 Mo pour le parc réaliste et 14,6 Mo dès 3 000 postes pour le parc extrême (refusée par les postes :
+plus de 2 Mo). Détail : [POLITIQUE.md, « Mesures »](POLITIQUE.md#mesures).
 
 ### Dimensionnement
 

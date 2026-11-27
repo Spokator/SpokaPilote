@@ -83,7 +83,8 @@ public sealed class DriverScanEngine
     {
         var sw = Stopwatch.StartNew();
         // Chargement de la politique en parallèle de l'inventaire (ne lève jamais d'exception hors annulation).
-        var policyTask = (_policyLoader ?? new PolicyLoader(_settings)).LoadAsync(ct);
+        var loader = _policyLoader ?? new PolicyLoader(_settings);
+        var policyTask = loader.LoadAsync(ct);
         progress?.Report(new ScanProgress("Inventaire", "Identification de la machine..."));
         var system = await Task.Run(SystemInfoProvider.Collect, ct).ConfigureAwait(false);
         Log.Info($"Machine : {system.Manufacturer} {system.DisplayModel} — {system.OsCaption} {system.OsDisplayVersion} ({system.OsVersion}, {system.Architecture})");
@@ -132,7 +133,9 @@ public sealed class DriverScanEngine
         await Task.WhenAll(tasks).ConfigureAwait(false);
         foreach (var (source, warning) in context.Warnings) errors.TryAdd(source, warning);
 
-        var (merged, decisions) = ApplyPolicy(all, devices, policy.Effective);
+        if (policy.Organization?.Rollout is { Decisions: true })
+            progress?.Report(new ScanProgress("Politique", "Diffusion par anneaux : décisions de la console..."));
+        var (merged, decisions) = await ApplyPolicyAsync(loader, policy, all, devices, ct).ConfigureAwait(false);
         var firmware = context.BuildFirmwareStatus();
         var health = ComputeHealth(devices, merged, policy.Effective, firmware);
         sw.Stop();
@@ -173,6 +176,21 @@ public sealed class DriverScanEngine
             Log.Warn($"Calcul de la santé des pilotes impossible : {ex.Message}");
             return null;
         }
+    }
+
+    /// <summary>
+    /// Politique de l'analyse appliquée aux propositions trouvées. Diffusion par anneaux (console 4.0 en mode décisions) :
+    /// une décision par proposition, demandée à la console avant d'appliquer la politique — coût proportionnel aux
+    /// propositions de CE poste, pas au catalogue de pilotes du parc ; console injoignable → dernières décisions connues, et
+    /// retenue prudente des autres. Sinon (fichier, partage, console antérieure) : <see cref="ApplyPolicy"/> seul.
+    /// </summary>
+    public static async Task<(List<DriverCandidate> Candidates, List<CandidateDecision> Decisions)> ApplyPolicyAsync(PolicyLoader loader,
+        LoadedPolicy policy, IEnumerable<DriverCandidate> candidates, IReadOnlyList<DeviceInfo> devices, CancellationToken ct, DateTime? now = null)
+    {
+        var list = candidates.ToList();
+        if (policy.Organization?.Rollout is { Decisions: true })
+            policy.Effective.Decisions = await loader.DecideAsync(policy, list, ct).ConfigureAwait(false);
+        return ApplyPolicy(list, devices, policy.Effective, now);
     }
 
     /// <summary>

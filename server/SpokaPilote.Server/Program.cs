@@ -53,6 +53,9 @@ var app = builder.Build();
 var options = app.Services.GetRequiredService<ServerOptions>();
 var store = app.Services.GetRequiredService<ServerStore>();
 app.Services.GetRequiredService<TokenService>();
+// Diffusion par anneaux : plafond des politiques servies aux postes 3.x (et 4.0 sans décisions).
+app.Services.GetRequiredService<SpokaPilote.Server.Rollout.RolloutService>().Limits =
+    new SpokaPilote.Server.Rollout.RolloutLimits(options.RolloutMaxRules, options.RolloutMaxKb * 1024);
 app.Logger.LogInformation("SpokaPilote Server {Version} — données : {DataDirectory}, historique : {History} rapports par poste.",
     ApiEndpoints.Version, options.DataDirectory, options.HistoryPerMachine);
 if (store.OpenedSchemaVersion is > 0 and < ServerStore.SchemaVersion)

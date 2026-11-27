@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Text.Json;
 using SpokaPilote.Core.Infrastructure;
+using SpokaPilote.Core.Models;
 
 namespace SpokaPilote.Core.Policy;
 
@@ -39,6 +40,12 @@ public sealed class LoadedPolicy
             var suspended = Organization.Rules.Count(x => x.IsRollout && x.Id!.StartsWith(PolicyRollout.SuspendedPrefix, StringComparison.Ordinal));
             var parts = new List<string>();
             if (r.Enabled) parts.Add($"anneau {r.RingLabel}");
+            if (r.Decisions && Effective.Decisions is { } d)
+            {
+                var held = d.All.Values.Count(x => x.IsHold);
+                parts.Add($"décisions de la console{(d.FromCache ? " (cache)" : "")} : {held} proposition(s) retenue(s) sur {d.Count}");
+            }
+            else if (r.Decisions && r.Enabled) parts.Add("décisions demandées à la console pour chaque proposition");
             if (holds > 0) parts.Add($"{holds} version(s) retenue(s)");
             if (suspended > 0) parts.Add($"{suspended} suspendue(s)");
             return parts.Count == 0 ? "" : $" · diffusion par anneaux : {string.Join(", ", parts)}";
@@ -85,6 +92,12 @@ public sealed class PolicyLoader
 
     /// <summary>En-tête par lequel un poste 4.0 demande la section « rollout » de sa politique (diffusion par anneaux).</summary>
     public const string RolloutHeader = "X-SpokaPilote-Rollout";
+
+    /// <summary>En-tête par lequel un poste 4.0 demande ses retenues proposition par proposition (console en mode décisions).</summary>
+    public const string DecisionsHeader = "X-SpokaPilote-Rollout-Decisions";
+
+    /// <summary>Cache local des dernières décisions de diffusion (console injoignable).</summary>
+    public string DecisionCacheFile { get; init; } = AppPaths.RolloutDecisionsCache;
 
     /// <summary>Identité envoyée à la console avec la demande de politique (identifiant machine, nom) ; par défaut, celle du poste.</summary>
     public Func<(string? MachineId, string Name)>? Identity { get; init; }
@@ -175,6 +188,113 @@ public sealed class PolicyLoader
         Messages = messages,
     };
 
+    // ------------------------------------------------------------------ décisions de diffusion (console 4.0)
+
+    /// <summary>Propositions au plus par demande (même limite que la console).</summary>
+    public const int MaxDecisionCandidates = 1000;
+
+    /// <summary>
+    /// Décisions de diffusion pour les propositions d'une analyse (console en mode décisions : section « rollout » avec
+    /// <c>decisions: true</c>) : POST {ServerUrl}/api/rollout/decide avec la source, le titre, la version et le type de chaque
+    /// proposition (et de ses alternatives). Console injoignable, réponse invalide ou politique lue depuis le cache : dernières
+    /// décisions connues (cache local), les propositions sans décision étant retenues si l'anneau retient les nouveautés.
+    /// null si la politique n'est pas en mode décisions (rien à demander : retenues dans les règles, comportement précédent).
+    /// Ne lève pas d'exception (hors annulation) ; les problèmes sont ajoutés à <see cref="LoadedPolicy.Messages"/>.
+    /// </summary>
+    public async Task<RolloutDecisions?> DecideAsync(LoadedPolicy policy, IEnumerable<DriverCandidate> candidates, CancellationToken ct = default)
+    {
+        if (policy.Organization?.Rollout is not { Decisions: true } || policy.OrganizationOrigin is not { } origin) return null;
+        var all = new Dictionary<string, DriverCandidate>(StringComparer.Ordinal);
+        foreach (var c in candidates)
+            foreach (var x in c.Alternatives.Prepend(c))
+                if (!x.IsInformational && DriverVersion.Parse(x.Version) is not null) all.TryAdd(RolloutDecisions.Key(x), x);
+        if (all.Count == 0) return new RolloutDecisions(new Dictionary<string, RolloutDecision>(), fromCache: false);
+
+        string problem;
+        if (policy.FromCache) problem = "console injoignable lors du chargement de la politique";
+        else
+        {
+            try
+            {
+                var decided = await RequestDecisionsAsync(origin, all.Values.Take(MaxDecisionCandidates).ToList(), ct).ConfigureAwait(false);
+                RolloutDecisions.Save(DecisionCacheFile, origin, decided, DateTime.Now);
+                Log.Info($"Diffusion par anneaux : {decided.Count} décision(s) reçue(s) de la console " +
+                         $"({decided.Values.Count(d => d.IsHold)} retenue(s) ou suspension(s)).");
+                return new RolloutDecisions(decided, fromCache: false);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                problem = ex.Message;
+            }
+        }
+        var cached = RolloutDecisions.FromCacheFile(DecisionCacheFile, origin, all.Values) ??
+                     new RolloutDecisions(new Dictionary<string, RolloutDecision>(), fromCache: true);
+        var missing = all.Count - cached.Count;
+        var r = policy.Organization.Rollout;
+        policy.Messages.Add($"Diffusion par anneaux : décisions de la console indisponibles ({problem}). Dernières décisions connues appliquées " +
+                            $"à {cached.Count} proposition(s){(cached.CachedAt is { } at ? $" (cache du {at:dd/MM/yyyy HH:mm})" : "")}" +
+                            (missing > 0 ? r.HoldUnknown ? $" ; {missing} autre(s) retenue(s) par prudence jusqu'au retour de la console." : $" ; {missing} sans décision." : "."));
+        Log.Info(policy.Messages[^1]);
+        return cached;
+    }
+
+    private async Task<Dictionary<string, RolloutDecision>> RequestDecisionsAsync(string policyUrl, IReadOnlyList<DriverCandidate> list, CancellationToken ct)
+    {
+        if (!Uri.TryCreate(policyUrl, UriKind.Absolute, out var policyUri) || !ShouldSendToken(policyUri))
+            throw new InvalidOperationException("la politique ne vient pas de la console configurée (ServerUrl)");
+        var uri = new Uri(_settings.ServerUrl!.Trim().TrimEnd('/') + "/api/rollout/decide");
+        var body = JsonSerializer.SerializeToUtf8Bytes(new
+        {
+            candidates = list.Select(c => new { source = c.Source.ToString(), title = c.Title, version = c.Version, kind = c.Kind.ToString() }),
+        });
+        using var compressed = new MemoryStream();
+        await using (var gzip = new System.IO.Compression.GZipStream(compressed, System.IO.Compression.CompressionLevel.Fastest, leaveOpen: true))
+            await gzip.WriteAsync(body, ct).ConfigureAwait(false);
+        using var request = new HttpRequestMessage(HttpMethod.Post, uri) { Content = new ByteArrayContent(compressed.ToArray()) };
+        request.Content.Headers.ContentType = new MediaTypeHeaderValue("application/json") { CharSet = "utf-8" };
+        request.Content.Headers.ContentEncoding.Add("gzip");
+        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _settings.ServerToken);
+        var (machineId, machineName) = (Identity ?? DefaultIdentity)();
+        if (machineId is not null) request.Headers.TryAddWithoutValidation(Online.ServerClient.MachineIdHeader, machineId);
+        request.Headers.TryAddWithoutValidation(Online.ServerClient.MachineNameHeader, machineName);
+
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        cts.CancelAfter(Timeout);
+        using var response = await _http.SendAsync(request, cts.Token).ConfigureAwait(false);
+        if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
+            throw new InvalidOperationException($"accès refusé (HTTP {(int)response.StatusCode}) : vérifiez le jeton ServerToken");
+        if (!response.IsSuccessStatusCode) throw new InvalidOperationException($"HTTP {(int)response.StatusCode} {response.ReasonPhrase}");
+        var text = await response.Content.ReadAsStringAsync(cts.Token).ConfigureAwait(false);
+        if (text.Length > MaxPolicyBytes) throw new InvalidOperationException("réponse trop volumineuse");
+
+        using var doc = JsonDocument.Parse(text);
+        if (!doc.RootElement.TryGetProperty("decisions", out var decisions) || decisions.ValueKind != JsonValueKind.Array || decisions.GetArrayLength() != list.Count)
+            throw new InvalidOperationException("réponse de la console illisible (liste des décisions absente ou incomplète)");
+        var now = DateTime.Now;
+        var result = new Dictionary<string, RolloutDecision>(StringComparer.Ordinal);
+        var i = 0;
+        foreach (var d in decisions.EnumerateArray())
+        {
+            var c = list[i++];
+            var status = d.TryGetProperty("status", out var s) && s.ValueKind == JsonValueKind.String ? s.GetString() : null;
+            // Statut inconnu (console plus récente) : traité comme une retenue (jamais comme une autorisation).
+            if (status is not (RolloutDecision.Allowed or RolloutDecision.Held or RolloutDecision.Suspended or RolloutDecision.Unknown)) status = RolloutDecision.Held;
+            result[RolloutDecisions.Key(c)] = new RolloutDecision
+            {
+                Status = status,
+                Reason = d.TryGetProperty("reason", out var reason) && reason.ValueKind == JsonValueKind.String ? reason.GetString() : null,
+                AvailableAt = d.TryGetProperty("availableAt", out var at) && at.ValueKind == JsonValueKind.String && at.TryGetDateTimeOffset(out var when) ? when : null,
+                DecidedAt = now,
+            };
+        }
+        return result;
+    }
+
     // ------------------------------------------------------------------ récupération
 
     /// <summary>Lit la politique (fichier, partage ou URL). noPolicy = la console a répondu 204.</summary>
@@ -196,6 +316,9 @@ public sealed class PolicyLoader
                 if (machineId is not null) request.Headers.TryAddWithoutValidation(Online.ServerClient.MachineIdHeader, machineId);
                 request.Headers.TryAddWithoutValidation(Online.ServerClient.MachineNameHeader, machineName);
                 request.Headers.TryAddWithoutValidation(RolloutHeader, "1");
+                // Console 4.0 récente : retenues décidées proposition par proposition (POST /api/rollout/decide) plutôt que la
+                // liste de tout le parc dans la politique. Une console qui ne connaît pas cet en-tête sert la liste (comportement précédent).
+                request.Headers.TryAddWithoutValidation(DecisionsHeader, "1");
             }
 
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
