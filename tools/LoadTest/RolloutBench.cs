@@ -31,6 +31,8 @@ public static class RolloutBench
         var samples = Math.Min(o.Int("samples", 200), machines);
         var concurrency = o.Int("concurrency", 8);
         var round = o.Int("round", 2);
+        // --candidates N : au moins N propositions par poste (parc synthétique, qui en a peu : propositions de rapports voisins).
+        var minCandidates = o.Int("candidates", 0);
         var admin = o.Str("admin") ?? throw new ArgumentException("--admin requis");
         var agent = o.Str("agent") ?? throw new ArgumentException("--agent requis");
         var generator = new ReportGenerator(machines, o.Str("fleet", "synthetic"));
@@ -76,7 +78,7 @@ public static class RolloutBench
                 Track(docs, "4.0 décisions", small40);
             }
 
-            var candidates = generator.Candidates(index, round, DateTimeOffset.UtcNow);
+            var candidates = CandidatesOf(generator, index, round, minCandidates);
             var body = DecideBody(candidates);
             var raw = Encoding.UTF8.GetBytes(body);
             var gz = ReportGenerator.Gzip(raw);
@@ -178,6 +180,24 @@ public static class RolloutBench
         public int Count;
         public long Raw, Wire, Rules;
         public int MaxRaw, MaxWire, MaxRules;
+    }
+
+    /// <summary>
+    /// Propositions du dernier rapport du poste ; si <paramref name="min"/> est plus grand, complétées par celles des rapports
+    /// de postes voisins (versions connues de la console) et d'un rapport futur (versions jamais vues), sans doublon.
+    /// </summary>
+    private static List<GenCandidate> CandidatesOf(ReportGenerator generator, int index, int round, int min)
+    {
+        var list = generator.Candidates(index, round, DateTimeOffset.UtcNow).ToList();
+        for (var k = 1; list.Count < min && k < 200; k++)
+        {
+            var extra = k % 5 == 0
+                ? generator.Candidates(index, round + k, DateTimeOffset.UtcNow)
+                : generator.Candidates((index + k * 7) % generator.MachineCount, round, DateTimeOffset.UtcNow);
+            foreach (var c in extra)
+                if (list.Count < min && !list.Any(x => x.Title == c.Title && x.Version == c.Version)) list.Add(c);
+        }
+        return list;
     }
 
     /// <summary>Premiers appels (calcul des politiques de chaque anneau, index des décisions, JIT), affichés à part.</summary>
