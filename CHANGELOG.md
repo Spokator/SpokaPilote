@@ -33,7 +33,9 @@ nouveau produit, **SpokaPrint**, pour les imprimantes.
   **Disjoncteur** : trop d'échecs d'installation (ou de périphériques en erreur après installation) et la version est
   suspendue sur tout le parc, avec alerte et journal d'audit ; reprise ou maintien du blocage en un clic. Page
   « Déploiement » dans la console ; les pilotes retenus apparaissent sur le poste avec la date à laquelle ils seront
-  autorisés.
+  autorisés. Conçu pour l'échelle : un poste 4.0 demande une décision pour ses seuls pilotes (quelques Ko, 1 à 10 ms,
+  quelle que soit la taille du parc, et décisions gardées en cache s'il perd la console) ; les postes 3.x reçoivent une
+  politique bornée qui ne leur laisse jamais installer une version pas encore autorisée.
 - **Cache de pilotes et de catalogues sur le réseau local** : la console télécharge chaque fichier officiel et chaque
   catalogue (Microsoft Update Catalog, Dell, HP, Lenovo, NVIDIA) une seule fois et le sert aux postes. Elle n'est
   qu'un relais : chaque poste revérifie empreinte, signature et matériel, et télécharge directement si la console ne

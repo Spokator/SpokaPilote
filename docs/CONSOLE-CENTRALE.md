@@ -24,7 +24,7 @@ installations, et l'équipe IT suit le parc en temps réel depuis un navigateur.
 - **Enrôlement** : commandes et script prêts à copier pour connecter les postes.
 - **Déploiement** (4.0) : diffusion des nouvelles versions de pilotes par **anneaux** (Pilote, Précoce, Général…) avec
   délai et validation, et **suspension automatique** sur tout le parc d'une version qui échoue trop (§ 5).
-- **Grands parcs** (3.2) : listes paginées et filtrées par le serveur, indicateurs précalculés, rapports compressés,
+- **Grands parcs** (4.0) : listes paginées et filtrées par le serveur, indicateurs précalculés, rapports compressés,
   afflux de postes maîtrisés (`503` + `Retry-After`), supervision (`/api/metrics`, Prometheus), sauvegarde à chaud ;
   mesuré sur 20 000 postes × 20 rapports (§ 11).
 - **Cache de pilotes et de catalogues** (4.0) : les postes demandent à la console les fichiers officiels (pilote NVIDIA
@@ -83,13 +83,13 @@ La console répond sur `http://<serveur>:8080`. L'image :
 | `SPOKAPILOTE_SESSION_HOURS` | `8` | (3.1) Session de la console fermée après ce nombre d'heures d'inactivité (1 à 168) ; 7 jours au plus dans tous les cas |
 | `SPOKAPILOTE_AUDIT_MAX_ENTRIES` | `5000` | (3.1) Journal d'audit : nombre maximal d'entrées conservées (100 à 1 000 000) |
 | `SPOKAPILOTE_AUDIT_DAYS` | `180` | (3.1) Journal d'audit : ancienneté maximale des entrées, en jours |
-| `SPOKAPILOTE_HISTORY_DAYS` | `0` | (3.2) Historique : rapports de plus de N jours supprimés (le dernier de chaque poste est gardé) ; `0` = pas de limite d'âge (seulement `SPOKAPILOTE_HISTORY`) |
-| `SPOKAPILOTE_MAX_CONCURRENT_UPLOADS` | nb de processeurs (2 à 16) | (3.2) Rapports traités en même temps ; les suivants attendent leur tour (§ 11) |
-| `SPOKAPILOTE_UPLOAD_QUEUE` | `200` | (3.2) Rapports en attente au plus ; au-delà, ou après 20 s d'attente, réponse `503` + `Retry-After` |
-| `SPOKAPILOTE_MAX_CONCURRENT_AGENTS` / `SPOKAPILOTE_AGENT_QUEUE` | `32` / `1000` | (3.2) Idem pour les interrogations des agents et les résultats des tâches |
-| `SPOKAPILOTE_RETRY_AFTER_SECONDS` | `60` | (3.2) Délai conseillé aux postes refusés, étalé au hasard entre la moitié et une fois et demie |
-| `SPOKAPILOTE_BACKUP_TIME` | — | (3.2) Heure de la sauvegarde automatique quotidienne (`03:00`, fuseau `TZ`) ; vide = pas de sauvegarde automatique |
-| `SPOKAPILOTE_BACKUP_KEEP` | `7` | (3.2) Sauvegardes conservées dans `/data/backups` |
+| `SPOKAPILOTE_HISTORY_DAYS` | `0` | (4.0) Historique : rapports de plus de N jours supprimés (le dernier de chaque poste est gardé) ; `0` = pas de limite d'âge (seulement `SPOKAPILOTE_HISTORY`) |
+| `SPOKAPILOTE_MAX_CONCURRENT_UPLOADS` | nb de processeurs (2 à 16) | (4.0) Rapports traités en même temps ; les suivants attendent leur tour (§ 11) |
+| `SPOKAPILOTE_UPLOAD_QUEUE` | `200` | (4.0) Rapports en attente au plus ; au-delà, ou après 20 s d'attente, réponse `503` + `Retry-After` |
+| `SPOKAPILOTE_MAX_CONCURRENT_AGENTS` / `SPOKAPILOTE_AGENT_QUEUE` | `32` / `1000` | (4.0) Idem pour les interrogations des agents et les résultats des tâches |
+| `SPOKAPILOTE_RETRY_AFTER_SECONDS` | `60` | (4.0) Délai conseillé aux postes refusés, étalé au hasard entre la moitié et une fois et demie |
+| `SPOKAPILOTE_BACKUP_TIME` | — | (4.0) Heure de la sauvegarde automatique quotidienne (`03:00`, fuseau `TZ`) ; vide = pas de sauvegarde automatique |
+| `SPOKAPILOTE_BACKUP_KEEP` | `7` | (4.0) Sauvegardes conservées dans `/data/backups` |
 | `SPOKAPILOTE_CACHE_ENABLED` | `true` | (4.0) Cache de pilotes et de catalogues (§ 12) ; une variable `SPOKAPILOTE_CACHE_*` définie verrouille le réglage dans la console |
 | `SPOKAPILOTE_CACHE_MAX_GB` | `20` | (4.0) Taille maximale du cache ; au-delà, les fichiers les moins récemment demandés sont supprimés |
 | `SPOKAPILOTE_CACHE_MIN_FREE_GB` | `10` | (4.0) Espace toujours laissé libre sur le volume (et au moins 5 % du volume) ; en dessous, plus rien n'est mis en cache |
@@ -565,7 +565,7 @@ mots de passe, jetons et adresses de webhook n'y figurent jamais.
 Toutes les données sont dans le volume `/data`. La base SQLite est en mode WAL : ne copiez jamais `spokapilote.db`
 seul pendant que la console tourne.
 
-### Sauvegarde à chaud (3.2, recommandé)
+### Sauvegarde à chaud (4.0, recommandé)
 
 La console copie elle-même sa base, **sans s'arrêter** (API de sauvegarde en ligne de SQLite : copie cohérente, les
 rapports continuent d'arriver pendant la copie), dans `/data/backups/spokapilote-AAAAMMJJ-HHMMSS.db`. La copie est
@@ -641,15 +641,19 @@ conservés). Sauvegardez le volume avant une mise à jour majeure.
   `Europe/Paris`.
 - Les groupes « sous-réseau » ne contiennent un poste qu'après son premier rapport reçu par la 3.1.
 
-### Passage de la 3.1 à la 3.2 (grands parcs)
+### Passage de la 3.1 à la 4.0
+
+Sauvegardez d'abord (§ 8) : un serveur 3.1 ne sait pas relire une base 4.0. Ensuite, tout est automatique, en deux
+volets.
+
+**Grands parcs (indicateurs précalculés, stockage compressé)**
 
 - **Automatique**, en deux temps. Au démarrage : nouvelles tables, table des postes reconstruite avec les indicateurs de
   chaque poste calculés depuis son dernier rapport, membres des groupes par règle, index (14 s mesurées pour 20 000 postes
   × 20 rapports). La console est utilisable dès la fin de cette étape. Ensuite, **en arrière-plan** et par petits lots :
   l'historique des rapports est compressé (81 s pour 395 000 rapports, sans interrompre la réception des rapports) ; les
   rapports pas encore convertis restent lisibles. Rien n'est supprimé.
-- Un serveur 3.1 ne sait pas relire une base 3.2 : sauvegardez avant la mise à jour (§ 8) pour pouvoir revenir en arrière.
-- **Postes** : rien à faire ; l'API des postes est inchangée (les postes 3.2 savent en plus attendre et réessayer quand la
+- **Postes** : rien à faire ; l'API des postes est inchangée (les postes 4.0 savent en plus attendre et réessayer quand la
   console est surchargée).
 - **Scripts** : les routes et réponses existantes sont inchangées (`GET /api/machines` renvoie toujours le tableau de
   tous les postes) ; la pagination et les filtres passent par de nouveaux paramètres (§ 9).
@@ -657,13 +661,12 @@ conservés). Sauvegardez le volume avant une mise à jour majeure.
   creuse : `POST /api/admin/vacuum` (17 s et 2,2 Go → 0,9 Go mesurés sur 20 000 postes). Sans lui, SQLite réutilise la
   place libérée pour les nouveaux rapports, mais le fichier ne diminue pas.
 
-### Passage de la 3.2 à la 4.0 (diffusion par anneaux)
+**Diffusion par anneaux et cache de pilotes**
 
 - **Automatique et instantané** : la migration ajoute des tables (anneaux, versions vues, installations par anneau,
   historique) sans réécrire aucune donnée existante. La diffusion par anneaux est **désactivée** après la mise à jour :
   les postes reçoivent leur politique exactement comme avant tant qu'aucun anneau n'est activé (le disjoncteur, lui, est
   actif, mais ne compte que les installations rapportées après la mise à jour).
-- Un serveur 3.2 ne sait pas relire une base 4.0 : sauvegardez avant la mise à jour (§ 8).
 - **Postes 3.x** : rien à faire, ils restent compatibles (règles du format 1 uniquement, anneau le plus prudent) ; mettez
   au moins les postes pilotes en 4.0 pour qu'ils reçoivent leur propre anneau (voir POLITIQUE.md).
 - **Scripts** : `GET /api/policy` avec le jeton administrateur ou un compte renvoie toujours le document enregistré ; seul
@@ -681,19 +684,19 @@ requêtes POST, PUT et DELETE exigent l'en-tête `X-SpokaPilote-CSRF` (§ 2.1).
 
 | Méthode et route | Accès | Rôle |
 |---|---|---|
-| `GET /api/health` | aucun | Sonde de vie (`{"status":"ok","version":"…","capabilities":[…]}` ; `capabilities` depuis la 3.2) |
+| `GET /api/health` | aucun | Sonde de vie (`{"status":"ok","version":"…","capabilities":[…]}` ; `capabilities` depuis la 4.0) |
 | `GET /api/whoami` | poste ou lecture | Vérifie un jeton (`{"access":"agent"\|"admin"}` ; `"user"` pour une session) |
 | `POST /api/session` | aucun | Connexion d'un compte : `{ "login", "password" }`, en-tête `X-SpokaPilote-CSRF` (valeur libre) ; dépose le cookie et renvoie l'appelant et son jeton anti-CSRF (`csrf`) |
 | `GET /api/session` | lecture | Appelant courant (compte ou jeton), rôle, droits (`permissions`), jeton anti-CSRF |
 | `DELETE /api/session` | lecture | Déconnexion |
 | `PUT /api/session/password` | lecture (compte) | Changer son mot de passe : `{ "currentPassword", "newPassword" }` |
-| `POST /api/reports` | poste | Rapport `spokapilote scan --json` (JSON, éventuellement `Content-Encoding: gzip` ; limite appliquée après décompression) ; `503` + `Retry-After` si la console est surchargée (3.2) |
-| `GET /api/fleet?group=&top=` | lecture | Synthèse du parc ou d'un groupe (indicateurs, postes à traiter, matériel sans pilote, modèles, postes non vus) ; `top=N` (3.2) limite les listes aux N premiers, `missingDriverCount` donne le nombre total de types de matériel sans pilote |
+| `POST /api/reports` | poste | Rapport `spokapilote scan --json` (JSON, éventuellement `Content-Encoding: gzip` ; limite appliquée après décompression) ; `503` + `Retry-After` si la console est surchargée (4.0) |
+| `GET /api/fleet?group=&top=` | lecture | Synthèse du parc ou d'un groupe (indicateurs, postes à traiter, matériel sans pilote, modèles, postes non vus) ; `top=N` (4.0) limite les listes aux N premiers, `missingDriverCount` donne le nombre total de types de matériel sans pilote |
 | `GET /api/machines?group=` | lecture | Liste des postes (indicateurs du dernier rapport, `groups` : identifiants des groupes, `lastIp`) — tableau de tous les postes, comme en 3.1 |
-| `GET /api/machines?page=&pageSize=` | lecture | (3.2) Une page calculée par la base : `{ total, offset, limit, items, machineCount, toProcessCount, hasHealth, group }` ; aussi `offset=&limit=` (1 000 au plus). Filtres (avec ou sans pagination) : `q` (nom, modèle, n° de série, Windows), `status` (`todo`, `healthy`, `stale`, `unresolved`, `hardware`, `failed`, `blocked`, `dangerous`, `jobs`), `group` (identifiant ou `none`), tri `sort` (`status`, `name`, `model`, `os`, `driverProblems`, `unresolved`, `proposed`, `failed`, `lastReport`, `health`) et `dir` (`asc`/`desc`) |
-| `GET /api/export/machines?…` | lecture | (3.2) Postes filtrés (mêmes paramètres) en CSV, écrit en continu |
-| `GET /api/missing-drivers?q=&offset=&limit=&machines=&group=` | lecture | (3.2) Matériel sans pilote paginé ; `machines` = postes listés par ligne (12 par défaut, `moreMachines` = les autres) |
-| `GET /api/export/missing-drivers?q=&group=` | lecture | (3.2) Matériel sans pilote complet en CSV |
+| `GET /api/machines?page=&pageSize=` | lecture | (4.0) Une page calculée par la base : `{ total, offset, limit, items, machineCount, toProcessCount, hasHealth, group }` ; aussi `offset=&limit=` (1 000 au plus). Filtres (avec ou sans pagination) : `q` (nom, modèle, n° de série, Windows), `status` (`todo`, `healthy`, `stale`, `unresolved`, `hardware`, `failed`, `blocked`, `dangerous`, `jobs`), `group` (identifiant ou `none`), tri `sort` (`status`, `name`, `model`, `os`, `driverProblems`, `unresolved`, `proposed`, `failed`, `lastReport`, `health`) et `dir` (`asc`/`desc`) |
+| `GET /api/export/machines?…` | lecture | (4.0) Postes filtrés (mêmes paramètres) en CSV, écrit en continu |
+| `GET /api/missing-drivers?q=&offset=&limit=&machines=&group=` | lecture | (4.0) Matériel sans pilote paginé ; `machines` = postes listés par ligne (12 par défaut, `moreMachines` = les autres) |
+| `GET /api/export/missing-drivers?q=&group=` | lecture | (4.0) Matériel sans pilote complet en CSV |
 | `GET /api/machines/{nom}` | lecture | Fiche du poste, dernier rapport normalisé, historique, groupes |
 | `GET /api/machines/{nom}/reports/{id}` | lecture | Un rapport de l'historique |
 | `GET /api/machines/{nom}/raw` | lecture | Dernier rapport complet tel qu'envoyé (pour `spokapilote pack`) |
@@ -714,7 +717,7 @@ requêtes POST, PUT et DELETE exigent l'en-tête `X-SpokaPilote-CSRF` (§ 2.1).
 | `POST /api/alerts/test` | admin | Envoie une alerte de test sur chaque canal et renvoie le résultat de chacun |
 | `GET /api/alerts/events` | admin | Dernières alertes envoyées |
 | `GET /api/groups` | lecture | Groupes (règles, nombre de membres, membres manuels, planifications) |
-| `GET /api/groups/{id}?limit=&offset=` | lecture | Groupe, membres (`manual`, `byRule`), planifications qui l'utilisent ; (3.2) `limit` pour une page de membres, `memberTotal` et `toProcessCount` pour tout le groupe |
+| `GET /api/groups/{id}?limit=&offset=` | lecture | Groupe, membres (`manual`, `byRule`), planifications qui l'utilisent ; (4.0) `limit` pour une page de membres, `memberTotal` et `toProcessCount` pour tout le groupe |
 | `GET /api/group-fields` | lecture | Champs et opérateurs des règles |
 | `POST /api/groups/preview` | lecture | Postes désignés par des règles : `{ "rules": { ... } }` |
 | `POST /api/groups` / `PUT /api/groups/{id}` | tech | `{ "name", "description", "rules": { "match": "all"\|"any", "conditions": [ { "field": "name", "operator": "startsWith", "value": "PC-COMPTA" } ] } }` |
@@ -728,10 +731,10 @@ requêtes POST, PUT et DELETE exigent l'en-tête `X-SpokaPilote-CSRF` (§ 2.1).
 | `DELETE /api/users/{id}` | admin | Supprime un compte |
 | `GET /api/audit?category=&q=&limit=` | admin | Journal d'audit (les plus récentes d'abord) |
 | `GET /api/audit/export?category=&q=` | admin | Journal d'audit complet en CSV |
-| `GET /api/metrics?format=` | admin | (3.2) Supervision : postes, base (taille, pages libres, migration), tâches, files d'attente des postes, cache, mémoire, temps de réponse par route (p50/p95/p99) ; `format=prometheus` pour Prometheus (§ 11) |
-| `GET /api/admin/backups` | admin | (3.2) Sauvegardes présentes et résultat de la dernière |
-| `POST /api/admin/backup?wait=` | admin | (3.2) Sauvegarde à chaud (`202` en arrière-plan, `wait=true` : attend et renvoie le résultat ; `409` si une sauvegarde est en cours) |
-| `POST /api/admin/vacuum` | admin | (3.2) Compactage de la base (bloque les écritures pendant sa durée : période creuse) |
+| `GET /api/metrics?format=` | admin | (4.0) Supervision : postes, base (taille, pages libres, migration), tâches, files d'attente des postes, cache, mémoire, temps de réponse par route (p50/p95/p99) ; `format=prometheus` pour Prometheus (§ 11) |
+| `GET /api/admin/backups` | admin | (4.0) Sauvegardes présentes et résultat de la dernière |
+| `POST /api/admin/backup?wait=` | admin | (4.0) Sauvegarde à chaud (`202` en arrière-plan, `wait=true` : attend et renvoie le résultat ; `409` si une sauvegarde est en cours) |
+| `POST /api/admin/vacuum` | admin | (4.0) Compactage de la base (bloque les écritures pendant sa durée : période creuse) |
 | `GET /api/cache/status` | poste ou lecture | (4.0) État du cache : actif, taille, nombre de fichiers, taux de réussite, octets évités (aucune adresse de fichier) |
 | `GET /api/cache/file?url=&sha256=&sha1=&md5=&size=` | poste | (4.0) Fichier officiel par son adresse HTTPS (§ 12) ; `Range` accepté une fois le fichier en cache ; en-tête `X-SpokaPilote-Cache` : `hit`, `miss`, `wait`, `bypass` (`503` : téléchargez directement), `refused` (`403`), `disabled` (`404`) |
 | `GET /api/cache/catalog?url=` | poste | (4.0) Catalogue ou métadonnée officielle (Dell, HP, Lenovo, NVIDIA) ; `404` + `X-SpokaPilote-Origin-Status: 404` si absent de la source ; `X-SpokaPilote-Fetched-At` : date d'obtention |
@@ -812,7 +815,7 @@ $lt = "dotnet tools\LoadTest\bin\Release\net10.0\SpokaPilote.LoadTest.dll"
 
 ## 11. Grands parcs
 
-La console 3.2 est conçue pour des parcs de plusieurs dizaines de milliers de postes sur un seul conteneur et une base
+La console 4.0 est conçue pour des parcs de plusieurs dizaines de milliers de postes sur un seul conteneur et une base
 SQLite. Ce qui la rend possible :
 
 - **Rien n'est recalculé à partir des rapports** : les indicateurs de chaque poste (état, compteurs, santé, modèle,
@@ -835,9 +838,9 @@ Banc d'essai : conteneur limité à **4 vCPU et 2 Go de RAM** (Docker Desktop, S
 20 rapports** (395 000 rapports, ~195 Ko chacun avant compression), 27 groupes (sites, constructeurs, sous-réseau,
 500 membres manuels). Charge mixte pendant 3 minutes : 33 interrogations d'agent par seconde (chaque poste toutes les
 10 minutes), 2 rapports par seconde, 5 utilisateurs de la console qui enchaînent les pages. Temps de réponse en ms
-(p50 / p95), 3.1 puis 3.2 sur la même base (migrée) :
+(p50 / p95), 3.1 puis 4.0 sur la même base (migrée) :
 
-| Requête | 3.1 | 3.2 |
+| Requête | 3.1 | 4.0 |
 |---|---:|---:|
 | Interrogation de l'agent (`GET /api/agent/jobs`) | 27 / 1 150 | 1,6 / 3,2 |
 | Envoi d'un rapport (`POST /api/reports`) | 43 / 1 269 | 3,0 / 9,8 |
@@ -857,7 +860,7 @@ Banc d'essai : conteneur limité à **4 vCPU et 2 Go de RAM** (Docker Desktop, S
 
 Afflux d'envois (tous les postes envoient en même temps, rapports de 15 Ko compressés) :
 
-| Scénario | 3.1 | 3.2 |
+| Scénario | 3.1 | 4.0 |
 |---|---|---|
 | 200 envois simultanés en continu (60 s) | 81 rapports/s, p50 2,3 s, p99 5,8 s | **660 rapports/s**, p50 0,28 s, p99 0,49 s |
 | 1 000 envois simultanés (60 s) | 78 rapports/s, p50 11,3 s, p99 18,9 s | 597 rapports/s acceptés, p50 0,32 s, p99 0,68 s ; 3 % renvoyés à plus tard (`503` + `Retry-After`) |
@@ -865,10 +868,10 @@ Afflux d'envois (tous les postes envoient en même temps, rapports de 15 Ko comp
 
 Base et exploitation (20 000 postes × 20 rapports) :
 
-| | 3.1 | 3.2 |
+| | 3.1 | 4.0 |
 |---|---:|---:|
 | Taille de la base | 1,83 Go | 0,92 Go (après compactage) |
-| Migration 3.1 → 3.2 au démarrage | — | 14 s |
+| Migration 3.1 → 4.0 au démarrage | — | 14 s |
 | Compression de l'historique en arrière-plan | — | 81 s |
 | Compactage (`VACUUM`) | — | 17 s |
 | Sauvegarde à chaud (`POST /api/admin/backup`) | — | 10 s |
@@ -925,7 +928,7 @@ plus de 2 Mo). Détail : [POLITIQUE.md, « Mesures »](POLITIQUE.md#mesures).
 Quand des milliers de postes démarrent en même temps, leurs envois et interrogations sont admis dans la limite de
 `SPOKAPILOTE_MAX_CONCURRENT_UPLOADS` (nombre de processeurs) et `SPOKAPILOTE_MAX_CONCURRENT_AGENTS` (32), les suivants
 attendent dans une file (`SPOKAPILOTE_UPLOAD_QUEUE`, `SPOKAPILOTE_AGENT_QUEUE`) au plus 20 s. Au-delà, réponse `503`
-avec `Retry-After` entre la moitié et une fois et demie de `SPOKAPILOTE_RETRY_AFTER_SECONDS` (60 s) : les postes 3.2
+avec `Retry-After` entre la moitié et une fois et demie de `SPOKAPILOTE_RETRY_AFTER_SECONDS` (60 s) : les postes 4.0
 réessaient au plus deux fois après ce délai (plus un aléa), les postes plus anciens renvoient le rapport au passage
 suivant (l'envoi n'est jamais bloquant). La console reste consultable pendant un afflux : seules les requêtes des postes
 sont limitées. Derrière un reverse proxy, laissez au proxy un délai d'attente d'au moins 30 s.

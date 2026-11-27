@@ -1670,7 +1670,7 @@ schtasks /Create /F /TN "SpokaPilote\\Analyse" /SC WEEKLY /D MON /ST 09:00 /RU S
       $('#s-test').addEventListener('click', test);
     }
 
-    /** Base de données et sauvegardes (3.2) : taille, contenu, files d'attente des postes, sauvegarde à chaud. */
+    /** Base de données et sauvegardes (4.0) : taille, contenu, files d'attente des postes, sauvegarde à chaud. */
     async function renderOps() {
       const box = $('#s-ops');
       if (!box) return;
