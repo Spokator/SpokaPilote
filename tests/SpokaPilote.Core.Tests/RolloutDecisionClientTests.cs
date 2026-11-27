@@ -295,6 +295,52 @@ public sealed class RolloutDecisionClientTests : IDisposable
 /// </summary>
 public sealed class RolloutClientMeasurement(ITestOutputHelper output)
 {
+    /// <summary>
+    /// Bout en bout contre une console réelle (à la demande) : le code du poste charge sa politique, demande ses décisions et
+    /// les applique aux propositions enregistrées par le banc. Variables : SPOKAPILOTE_ROLLOUT_BENCH_URL, _TOKEN (jeton
+    /// d'enrôlement) et SPOKAPILOTE_ROLLOUT_BENCH_DIR (dossier du banc : decide-request.json, machine.txt). Caches dans un
+    /// dossier temporaire.
+    /// </summary>
+    [Fact]
+    public async Task Live_console_end_to_end_client_time()
+    {
+        if (Environment.GetEnvironmentVariable("SPOKAPILOTE_ROLLOUT_BENCH_URL") is not { Length: > 0 } url ||
+            Environment.GetEnvironmentVariable("SPOKAPILOTE_ROLLOUT_BENCH_TOKEN") is not { Length: > 0 } token ||
+            Environment.GetEnvironmentVariable("SPOKAPILOTE_ROLLOUT_BENCH_DIR") is not { Length: > 0 } dirs) return;
+        var dir = dirs.Split(';')[0];
+        var machine = File.ReadAllLines(Path.Combine(dir, "machine.txt"));
+        var request = JsonNode.Parse(File.ReadAllText(Path.Combine(dir, "decide-request.json")))!["candidates"]!.AsArray();
+        var scratch = Path.Combine(Path.GetTempPath(), $"sp-live-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(scratch);
+        try
+        {
+            for (var run = 0; run < 3; run++)
+            {
+                var candidates = request.Select((c, i) => new DriverCandidate
+                {
+                    Id = $"c{i}", Source = Enum.TryParse<DriverSourceKind>(c!["source"]!.GetValue<string>(), out var s) ? s : DriverSourceKind.WindowsUpdate,
+                    Title = c["title"]!.GetValue<string>(), Version = c["version"]!.GetValue<string>(), Kind = Enum.Parse<CandidateKind>(c["kind"]!.GetValue<string>()),
+                }).ToList();
+                var loader = new PolicyLoader(new Settings { ServerUrl = url, ServerToken = token }, new HttpClient(new HttpClientHandler { AutomaticDecompression = DecompressionMethods.All }))
+                {
+                    RefreshReferenceList = false, CacheFile = Path.Combine(scratch, "policy-cache.json"), ReferenceCacheFile = Path.Combine(scratch, "ref.json"),
+                    DecisionCacheFile = Path.Combine(scratch, "rollout-decisions.json"), Identity = () => (machine[1], machine[0]),
+                };
+                var sw = Stopwatch.StartNew();
+                var policy = await loader.LoadAsync();
+                var load = sw.Elapsed.TotalMilliseconds;
+                var (merged, _) = await DriverScanEngine.ApplyPolicyAsync(loader, policy, candidates, [], CancellationToken.None);
+                output.WriteLine($"{machine[0]} : politique {load:0} ms ({policy.Organization?.Rules.Count ?? 0} règle(s), décisions : {policy.Organization?.Rollout?.Decisions}), " +
+                                 $"décisions + application {sw.Elapsed.TotalMilliseconds - load:0} ms, total {sw.Elapsed.TotalMilliseconds:0} ms ; " +
+                                 $"{merged.Count(c => c.HeldByRollout)}/{merged.Count} retenue(s) ; {string.Join(" ", policy.Messages)}");
+            }
+        }
+        finally
+        {
+            try { Directory.Delete(scratch, true); } catch (IOException) { /* temporaire */ }
+        }
+    }
+
     [Fact]
     public void Client_side_policy_application_time_from_saved_documents()
     {
