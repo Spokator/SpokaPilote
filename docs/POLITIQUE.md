@@ -316,7 +316,9 @@ ou d'Intune. Les postes pilotes la reçoivent d'abord ; les autres attendent que
 fait ses preuves dans l'anneau précédent. Si elle échoue trop, le **disjoncteur** la suspend sur tout le parc.
 
 Tout se règle dans la console, page **Déploiement** (voir [CONSOLE-CENTRALE.md](CONSOLE-CENTRALE.md), § 5) ; il n'y a
-rien à écrire dans `driver-policy.json`. Les postes reçoivent les retenues avec leur politique, par `{ServerUrl}/api/policy`.
+rien à écrire dans `driver-policy.json`. Les postes 4.0 demandent à la console une décision pour chacune de leurs
+propositions (`{ServerUrl}/api/rollout/decide`) ; les postes 3.x reçoivent les retenues avec leur politique, par
+`{ServerUrl}/api/policy` (voir « Ce que reçoit le poste »).
 
 ### Anneaux
 
@@ -354,6 +356,42 @@ dans l'anneau précédent. Suggestion de départ (modifiable) :
 
 ### Ce que reçoit le poste
 
+Le coût des anneaux pour un poste est proportionnel à **ses** propositions, pas au catalogue de pilotes du parc (un parc
+hétérogène de dizaines de milliers de postes voit des milliers de familles et des dizaines de milliers de versions en
+cours de diffusion) :
+
+- un **poste 4.0** demande à la console une **décision pour chacune des propositions** que ses sources ont trouvées
+  (quelques dizaines) ; sa politique ne contient que les règles de l'organisation et les suspensions ;
+- un **poste 3.x** reçoit des règles ordinaires du format 1, dans un document **borné** (2 000 règles et 1 Mo par
+  défaut), plus prudent au besoin, mais jamais plus permissif.
+
+#### Postes 4.0 : décisions par proposition
+
+En demandant sa politique, le poste s'identifie et l'annonce (`X-SpokaPilote-Rollout-Decisions: 1`) : la console lui
+sert la politique de l'organisation, les suspensions (règles `anneau-suspendu-N`) et la section `rollout` avec
+`"decisions": true` — quelques Ko quel que soit le parc. Une fois les pilotes trouvés, **avant** d'appliquer la politique,
+le poste envoie la liste de ses propositions (source, titre, version, type ; compressée) à `POST /api/rollout/decide` et
+reçoit, dans le même ordre, une décision par proposition :
+
+| Décision | Quand | Sur le poste |
+|---|---|---|
+| `suspended` | version suspendue sur tout le parc (même source, même titre sans tenir compte de la casse, même version numérique) — tous anneaux, tous types, pilotes manquants compris | bloquée (⏳ retenue), motif de la suspension |
+| `held` | version **connue** de la console, pas encore autorisée pour l'anneau du poste | retenue, avec la date de disponibilité (heure locale) si elle ne dépend que du délai |
+| `unknown` | version **jamais vue** par la console, si l'anneau retient les nouveautés (délai ou validation) : famille inconnue, version plus récente que la dernière autorisée de sa famille (même source, même plage de version majeure), ou famille sans version autorisée | retenue jusqu'à ce qu'un rapport la signale |
+| `allowed` | tout le reste : version autorisée pour l'anneau, version inconnue inférieure à la dernière autorisée de sa famille, anneau sans délai (pilote), pilote manquant (sauf réglage), version sans numéro lisible, anneaux désactivés | les règles de l'organisation s'appliquent ensuite normalement |
+
+Les décisions sont évaluées **avant** les règles de l'organisation (une règle `allow` ne lève pas une retenue ; un blocage
+de l'organisation d'une version `unknown` reste affiché comme tel). Elles suivent exactement les règles de la politique
+complète (prouvé par un test qui compare, sur des milliers de propositions, les décisions à la politique lue par
+l'analyseur exact de la 3.1), avec une différence volontaire : une **famille jamais vue** est retenue (`unknown`) pour un
+poste 4.0. **Demander une décision n'enregistre rien** : la première détection reste la réception du premier *rapport* qui
+propose la version (un poste pilote, en général), après quoi elle est `held` avec sa date pour les anneaux suivants.
+
+Taille et temps mesurés (§ « Mesures » ci-dessous) : 20 à 30 propositions = 2 à 3,5 Ko envoyés (0,6 à 0,9 Ko compressés),
+4 à 6,5 Ko reçus (1 à 1,4 Ko compressés), quelques millisecondes côté console, quelques millisecondes côté poste.
+
+#### Postes 3.x (et postes 4.0 qui ne demandent pas de décisions)
+
 La console ajoute **en tête** des règles de la politique de l'organisation des règles ordinaires du format 1 (identifiants
 `anneau-…`), recalculées pour l'anneau du poste :
 
@@ -367,15 +405,44 @@ La console ajoute **en tête** des règles de la politique de l'organisation des
    jour d'une publication, avant que le premier rapport ne l'ait signalée à la console.
 
 Seules les versions en cours de diffusion sont listées (une version autorisée partout disparaît des règles ; une famille
-est une règle quel que soit le nombre de ses versions ; une famille plus vue depuis un an n'est plus listée). Mesure :
-300 versions en cours de diffusion et 60 familles = 146 Ko (7 Ko compressés) pour l'anneau le plus tardif, 0,5 Ko pour
-l'anneau pilote.
+est une règle par plage de version majeure quel que soit le nombre de ses versions ; une famille plus vue depuis un an
+n'est plus listée).
 
-**Postes 4.0** : en demandant leur politique, ils s'identifient (en-têtes `X-SpokaPilote-Machine-Id`, identifiant Windows,
-et `X-SpokaPilote-Machine`, nom) et demandent la section `rollout` (`X-SpokaPilote-Rollout: 1`) : anneau, délai,
-validation exigée, dates de disponibilité (affichées à l'heure locale du poste) et consigne de retenir aussi une version
-d'une **famille jamais vue** par la console (nouveau matériel), tant qu'un rapport ne l'a pas signalée. La section est lue
-avec tolérance (une console plus récente peut y ajouter des informations).
+**Document borné.** Les postes refusent une politique de plus de 2 Mo (ils garderaient alors leur politique précédente,
+sans aucune retenue récente) et la lecture d'une politique de *n* règles coûte de l'ordre de *n²* comparaisons sur un
+poste 3.x. La console ne dépasse donc jamais `SPOKAPILOTE_ROLLOUT_MAX_RULES` règles de diffusion (2 000) ni
+`SPOKAPILOTE_ROLLOUT_MAX_KB` (1 Mo), et remplit ce budget par ordre de priorité :
+
+1. les **suspensions** (au-delà d'un quart du budget, une règle par source qui bloque ces numéros de version quel que soit
+   le titre) ;
+2. les règles **indispensables** : règles de famille des familles en cours de diffusion (`pin` à la dernière version
+   autorisée, ou `block` si aucune ne l'est), et règle datée des seules versions retenues **inférieures** au plafond de leur
+   famille (que le `pin` laisserait passer). Ensemble, elles bloquent **toute** version connue pas encore autorisée ;
+3. si ces règles ne tiennent pas, les sources les plus chargées sont **retenues en bloc** (`anneau-source-WindowsUpdate` :
+   `block`, `source`, `title: "*"`, types de mise à jour) — toutes leurs mises à jour attendent, avec un motif clair, jusqu'à
+   ce que leurs règles tiennent à nouveau (une source non reconnue ne peut être visée que par une retenue de toutes les
+   sources, choisie en dernier) ;
+4. les règles de famille des **diffusions terminées** (les plus récemment vues d'abord) : protection contre une version
+   plus récente jamais vue ;
+5. les règles datées des autres versions retenues (motif avec la date de disponibilité).
+
+Forme obtenue (`legacy.form` dans l'aperçu, `rollout.form` pour un poste 4.0 sans décisions) : **complète** (petit parc :
+le document est le même qu'avant, une règle datée par version retenue), **compacte** (versions retenues couvertes par les
+règles de famille, motif sans date ; familles terminées en partie omises) ou **par source** (en plus, des sources retenues
+en bloc). Compromis assumé : un poste 3.x d'un très grand parc peut attendre plus longtemps que nécessaire une mise à jour
+déjà autorisée (forme « par source »), ou ne plus retenir une version jamais vue d'une famille terminée omise (comme une
+famille inconnue) — mais il **n'installe jamais une version connue de la console qui n'est pas autorisée pour l'anneau le
+plus prudent**, ni une version suspendue (prouvé par des tests qui lisent la politique servie avec l'analyseur exact de la
+3.1, jusqu'à 10 000 versions et des plafonds de 300 règles / 200 Ko). Mettez les postes en 4.0 : ils ne dépendent plus de
+ce plafond.
+
+**Section `rollout` (postes 4.0)** : en demandant leur politique, ils s'identifient (en-têtes `X-SpokaPilote-Machine-Id`,
+identifiant Windows, et `X-SpokaPilote-Machine`, nom) et demandent la section `rollout` (`X-SpokaPilote-Rollout: 1`) :
+anneau, délai, validation exigée, dates de disponibilité (affichées à l'heure locale du poste), consigne de retenir aussi
+une version d'une **famille jamais vue** par la console (nouveau matériel), tant qu'un rapport ne l'a pas signalée, et
+`decisions: true` si la console décide proposition par proposition. La section est lue avec tolérance (une console plus
+récente peut y ajouter des informations). Une console 4.0 antérieure ignore l'en-tête `X-SpokaPilote-Rollout-Decisions` :
+le poste applique alors les retenues de sa politique, comme avant.
 
 **Postes 3.x (compatibilité)** : ils refusent toute propriété inconnue d'une politique — c'est pourquoi la section
 `rollout` ne leur est **jamais** envoyée (elle ne l'est que sur demande) : ils reçoivent uniquement des règles `block` /
@@ -387,7 +454,34 @@ d'une famille jamais vue par la console (nouveau matériel) avant le premier rap
 
 **Hors ligne** : un poste qui ne joint pas la console applique la dernière politique reçue (cache), retenues comprises ;
 les retenues datées n'expirent pas d'elles-mêmes (la console peut avoir suspendu la version entre-temps) : elles sont
-levées au retour de la console. Un poste sans console (fichier, partage, URL) ne connaît pas les anneaux : rien ne change
+levées au retour de la console. Un poste 4.0 garde aussi ses **dernières décisions** (`rollout-decisions.json`, à côté de
+`policy-cache.json` : 5 000 propositions au plus, 180 jours, décisions d'une autre console ignorées). Console injoignable
+(au chargement de la politique ou à la demande de décisions), réponse invalide ou statut inconnu : chaque proposition
+reçoit sa dernière décision connue ; une proposition **sans décision connue est retenue** si l'anneau retient les
+nouveautés (« décision de diffusion indisponible… jusqu'au retour de la console ») — jamais « tout autoriser » faute de
+réponse. Les suspensions, présentes dans la politique en cache, s'appliquent toujours.
+
+#### Mesures
+
+Console de test (Docker, poste de développement) alimentée par `tools/LoadTest` (`seed --history 3`, `groups`, puis
+`rollout --setup` : anneaux suggérés, groupes rattachés, diffusion activée), deux parcs : **réaliste** (`--fleet realistic` :
+50 modèles, 1 500 familles de pilotes partagées par les modèles, une centaine de nouvelles versions par semaine, ~20
+propositions par poste) et **extrême** (propositions synthétiques toutes différentes). Avant = console 4.0 précédente
+(liste des retenues de tout le parc dans chaque politique), après = cette version.
+
+| Parc | Versions en diffusion | Politique 3.x avant → après | Politique 4.0 avant → après | Poste 4.0 : lecture + application avant → après |
+|---|---|---|---|---|
+| réaliste, 3 000 postes | 2 673 | 1,7 Mo, 4 264 règles → 711 Ko, 2 000 règles (compacte) | 1,6 Mo → 1,8 Ko + décisions | 4,1 s → 1 ms (+ demande de décisions 2 à 13 ms) |
+| réaliste, 20 000 postes | 3 117 | 1,9 Mo, 4 718 règles (au bord du refus à 2 Mo) → 711 Ko, 2 000 règles | 1,7 Mo → 5 Ko + décisions | 3,5 s → 1 ms (+ décisions p50 1,9 ms) |
+| extrême, 3 000 postes | 24 086 | 14,6 Mo, 37 928 règles (**refusée** par les postes : > 2 Mo) → 645 o (toutes sources retenues) | 13,7 Mo (refusée ; lecture : 310 s) → 0,5 Ko + décisions | 310 s → 10 à 30 ms de bout en bout (politique + décisions + application, 30 propositions) |
+| extrême, 20 000 postes | 160 022 | (non mesuré avant : ~100 Mo) → 645 o | → 0,5 Ko + décisions | — |
+
+Demande de décisions (`POST /api/rollout/decide`, 200 postes) : parc réaliste, 20 000 postes, 20 propositions : p50
+1,9 ms, p95 8,1 ms, 0,6 Ko envoyés / 1,2 Ko reçus (compressés) ; parc extrême, 30 propositions : p50 1,1 ms, p95 1,8 ms ;
+160 000 versions : p50 1,4 ms, p95 5,6 ms (index des décisions construit en 0,5 s au premier appel après chaque recalcul de
+l'état de la diffusion). Avant, chaque poste du parc extrême téléchargeait 0,7 Mo compressés (14 Mo décompressés) qu'il
+refusait, et gardait sa politique précédente — sans aucune retenue récente. Mémoire de la console (parc extrême, 3 000
+postes) : 2,9 Go → 0,7 Go. Page Déploiement (160 000 versions) : liste paginée p50 1,6 ms, recherche p50 26 ms. Un poste sans console (fichier, partage, URL) ne connaît pas les anneaux : rien ne change
 pour lui.
 
 `spokapilote policy show` affiche l'anneau du poste, son délai, la validation exigée, les versions suspendues et les
@@ -429,6 +523,11 @@ périphérique qui fonctionne mal sans être en erreur, périphérique en erreur
   de l'anneau pilote. Les anneaux sont une protection contre les accidents, pas contre un poste malveillant.
 - Les installations comptent dans l'anneau du poste **au moment du rapport** ; un poste qui change d'anneau garde ses
   résultats dans l'ancien.
+- Décisions (postes 4.0) : la famille d'une version inconnue est celle de **son** titre (numéros remplacés par « * »),
+  pas toute famille dont le motif lui correspondrait ; une version inconnue inférieure au plafond de sa famille est
+  autorisée (comme avec la règle `pin`). Une analyse qui trouve plus de 1 000 propositions retient les suivantes.
+- Postes 3.x d'un très grand parc : forme compacte ou par source (voir « Document borné ») ; aucun plafond pour les postes
+  4.0 en mode décisions.
 
 ## Liste de référence SpokaPilote
 
