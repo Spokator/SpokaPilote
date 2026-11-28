@@ -1,5 +1,43 @@
 # Journal des versions
 
+## 4.0.1 — 28/11/2026
+
+Version de sécurité et de robustesse, issue d'une revue indépendante avant déploiement à grande échelle. **Mise à jour
+recommandée pour tous les postes et la console.**
+
+**Sécurité**
+- **Cache de la console : transport seulement, sans exception.** Les métadonnées non signées (catalogues XML Lenovo,
+  réponses NVIDIA) et la boîte de téléchargement du Microsoft Update Catalog ne passent plus jamais par la console :
+  une console compromise ne peut plus choisir ce qu'un poste exécute. Seuls les catalogues `.cab` signés (Dell, HP)
+  et les fichiers dont le poste connaît l'empreinte officielle restent relayés. La console 4.0.1 refuse aussi ces
+  relais aux postes 4.0.0, qui passent alors directement par la source officielle.
+- **Lignes de commande des constructeurs vérifiées** (Lenovo, HP) et lancées sans interpréteur de commandes : seul le
+  paquet téléchargé et vérifié peut être exécuté, aucun enchaînement de commandes n'est accepté.
+- **Éditeurs approuvés : correspondance exacte** (plus de « Canon » qui accepterait « Canonical ») ; un fichier relayé
+  sans empreinte publiée doit être signé par le constructeur de sa source ; contrôle de révocation.
+- **Dossier de données protégé** : `%ProgramData%\SpokaPilote` n'est modifiable que par les administrateurs ;
+  téléchargements et extractions dans un dossier de travail privé, recréé à chaque exécution ; fichiers déposés par un
+  autre compte refusés ou mis en quarantaine. Le **jeton d'enrôlement** est sorti de `settings.json` et chiffré
+  (illisible par un utilisateur standard), masqué partout.
+- **Mise à jour automatique** : empreinte publiée obligatoire, adresse GitHub exacte, fichier revérifié juste avant
+  son lancement.
+
+**Robustesse sur de grands parcs**
+- **Sauvegardes de pilotes limitées** (3 par défaut, 10 Go au plus) et réutilisées quand rien n'a changé ; dossiers de
+  téléchargement nettoyés : plus de disque qui se remplit au fil des maintenances.
+- **Annulation sûre** : seuls les paquets réellement ajoutés par SpokaPilote et inchangés depuis sont retirés, sans
+  forcer ; « annuler la dernière intervention » refusée au-delà de 30 jours.
+- **Anneaux sans angle mort** : les pilotes sans numéro de version sont suivis et suspendables ; une suspension
+  s'applique au même pilote venu d'une autre source ; la liste de référence téléchargée ne peut que bloquer ; politique
+  et décisions revérifiées juste avant l'installation.
+- Mode portable : caches de politique séparés par poste.
+- Réglages `settings.json` lus sans tenir compte de la casse des noms.
+- Désinstallation : les tâches planifiées SpokaPilote sont retirées.
+
+**Déploiement en masse**
+- Kit `deploy/` (installation vérifiée par SHA-256, détection, désinstallation, configuration commune) et guide
+  [docs/DEPLOIEMENT-ENTREPRISE.md](docs/DEPLOIEMENT-ENTREPRISE.md) : Intune, Configuration Manager, GPO, RMM.
+
 ## 4.0.0 — 27/11/2026
 
 SpokaPilote se recentre : un logiciel clair pour les pilotes, une console taillée pour les très grands parcs, et un

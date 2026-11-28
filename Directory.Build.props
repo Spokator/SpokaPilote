@@ -5,7 +5,7 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <LangVersion>latest</LangVersion>
-    <Version>4.0.0</Version>
+    <Version>4.0.1</Version>
     <Company>SpokaPilote</Company>
     <Product>SpokaPilote</Product>
     <Copyright>© 2026 SpokaPilote</Copyright>
