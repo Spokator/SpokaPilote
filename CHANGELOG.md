@@ -13,12 +13,20 @@ recommandée pour tous les postes et la console.**
   relais aux postes 4.0.0, qui passent alors directement par la source officielle.
 - **Lignes de commande des constructeurs vérifiées** (Lenovo, HP) et lancées sans interpréteur de commandes : seul le
   paquet téléchargé et vérifié peut être exécuté, aucun enchaînement de commandes n'est accepté.
-- **Éditeurs approuvés : correspondance exacte** (plus de « Canon » qui accepterait « Canonical ») ; un fichier relayé
-  sans empreinte publiée doit être signé par le constructeur de sa source ; contrôle de révocation.
+- **Éditeurs approuvés : correspondance exacte**, forme juridique comprise (plus de « Canon » qui accepterait
+  « Canonical », ni « NVIDIA GmbH » pour « NVIDIA Corporation ») ; contrôle de révocation. **À vérifier** : une entrée
+  de `ExtraTrustedPublishers` doit maintenant reprendre le nom exact du certificat (« Fabrikam, Inc. »).
+- **Aucune copie de la console sans empreinte indépendante** : un fichier dont la source ne publie pas d'empreinte est
+  toujours téléchargé directement ; les catalogues `.cab` relayés plus anciens que le dernier accepté sont refusés ;
+  une entrée du Microsoft Update Catalog est confirmée directement chez Microsoft et la version du pilote extrait doit
+  correspondre à celle annoncée.
+- Paquets constructeurs dont l'installeur n'est pas un `.exe` / `.cmd` / `.bat` écartés dès l'analyse (au lieu
+  d'échouer à chaque maintenance) ; arguments limités aux caractères ASCII.
 - **Dossier de données protégé** : `%ProgramData%\SpokaPilote` n'est modifiable que par les administrateurs ;
   téléchargements et extractions dans un dossier de travail privé, recréé à chaque exécution ; fichiers déposés par un
   autre compte refusés ou mis en quarantaine. Le **jeton d'enrôlement** est sorti de `settings.json` et chiffré
-  (illisible par un utilisateur standard), masqué partout.
+  (illisible par un utilisateur standard), masqué partout ; `spokapilote config set ServerToken -` le lit sur l'entrée
+  standard (jamais en ligne de commande), et la désinstallation l'efface.
 - **Mise à jour automatique** : empreinte publiée obligatoire, adresse GitHub exacte, fichier revérifié juste avant
   son lancement.
 

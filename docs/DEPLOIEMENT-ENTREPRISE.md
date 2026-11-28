@@ -334,7 +334,7 @@ connues (avec un avertissement dans le journal).
 | `nvidiaBranch` | `studio` | `studio` ou `gameready` |
 | `includeBiosAndFirmware` | `false` | proposer aussi BIOS et micrologiciels |
 | `createRestorePoint` · `backupDriversBeforeInstall` | `true` | filets de sécurité avant installation |
-| `extraTrustedHosts` · `extraTrustedPublishers` | `[]` | domaines / éditeurs supplémentaires autorisés |
+| `extraTrustedHosts` · `extraTrustedPublishers` | `[]` | domaines / éditeurs supplémentaires autorisés ; un éditeur s'écrit avec sa forme juridique, tel qu'il apparaît dans le certificat (`O=`) : « Fabrikam, Inc. », pas « Fabrikam » (4.0.1 : correspondance exacte) |
 | `printerCatalogUrl` | — | catalogue d'imprimantes de l'organisation (HTTPS) |
 | `catalogConcurrency` | `4` | requêtes simultanées vers les catalogues |
 
