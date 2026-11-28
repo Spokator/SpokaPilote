@@ -416,6 +416,89 @@ public sealed class RolloutDecisionClientTests : IDisposable
         Assert.Contains("1 suspendue(s)", loaded.Summary);
     }
 
+    // ------------------------------------------------------------------ revérification juste avant l'installation
+
+    /// <summary>
+    /// L'interface installe depuis une analyse gardée en mémoire (parfois depuis des heures) : un pilote suspendu par le
+    /// disjoncteur entre l'analyse et le clic ne doit pas être installé. La politique et les décisions sont redemandées.
+    /// </summary>
+    [Fact]
+    public async Task A_driver_suspended_between_the_scan_and_the_install_click_is_withdrawn()
+    {
+        var suspendedNow = new HashSet<string>();
+        var console = new FakeConsole(PolicyJson(), request =>
+        {
+            var answer = Decide(request);
+            var list = request["candidates"]!.AsArray();
+            for (var i = 0; i < list.Count; i++)
+                if (suspendedNow.Contains(list[i]!["title"]!.GetValue<string>()))
+                    answer["decisions"]![i] = new JsonObject { ["status"] = "suspended", ["reason"] = "Pilote X : suspendu automatiquement : 3 échecs" };
+            return answer;
+        });
+        var ok = For(IntelGpu, "Intel - Display - 31.0.101.5590", "31.0.101.5590", DriverSourceKind.WindowsUpdate);
+        var other = Cand("Contoso - Camera - 2.4.0.2", "2.4.0.2");
+        var alreadyBlocked = Cand("Conexant Audio 1.0", "1.0");
+        var (_, merged) = await ScanAsync(Loader(console), [ok, other, alreadyBlocked]);
+        Assert.Null(ok.BlockedReason);
+        Assert.Null(other.BlockedReason);
+        Assert.NotNull(alreadyBlocked.BlockedReason);
+
+        // Rien n'a changé : rien n'est écarté.
+        var recheck = await DriverScanEngine.RecheckPolicyAsync(Loader(console), [ok, other], [IntelGpu], CancellationToken.None, Now);
+        Assert.False(recheck.Changed);
+
+        // Le disjoncteur suspend Intel entre l'analyse et le clic.
+        suspendedNow.Add(ok.Title);
+        console.Requests.Clear();
+        recheck = await DriverScanEngine.RecheckPolicyAsync(Loader(console), [ok, other, alreadyBlocked], [IntelGpu], CancellationToken.None, Now);
+        var withdrawn = Assert.Single(recheck.NewlyBlocked);
+        Assert.Same(ok, withdrawn.Candidate);
+        Assert.True(ok.HeldByRollout);
+        Assert.Contains("suspendu automatiquement", ok.BlockedReason);
+        Assert.Null(other.BlockedReason);
+        // Politique rechargée, décisions redemandées pour les seules propositions encore installables.
+        Assert.Contains(console.Requests, r => r.Request.RequestUri!.AbsolutePath == "/api/policy");
+        var sent = JsonNode.Parse(console.Requests.Single(r => r.Request.RequestUri!.AbsolutePath == "/api/rollout/decide").Body!)!["candidates"]!.AsArray();
+        Assert.Equal(2, sent.Count);
+        // L'installeur refuse de toute façon un candidat bloqué.
+        Assert.Contains(merged, c => ReferenceEquals(c, alreadyBlocked));
+
+        // Console injoignable au moment du clic : dernières décisions connues (en cache) — ni blocage arbitraire, ni levée de blocage.
+        console.Down = true;
+        var again = Cand("Contoso - Camera - 2.4.0.2", "2.4.0.2");
+        recheck = await DriverScanEngine.RecheckPolicyAsync(Loader(console), [again], [], CancellationToken.None, Now);
+        Assert.False(recheck.Changed);
+        Assert.True(recheck.Policy.FromCache);
+        var never = Cand("Contoso - Camera - 9.9.9.9", "9.9.9.9");
+        recheck = await DriverScanEngine.RecheckPolicyAsync(Loader(console), [never], [], CancellationToken.None, Now);
+        Assert.True(never.HeldByRollout); // jamais décidée, console injoignable : retenue par prudence (anneau à délai)
+    }
+
+    [Fact]
+    public async Task A_new_organization_rule_published_after_the_scan_is_applied_before_installing()
+    {
+        var path = Path.Combine(_dir, "p.json");
+        File.WriteAllText(path, """{ "schema": 1, "name": "Fichier", "rules": [] }""");
+        var loader = new PolicyLoader(new Settings { PolicySource = path }, new HttpClient(new FakeConsole("{}", null)))
+        {
+            RefreshReferenceList = false, CacheFile = Path.Combine(_dir, "c.json"), ReferenceCacheFile = Path.Combine(_dir, "r.json"), DecisionCacheFile = Path.Combine(_dir, "d.json"),
+        };
+        var gpu = For(IntelGpu, "Intel - Display - 31.0.101.5590", "31.0.101.5590", DriverSourceKind.WindowsUpdate);
+        var hidden = Cand("Realtek Audio", "6.0.9600.1");
+        var (_, merged) = await ScanAsync(loader, [gpu, hidden]);
+        Assert.Equal(2, merged.Count);
+        File.WriteAllText(path, """
+            { "schema": 1, "name": "Fichier", "rules": [
+              { "id": "gel", "action": "block", "hardwareId": "PCI\\VEN_8086*", "reason": "Gel des pilotes graphiques" },
+              { "id": "masque", "action": "block", "hide": true, "title": "Realtek*", "reason": "Géré à part" } ] }
+            """);
+        var recheck = await DriverScanEngine.RecheckPolicyAsync(loader, [gpu, hidden], [IntelGpu], CancellationToken.None, Now);
+        Assert.Equal(2, recheck.NewlyBlocked.Count);
+        Assert.Equal("Gel des pilotes graphiques (règle « gel »)", gpu.BlockedReason);
+        Assert.False(gpu.HeldByRollout);
+        Assert.NotNull(hidden.BlockedReason); // masqué par la nouvelle politique : jamais installé
+    }
+
     [Fact]
     public void The_cache_keeps_the_most_recent_decisions_of_the_same_console_only()
     {

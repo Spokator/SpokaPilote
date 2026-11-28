@@ -36,6 +36,20 @@ public sealed class CandidateItem : ObservableObject
         }
     }
 
+    /// <summary>
+    /// Pilote devenu bloqué ou retenu depuis l'analyse (politique revérifiée juste avant l'installation) : décoché, non
+    /// sélectionnable, motif affiché.
+    /// </summary>
+    public void MarkBlockedSinceScan()
+    {
+        IsSelected = false;
+        Status = Candidate.HeldByRollout ? Loc.T("⏳ Retenu (diffusion par anneaux)") : Loc.T("⛔ Bloqué par la politique");
+        StatusDetail = Candidate.HeldByRollout ? HoldText(Candidate) : Candidate.BlockedReason ?? "";
+        OnPropertyChanged(nameof(IsBlocked));
+        OnPropertyChanged(nameof(IsSelectable));
+        OnPropertyChanged(nameof(Subtitle));
+    }
+
     public bool IsBlocked => Candidate.BlockedReason is not null;
     public bool IsInformational => Candidate.IsInformational;
     public bool IsSelectable => !IsBlocked && !IsInformational;

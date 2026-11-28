@@ -292,6 +292,14 @@ envoie alors aussi son identifiant (`X-SpokaPilote-Machine-Id`, `X-SpokaPilote-M
   la politique.
 - Si aucune source n'est plus configurée, le cache est ignoré.
 - Délai maximal de lecture : 15 s.
+- **Revérification avant l'installation** (4.0.1) : juste avant d'installer, l'interface (bouton « Installer » ou
+  « Simuler », sur une liste qui peut dater de plusieurs heures) et la ligne de commande (`install`, `update`, tâches
+  planifiées `maintenance`, tâches envoyées par la console à l'agent) rechargent la politique et redemandent les décisions
+  de diffusion pour les seuls pilotes sélectionnés. Un pilote suspendu par le disjoncteur, retenu par un changement
+  d'anneau ou bloqué par une nouvelle règle depuis l'analyse est **écarté**, avec son motif (« 1 pilote(s) écarté(s) :
+  bloqué(s) ou retenu(s) par la politique depuis l'analyse — … ») ; il apparaît bloqué dans le rapport envoyé à la console.
+  Console injoignable à ce moment : dernière politique et dernières décisions connues (même repli qu'à l'analyse). La
+  revérification ne fait que bloquer : elle ne lève jamais un blocage de l'analyse.
 
 ### Suivre l'application sur le parc
 

@@ -103,7 +103,8 @@ internal static partial class Program
             OnlySources = ParseSources(a.Value("sources")),
         };
 
-        var engine = new DriverScanEngine(settings, policyLoader: CreatePolicyLoader(a, settings));
+        var policyLoader = CreatePolicyLoader(a, settings);
+        var engine = new DriverScanEngine(settings, policyLoader: policyLoader);
         var lastStage = "";
         var scan = await engine.ScanAsync(options, new Progress<ScanProgress>(p =>
         {
@@ -132,6 +133,12 @@ internal static partial class Program
                 if (!a.Flag("yes") && !a.Flag("dry-run") && !Confirm("Continuer ?"))
                     return ExitOk;
 
+                // Politique revérifiée juste avant d'installer (analyse longue, confirmation, tâche planifiée ou de la console) :
+                // une version suspendue ou retenue depuis l'analyse n'est pas installée.
+                selection = await RecheckPolicyAsync(policyLoader, scan, selection, ct);
+            }
+            if (selection.Count > 0)
+            {
                 var installer = new DriverInstaller(settings, scan.System);
                 outcomes = await installer.InstallAsync(selection, scan.Devices, new InstallOptions
                 {
@@ -158,6 +165,23 @@ internal static partial class Program
         WriteReports(a, scan, outcomes);
         await UploadToServerAsync(a, settings, scan, outcomes, ct);
         return exit;
+    }
+
+    /// <summary>
+    /// Revérification de la politique avant l'installation : les pilotes devenus bloqués ou retenus depuis l'analyse sont
+    /// affichés et retirés de la sélection (ils restent bloqués dans le rapport envoyé à la console).
+    /// </summary>
+    private static async Task<List<DriverCandidate>> RecheckPolicyAsync(Core.Policy.PolicyLoader loader, ScanResult scan, List<DriverCandidate> selection, CancellationToken ct)
+    {
+        var recheck = await DriverScanEngine.RecheckPolicyAsync(loader, selection, scan.Devices, ct);
+        foreach (var m in recheck.Policy.Messages.Where(m => scan.Policy?.Messages.Contains(m) != true)) WriteLine($"  ⚠ {m}", ConsoleColor.Yellow);
+        if (!recheck.Changed) return selection;
+        WriteLine($"\n{recheck.NewlyBlocked.Count} pilote(s) écarté(s) : bloqué(s) ou retenu(s) par la politique depuis l'analyse.", ConsoleColor.Yellow);
+        foreach (var d in recheck.NewlyBlocked)
+            WriteLine($"  {(d.Candidate.HeldByRollout ? "⏳" : "⛔")} {d.Candidate.Title} {d.Candidate.Version} — {d.Candidate.BlockedReason}", ConsoleColor.Yellow);
+        var remaining = selection.Where(c => c.BlockedReason is null).ToList();
+        if (remaining.Count == 0) WriteLine("Plus rien à installer.", ConsoleColor.Green);
+        return remaining;
     }
 
     private static List<DriverCandidate> Select(List<DriverCandidate> candidates, Args a)
