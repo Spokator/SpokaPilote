@@ -1,0 +1,56 @@
+# Généré par scripts/winget-manifest.ps1 — ne pas modifier à la main.
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.10.0.schema.json
+
+PackageIdentifier: Spoka.SpokaPilote
+PackageVersion: 4.0.2
+PackageLocale: fr-FR
+Publisher: Spoka
+PublisherUrl: https://github.com/Spokator
+PublisherSupportUrl: https://github.com/Spokator/SpokaPilote/issues
+Author: Spokator
+PackageName: SpokaPilote
+PackageUrl: https://spokator.github.io/SpokaPilote/
+License: MIT
+LicenseUrl: https://github.com/Spokator/SpokaPilote/blob/main/LICENSE
+Copyright: Copyright (c) 2026 Spokator
+ShortDescription: Les bons pilotes pour tout le poste et les imprimantes d'entreprise, depuis les sources officielles uniquement.
+Description: |-
+  SpokaPilote inventorie le poste, identifie chaque composant par son identifiant matériel exact et va chercher le pilote
+  chez Microsoft (Windows Update, Microsoft Update Catalog), chez le constructeur du PC (Dell, HP, Lenovo) ou chez NVIDIA.
+  Chaque pilote est vérifié (domaine officiel en HTTPS, empreinte, signature numérique, compatibilité réelle) avant
+  installation, avec point de restauration, sauvegarde et annulation en un clic. SpokaPilote configure aussi les
+  imprimantes et copieurs réseau et remonte l'état du parc dans une console centrale auto-hébergée.
+  Interface graphique et commande « spokapilote » pour les scripts de déploiement.
+Moniker: spokapilote
+Tags:
+- pilotes
+- drivers
+- imprimantes
+- printers
+- windows-update
+- parc-informatique
+- deploiement
+- administration
+ReleaseNotes: |-
+  Correctif de la mise à jour 4.0.1, constaté en réel sur un poste mis à jour. **Mise à jour recommandée.**
+
+  - **Fichiers des comptes administrateurs reconnus** : sur les PC où un fichier créé par un administrateur appartient à
+    son propre compte (contrôle de compte d'utilisateur désactivé, stratégie « propriétaire par défaut = créateur »,
+    technicien administrateur), la 4.0.1 mettait en quarantaine `settings.json`, les journaux et les rapports — le poste
+    perdait alors sa configuration et ne remontait plus à la console. Sont désormais de confiance : SYSTEM, le groupe
+    Administrateurs, TrustedInstaller et tout compte membre du groupe local Administrateurs (y compris par un groupe de
+    domaine imbriqué). Les fichiers déposés par un utilisateur standard restent refusés.
+  - **Configuration jamais perdue en silence** : si `settings.json` doit être écarté, une erreur est journalisée, un
+    avertissement s'affiche au début de chaque commande et dans l'interface (bouton « Vérifier et restaurer »), et
+    `spokapilote config restore` la réimporte après vérification (jeton masqué, réglages sensibles signalés).
+  - **Réparation automatique** des postes déjà touchés par la 4.0.1 : sans `settings.json`, la dernière configuration
+    mise en quarantaine est restaurée d'elle-même (jeton migré) si elle n'élargit pas la confiance ; sinon elle attend
+    `config restore` (`--yes` pour un déploiement par Intune / RMM, ou relancer le kit de déploiement).
+  - Quarantaine nettoyée au bout de 90 jours.
+  - Kit de déploiement : même règle de confiance pour un `settings.json` existant.
+ReleaseNotesUrl: https://github.com/Spokator/SpokaPilote/releases/tag/v4.0.2
+Documentations:
+- DocumentLabel: Documentation
+  DocumentUrl: https://spokator.github.io/SpokaPilote/documentation.html
+ManifestType: defaultLocale
+ManifestVersion: 1.10.0
