@@ -155,6 +155,10 @@ public static partial class DriverStoreCleaner
 
     private static string WindowsDir => Environment.GetFolderPath(Environment.SpecialFolder.Windows);
     private static string FileRepository => Path.Combine(WindowsDir, "System32", "DriverStore", "FileRepository");
+    internal static string FileRepositoryFolder => FileRepository;
+
+    /// <summary>oemNN.inf → identifiant du paquet (historique des interventions : identité des paquets ajoutés).</summary>
+    internal static Dictionary<string, string> ReadPackageIdsForHistory() => ReadPackageIds();
 
     // ------------------------------------------------------------------ analyse (logique pure, testable)
 

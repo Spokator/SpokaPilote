@@ -257,6 +257,10 @@ internal static partial class Program
             case AgentJobTypes.RollbackLast:
             {
                 var intervention = InterventionHistory.Find("last");
+                // Tâche distante : jamais au-delà de RollbackLastMaxAgeDays, ni pour une intervention aux paquets non vérifiables.
+                if (intervention is not null &&
+                    InterventionHistory.CheckAutomaticRollback(intervention, RollbackOptions.Last(Settings.Load()), DateTime.Now) is { } refusal)
+                    return (new AgentJobResult(false, ExitError, refusal), null);
                 if (job.DryRun)
                     return (intervention is null
                         ? new AgentJobResult(false, ExitError, "Simulation : aucune intervention annulable sur ce poste.")

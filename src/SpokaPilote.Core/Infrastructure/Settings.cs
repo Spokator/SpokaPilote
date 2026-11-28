@@ -27,6 +27,11 @@ public sealed class Settings
     public int BackupRetentionCount { get; set; } = 3;
     /// <summary>Place totale maximale des sauvegardes complètes, en Mo (0 = sans limite) ; la plus récente est toujours gardée.</summary>
     public int BackupMaxTotalSizeMB { get; set; } = 10240;
+    /// <summary>
+    /// Ancienneté maximale, en jours, de l'intervention annulée par « rollback last » et la tâche distante « rollback-last » ;
+    /// au-delà, l'annulation se demande explicitement (spokapilote rollback &lt;id&gt;).
+    /// </summary>
+    public int RollbackLastMaxAgeDays { get; set; } = 30;
 
     /// <summary>Domaines supplémentaires autorisés au téléchargement (en plus de la liste officielle intégrée).</summary>
     public List<string> ExtraTrustedHosts { get; set; } = new();

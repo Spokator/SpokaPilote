@@ -515,7 +515,10 @@ internal static partial class Program
         {
             WriteLine($"{i.Id}  {i.Summary}", i.RolledBackAt is null ? ConsoleColor.White : ConsoleColor.DarkGray);
             foreach (var item in i.Items) WriteLine($"    {item.Status,-13} {item.Title} {item.Version}", ConsoleColor.Gray);
-            if (i.AddedDriverPackages.Count > 0) WriteLine($"    paquets ajoutés : {string.Join(", ", i.AddedDriverPackages)}", ConsoleColor.DarkGray);
+            if (i.HasPackageDetails)
+                foreach (var p in i.AddedPackages) WriteLine($"    paquet ajouté : {p}", ConsoleColor.DarkGray);
+            else if (i.AddedDriverPackages.Count > 0)
+                WriteLine($"    paquets ajoutés : {string.Join(", ", i.AddedDriverPackages)} (version antérieure à 4.0.1 : annulation par « rollback {i.Id} » seulement)", ConsoleColor.DarkGray);
             if (i.RemovedDriverPackages.Count > 0) WriteLine($"    paquets retirés (non annulable{(i.BackupFolder is null ? "" : ", sauf restauration de la sauvegarde")}) : {string.Join(", ", i.RemovedDriverPackages)}", ConsoleColor.DarkGray);
             if (i.BackupFolder is not null) WriteLine($"    sauvegarde : {i.BackupFolder}{(Directory.Exists(i.BackupFolder) ? "" : " (supprimée depuis par la rétention)")}", ConsoleColor.DarkGray);
         }
@@ -525,16 +528,24 @@ internal static partial class Program
 
     private static async Task<int> RollbackAsync(Args a, CancellationToken ct)
     {
-        var intervention = InterventionHistory.Find(a.Positional(0) ?? "last");
+        var target = a.Positional(0) ?? "last";
+        var intervention = InterventionHistory.Find(target);
         if (intervention is null)
         {
             WriteLine("Aucune intervention annulable trouvée (voir « spokapilote history »).", ConsoleColor.Yellow);
             return ExitError;
         }
+        // « last » : limite d'âge et paquets vérifiables exigés ; un identifiant explicite : vérifications seules.
+        var options = InterventionHistory.IsLast(target) ? RollbackOptions.Last(Settings.Load()) : new RollbackOptions();
+        if (InterventionHistory.CheckAutomaticRollback(intervention, options, DateTime.Now) is { } refusal)
+        {
+            WriteLine(refusal, ConsoleColor.Yellow);
+            return ExitError;
+        }
         WriteLine($"Intervention {intervention.Id} : {intervention.Summary}", ConsoleColor.White);
-        WriteLine($"Paquets qui seront retirés : {string.Join(", ", intervention.AddedDriverPackages)}", ConsoleColor.Gray);
+        WriteLine($"Paquets qui seront retirés s'ils n'ont pas changé depuis : {string.Join(", ", intervention.AddedDriverPackages)}", ConsoleColor.Gray);
         if (!a.Flag("yes") && !Confirm("Annuler cette intervention ?")) return ExitOk;
-        var (ok, message) = await InterventionHistory.RollbackAsync(intervention, new Progress<string>(m => WriteLine($"› {m}", ConsoleColor.DarkGray)), ct);
+        var (ok, message) = await InterventionHistory.RollbackAsync(intervention, options, new Progress<string>(m => WriteLine($"› {m}", ConsoleColor.DarkGray)), ct);
         WriteLine(message, ok ? ConsoleColor.Green : ConsoleColor.Red);
         return ok ? ExitOk : ExitPartial;
     }
@@ -834,7 +845,8 @@ internal static partial class Program
 
             HISTORIQUE ET RETOUR ARRIÈRE
               spokapilote history                          interventions passées sur ce poste
-              spokapilote rollback [id|last] [--yes]       annule une intervention (retour aux pilotes précédents)
+              spokapilote rollback [id|last] [--yes]       annule une intervention (retour aux pilotes précédents) ;
+                                   « last » : au plus RollbackLastMaxAgeDays jours (30 par défaut)
               spokapilote restore [dossier-de-sauvegarde]  réinstalle une sauvegarde de pilotes
 
             DÉPÔT DE PILOTES ET POSTES SANS RÉSEAU

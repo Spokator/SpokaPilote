@@ -35,6 +35,8 @@ public sealed class DriverInstaller
 
     /// <summary>Dossier de travail de l'exécution en cours (téléchargements, extractions), supprimé à la fin.</summary>
     private WorkDirectory? _work;
+    /// <summary>Noms publiés renvoyés par pnputil /add-driver pendant l'étape en cours.</summary>
+    private readonly List<string> _reportedNames = new();
 
     public DriverInstaller(Settings settings, SystemInfo system)
     {
@@ -81,6 +83,7 @@ public sealed class DriverInstaller
         CancellationToken ct)
     {
         var outcomes = new List<InstallOutcome>();
+        var added = new List<AddedDriverPackage>();
 
         // Un candidat bloqué par la politique de pilotes n'est jamais installé, même si l'appelant l'a sélectionné.
         var installable = candidates.Count(c => c.BlockedReason is null);
@@ -114,6 +117,10 @@ public sealed class DriverInstaller
                 outcomes.Add(outcome);
                 continue;
             }
+            // Paquets attribués à cette seule étape : jamais ceux qu'un autre outil (Windows Update, Intune...) ajoute
+            // entre deux étapes ou pendant la préparation.
+            var stepBefore = storeBefore is null ? null : InterventionHistory.SnapshotDriverStore();
+            _reportedNames.Clear();
             try
             {
                 outcome = c.IsInformational
@@ -139,6 +146,9 @@ public sealed class DriverInstaller
                 outcome = new InstallOutcome(c, InstallStatus.Failed, ex.Message);
             }
 
+            if (stepBefore is not null)
+                added.AddRange(AttributeStep(c, stepBefore, InterventionHistory.SnapshotDriverStore(), _reportedNames));
+
             var level = outcome.Succeeded || outcome.Status == InstallStatus.Skipped ? LogLevel.Info : LogLevel.Warning;
             Log.Write(level, $"[{outcome.Status}] {c.Title} {c.Version} — {outcome.Message}");
             outcomes.Add(outcome);
@@ -152,8 +162,21 @@ public sealed class DriverInstaller
 
         if (storeBefore is not null)
         {
-            intervention.AddedDriverPackages = InterventionHistory.SnapshotDriverStore().Except(storeBefore, StringComparer.OrdinalIgnoreCase)
-                .OrderBy(n => n).ToList();
+            // Identité de chaque paquet ajouté (nom d'origine, éditeur, classe, version, dossier du magasin) : revérifiée
+            // avant toute suppression par l'annulation.
+            var described = InterventionHistory.DescribeStore(added.Select(a => a.PublishedName));
+            foreach (var a in added)
+            {
+                if (!described.TryGetValue(a.PublishedName, out var d)) continue;
+                a.OriginalName = d.OriginalName;
+                a.PackageId = d.PackageId;
+                a.Provider = d.Provider;
+                a.ClassName = d.ClassName;
+                a.Version = d.Version;
+            }
+            intervention.AddedPackages = added.Where(a => described.ContainsKey(a.PublishedName)).OrderBy(a => a.PublishedName, StringComparer.OrdinalIgnoreCase).ToList();
+            intervention.AddedDriverPackages = intervention.AddedPackages.Select(a => a.PublishedName).ToList();
+            intervention.CompletedAt = DateTime.Now;
             intervention.Items = outcomes.Select(o => new InterventionItem
             {
                 Title = o.Candidate.Title,
@@ -170,6 +193,21 @@ public sealed class DriverInstaller
 
     /// <summary>Intervention enregistrée par le dernier appel à <see cref="InstallAsync"/> (null en simulation).</summary>
     public Intervention? LastIntervention { get; private set; }
+
+    /// <summary>
+    /// Paquets à attribuer à une étape (une proposition) : ceux dont pnputil a renvoyé le nom publié et qui n'existaient
+    /// pas avant l'étape (un paquet « déjà présent » n'est pas à nous) ; à défaut de nom renvoyé (installeur constructeur,
+    /// Windows Update), les paquets apparus pendant cette seule étape.
+    /// </summary>
+    internal static List<AddedDriverPackage> AttributeStep(DriverCandidate c, IReadOnlySet<string> before, IReadOnlySet<string> after, IEnumerable<string> reported)
+    {
+        var appeared = after.Where(n => !before.Contains(n)).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var named = reported.Where(appeared.Contains).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        var (names, origin) = named.Count > 0 ? (named, AddedPackageOrigins.PnpUtil) : (appeared.ToList(), AddedPackageOrigins.Step);
+        return names.Where(PnpUtil.IsPublishedOemName).OrderBy(n => n, StringComparer.OrdinalIgnoreCase)
+            .Select(n => new AddedDriverPackage { PublishedName = n.ToLowerInvariant(), Origin = origin, Candidate = $"{c.Title} {c.Version}".Trim() })
+            .ToList();
+    }
 
     // ------------------------------------------------------------------ Windows Update
 
@@ -275,6 +313,7 @@ public sealed class DriverInstaller
                 reboot |= result.ExitCode == PnpUtil.ErrorSuccessRebootRequired;
                 if (PnpUtil.IsSuccess(result.ExitCode))
                 {
+                    _reportedNames.AddRange(PnpUtil.ParsePublishedNames(result.Combined));
                     anyOk = true;
                     messages.Add(result.ExitCode == PnpUtil.ErrorNoMoreItems
                         ? $"{Path.GetFileName(inf)} ajouté au magasin (Windows conserve le pilote actuel, jugé équivalent ou meilleur)"

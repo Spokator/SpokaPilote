@@ -20,13 +20,30 @@ public static class PnpUtil
     public static Task<ProcessResult> ExportAllAsync(string destination, CancellationToken ct = default) =>
         ProcessRunner.RunAsync(Exe, $"/export-driver * \"{destination}\"", timeout: TimeSpan.FromMinutes(30), ct: ct);
 
-    /// <summary>Retire un paquet du magasin et le désinstalle des périphériques (ils reviennent au meilleur pilote restant).</summary>
+    /// <summary>
+    /// Retire un paquet du magasin et le désinstalle des périphériques (ils reviennent au meilleur pilote restant). Jamais
+    /// /force : si Windows ne peut pas libérer un périphérique qui l'utilise, pnputil refuse et le paquet reste en place
+    /// (signalé à l'appelant) plutôt que d'être arraché à un périphérique en service.
+    /// </summary>
     public static Task<ProcessResult> DeleteDriverAsync(string publishedName, CancellationToken ct = default)
     {
         if (!IsPublishedOemName(publishedName))
             throw new ArgumentException($"Nom de paquet inattendu : {publishedName}");
-        return ProcessRunner.RunAsync(Exe, $"/delete-driver {publishedName} /uninstall /force", timeout: TimeSpan.FromMinutes(10), ct: ct);
+        return ProcessRunner.RunAsync(Exe, DeleteDriverArguments(publishedName), timeout: TimeSpan.FromMinutes(10), ct: ct);
     }
+
+    internal static string DeleteDriverArguments(string publishedName) => $"/delete-driver {publishedName} /uninstall";
+
+    /// <summary>
+    /// Noms publiés (oemNN.inf) cités par la sortie de pnputil /add-driver (« Published Name: oem42.inf », « Nom publié :
+    /// oem42.inf » selon la langue de Windows), dans l'ordre et sans doublon. Le nom est cité aussi pour un paquet « déjà
+    /// présent » : l'appelant écarte ceux qui existaient avant l'intervention.
+    /// </summary>
+    internal static List<string> ParsePublishedNames(string output) =>
+        System.Text.RegularExpressions.Regex.Matches(output ?? "", @"(?<![\w.])oem\d+\.inf\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase)
+            .Select(m => m.Value.ToLowerInvariant())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
 
     /// <summary>Seuls les paquets tiers publiés (oemNN.inf) peuvent être retirés : jamais un pilote Windows intégré.</summary>
     internal static bool IsPublishedOemName(string name) =>
