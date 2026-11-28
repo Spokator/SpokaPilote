@@ -115,6 +115,13 @@ public static class AppPaths
     public static string PolicyCache => Path.Combine(Ensure(WritableMachineRoot), PolicyCacheFileName);
     /// <summary>Dernières décisions de diffusion par anneaux reçues de la console (poste hors ligne) : propres au poste, comme <see cref="PolicyCache"/>.</summary>
     public static string RolloutDecisionsCache => Path.Combine(Ensure(WritableMachineRoot), RolloutDecisionsCacheFileName);
+    /// <summary>
+    /// Version installée lancée sans élévation : cache de politique écrit par les exécutions SYSTEM du poste
+    /// (%ProgramData%\SpokaPilote), lu seulement, quand la console n'est pas accessible sans le jeton. Null sinon.
+    /// </summary>
+    public static string? MachinePolicyCache => Layout.UserRoot is null ? null : Path.Combine(MachineRoot, PolicyCacheFileName);
+    /// <summary>Décisions de diffusion écrites par les exécutions SYSTEM du poste (voir <see cref="MachinePolicyCache"/>).</summary>
+    public static string? MachineRolloutDecisionsCache => Layout.UserRoot is null ? null : Path.Combine(MachineRoot, RolloutDecisionsCacheFileName);
     public static string UiPreferencesFile => Layout.UiPreferencesFile;
 
     /// <summary>

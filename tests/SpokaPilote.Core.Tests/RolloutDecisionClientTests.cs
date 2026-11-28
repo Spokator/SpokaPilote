@@ -18,6 +18,7 @@ namespace SpokaPilote.Core.Tests;
 /// demandées proposition par proposition (POST /api/rollout/decide) puis appliquées par l'analyse ; console injoignable →
 /// dernières décisions connues, retenue prudente des autres ; console antérieure (sans décisions) → comportement précédent.
 /// </summary>
+[Collection(nameof(GlobalDataProtectionState))] // un test remplace DataProtection.Security
 public sealed class RolloutDecisionClientTests : IDisposable
 {
     private static readonly DateTimeOffset Available = new(2026, 12, 6, 9, 0, 0, TimeSpan.Zero);
@@ -222,6 +223,65 @@ public sealed class RolloutDecisionClientTests : IDisposable
         (_, merged) = await ScanAsync(Loader(console), Candidates());
         Assert.True(merged.Single(c => c.Title == "Intel - Display - 31.0.101.5590").HeldByRollout);
         Assert.False(merged.Single(c => c.Title == "Realtek - Audio - 6.0.9600.1" && c.Kind == CandidateKind.MissingDriver).BlockedReason is null);
+    }
+
+    [Fact]
+    public async Task Non_elevated_interface_shows_blocks_and_holds_from_the_policy_received_by_system_runs()
+    {
+        // Exécution SYSTEM (tâche, agent) : politique et décisions reçues, mises en cache dans %ProgramData%.
+        var console = new FakeConsole(PolicyJson(), Decide);
+        var machine = Directory.CreateDirectory(Path.Combine(_dir, "ProgramData")).FullName;
+        var system = new PolicyLoader(new Settings { ServerUrl = "https://console.exemple.fr", ServerToken = "jeton" }, new HttpClient(console))
+        {
+            RefreshReferenceList = false,
+            CacheFile = Path.Combine(machine, "policy-cache.json"),
+            ReferenceCacheFile = Path.Combine(_dir, "ref.json"),
+            DecisionCacheFile = Path.Combine(machine, "rollout-decisions.json"),
+            Identity = () => ("6f1c2a8e-1d2b-4c3d-9e4f-0123456789ab", "PC-COMPTA-01"),
+        };
+        await ScanAsync(system, Candidates());
+
+        // Interface non élevée : pas de jeton (réservé aux administrateurs) ; caches propres à l'utilisateur vides.
+        PolicyLoader Gui() => new(new Settings { ServerUrl = "https://console.exemple.fr" }, new HttpClient(console))
+        {
+            RefreshReferenceList = false,
+            CacheFile = Path.Combine(_dir, "user", "policy-cache.json"),
+            ReferenceCacheFile = Path.Combine(_dir, "ref.json"),
+            DecisionCacheFile = Path.Combine(_dir, "user", "rollout-decisions.json"),
+            MachineCacheFile = Path.Combine(machine, "policy-cache.json"),
+            MachineDecisionCacheFile = Path.Combine(machine, "rollout-decisions.json"),
+        };
+        var previous = DataProtection.Security;
+        var security = new FakeFileSecurity();
+        DataProtection.Security = security;
+        try
+        {
+            security.Own(Path.Combine(machine, "policy-cache.json"), DataProtection.SystemSid);
+            security.Own(Path.Combine(machine, "rollout-decisions.json"), DataProtection.SystemSid);
+            console.Requests.Clear();
+            var (policy, merged) = await ScanAsync(Gui(), Candidates());
+
+            Assert.Empty(console.Requests); // aucune demande vouée au refus (401)
+            Assert.True(policy.MachineCacheOnly);
+            Assert.Contains("Parc siège", policy.Organization!.DisplayName);
+            Assert.Contains(policy.Messages, m => m.Contains("Interface sans droits administrateur") && m.Contains("au moment d'installer"));
+            Assert.True(merged.Single(c => c.Title == "Intel - Display - 31.0.101.5600").HeldByRollout);
+            Assert.True(merged.Single(c => c.Title == "Realtek - Audio - 6.0.9600.1").HeldByRollout);
+            Assert.NotNull(merged.Single(c => c.Title == "Conexant Audio 1.0").BlockedReason); // règle « gel » de l'organisation
+            Assert.Null(merged.Single(c => c.Title == "Intel - Display - 31.0.101.5590").BlockedReason);
+
+            // Cache préparé par un utilisateur (propriétaire inattendu) : jamais lu ; l'interface le dit.
+            security.Own(Path.Combine(machine, "policy-cache.json"), FakeFileSecurity.Attacker);
+            (policy, _) = await ScanAsync(Gui(), Candidates());
+            Assert.Null(policy.Organization);
+            Assert.True(policy.MachineCacheOnly);
+            Assert.Contains(policy.Messages, m => m.Contains("politique de la console indisponible") && m.Contains("bloqués"));
+            Assert.Empty(console.Requests);
+        }
+        finally
+        {
+            DataProtection.Security = previous;
+        }
     }
 
     [Fact]
