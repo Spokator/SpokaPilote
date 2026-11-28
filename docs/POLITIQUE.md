@@ -126,7 +126,8 @@ Conséquences pratiques :
   pare-feu). `policy check` signale une règle placée après une règle au moins aussi générale qui décide toujours
   avant elle (« elle ne s'appliquera jamais »).
 - Les règles de l'organisation passent avant la liste de référence : un `allow` de l'organisation lève un blocage de
-  la liste de référence (pour écarter une règle de référence précise, préférez `ignoreReferenceRules`).
+  la liste de référence (pour écarter une règle de référence précise, préférez `ignoreReferenceRules`). La liste de
+  référence, elle, n'apporte que des règles `block` : elle ne lève jamais un réglage de l'organisation.
 - Un `allow` explicite lève `minimumDriverAgeDays`, `onlyMissingDrivers`, `allowFirmware` et `allowOptional`
   (ex. correctif de sécurité urgent), mais jamais `allowedSources`.
 - Si un pilote bloqué et un pilote autorisé d'une autre source visent le même périphérique, le pilote **autorisé**
@@ -541,6 +542,21 @@ Elle est rafraîchie au plus une fois par jour depuis
 moins aussi récente (`updatedAt`) que la liste intégrée. Ce domaine ne sert qu'à ce fichier de métadonnées : il ne
 fait pas partie des domaines autorisés pour télécharger des pilotes. Sans accès à Internet, la liste intégrée
 s'applique.
+
+**Elle ne peut que rendre la politique plus stricte** (4.0.1). Le fichier téléchargé n'est pas signé : un commit erroné
+ou malveillant ne doit pas pouvoir lever, sur tout le parc, un réglage de l'organisation. Donc :
+
+- seules ses règles **`block`** sont gardées ; une règle `allow` ou `pin` est **ignorée** (avertissement dans
+  `policy check` et dans le journal technique) — un `allow` placé là lèverait sinon `onlyMissingDrivers`,
+  `minimumDriverAgeDays`, `allowOptional`, `allowFirmware` pour tout le parc ;
+- `hide` y est ignoré (le pilote reste affiché comme bloqué), ses `settings` et une éventuelle section `rollout` ne
+  sont jamais lus (seuls les réglages de l'organisation s'appliquent) ;
+- la copie téléchargée est **complétée** par toutes les règles de la liste intégrée au binaire signé : elle peut
+  ajouter des blocages, jamais en retirer ni restreindre une règle existante (une règle de même identifiant aux critères
+  différents s'ajoute au lieu de remplacer). `ignoreReferenceRules` écarte toutes les règles de cet identifiant.
+
+Le pire qu'une copie altérée puisse faire est donc de **bloquer** trop de pilotes (l'organisation la désactive avec
+`useReferenceBlocklist: false` ou écarte une règle avec `ignoreReferenceRules`).
 
 Contenu actuel (vérifié sur les avis officiels) :
 

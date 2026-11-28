@@ -168,10 +168,73 @@ public sealed class DriverPolicy
             }
         }
 
+        if (Layer == PolicyLayer.Reference) RestrictReferenceLayer(v);
         if (v.Errors.Count == 0) AddShadowWarnings(v);
         _validated = v.Errors.Count == 0;
         return v;
     }
+
+    /// <summary>
+    /// Liste de référence (fichier intégré, ou copie rafraîchie chaque jour depuis GitHub, non signée) : elle ne peut que
+    /// rendre la politique PLUS stricte. Seules ses règles « block » sont gardées ; « allow » et « pin » sont ignorées (une
+    /// règle « allow » placée là lèverait, sur tout le parc, onlyMissingDrivers, minimumDriverAgeDays, allowOptional...),
+    /// « hide » est ignoré (le pilote reste affiché comme bloqué), et ses réglages ou sa section « rollout » ne sont jamais lus.
+    /// </summary>
+    private void RestrictReferenceLayer(PolicyValidation v)
+    {
+        for (var i = Rules.Count - 1; i >= 0; i--)
+        {
+            var rule = Rules[i];
+            if (rule.Action is null || rule.ParsedAction == PolicyAction.Block) continue;
+            v.Warnings.Add(new PolicyIssue(
+                $"règle « {rule.ActionLabel} » ignorée : la liste de référence n'accepte que des règles « block » (elle ne peut pas assouplir la politique).",
+                rule.Number, rule.Id));
+            Rules.RemoveAt(i);
+        }
+        foreach (var rule in Rules.Where(r => r.Hide))
+        {
+            v.Warnings.Add(new PolicyIssue("« hide » ignoré : un pilote bloqué par la liste de référence reste affiché.", rule.Number, rule.Id));
+            rule.Hide = false;
+        }
+        if (!Settings.IsDefault || !Settings.UseReferenceBlocklist || Settings.IgnoreReferenceRules.Count > 0)
+            v.Warnings.Add(new PolicyIssue("« settings » ignoré : seuls les réglages de la politique de l'organisation s'appliquent."));
+        if (Rollout is not null)
+        {
+            v.Warnings.Add(new PolicyIssue("« rollout » ignoré dans la liste de référence."));
+            Rollout = null;
+        }
+        Settings = new PolicySettings();
+        Settings.Validate(new PolicyValidation());
+        _allowedSources = null;
+    }
+
+    /// <summary>
+    /// Liste de référence effective : la copie téléchargée (plus récente) PLUS toutes les règles de la liste intégrée au
+    /// binaire signé. Une copie altérée ou erronée peut donc ajouter des blocages, jamais en retirer ni en restreindre un
+    /// (une règle de même identifiant aux critères différents s'ajoute à celle de la liste intégrée au lieu de la remplacer).
+    /// </summary>
+    public static DriverPolicy UnionReference(DriverPolicy downloaded, DriverPolicy? embedded)
+    {
+        downloaded.EnsureValid();
+        if (embedded is null) return downloaded;
+        embedded.EnsureValid();
+        var seen = new HashSet<string>(downloaded.Rules.Select(RuleSignature), StringComparer.Ordinal);
+        var rules = downloaded.Rules.Where(r => r.ParsedAction == PolicyAction.Block).ToList();
+        rules.AddRange(embedded.Rules.Where(r => r.ParsedAction == PolicyAction.Block && !seen.Contains(RuleSignature(r))));
+        return new DriverPolicy
+        {
+            Schema = CurrentSchema,
+            Name = downloaded.Name,
+            Version = downloaded.Version,
+            UpdatedAt = downloaded.UpdatedAt,
+            Description = downloaded.Description,
+            Rules = rules,
+            Layer = PolicyLayer.Reference,
+            _validated = true,
+        };
+    }
+
+    private static string RuleSignature(PolicyRule r) => JsonSerializer.Serialize(r, JsonOptions);
 
     /// <summary>Signale les règles qui ne s'appliqueront jamais car une règle plus générale placée avant décide toujours.</summary>
     private void AddShadowWarnings(PolicyValidation v)
@@ -222,6 +285,8 @@ public sealed class DriverPolicy
     /// Politique effective : réglages de l'organisation, puis ses règles, puis celles de la liste de référence
     /// (sauf si « useReferenceBlocklist » vaut false ou si l'identifiant figure dans « ignoreReferenceRules »).
     /// L'organisation est donc prioritaire : une règle « allow » de sa part lève un blocage de la liste de référence.
+    /// La liste de référence n'apporte que des règles « block » (jamais masquées) : elle ne peut que rendre la politique plus
+    /// stricte, jamais lever un réglage de l'organisation (voir <see cref="RestrictReferenceLayer"/>).
     /// </summary>
     public static DriverPolicy Combine(DriverPolicy? organization, DriverPolicy? reference)
     {
@@ -231,8 +296,8 @@ public sealed class DriverPolicy
         var rules = new List<PolicyRule>();
         if (organization is not null) rules.AddRange(organization.Rules);
         if (reference is not null && settings.UseReferenceBlocklist)
-            rules.AddRange(reference.Rules.Where(r => r.Id is null ||
-                !settings.IgnoreReferenceRules.Contains(r.Id, StringComparer.OrdinalIgnoreCase)));
+            rules.AddRange(reference.Rules.Where(r => r.ParsedAction == PolicyAction.Block && !r.Hide && (r.Id is null ||
+                !settings.IgnoreReferenceRules.Contains(r.Id, StringComparer.OrdinalIgnoreCase))));
         return new DriverPolicy
         {
             Schema = CurrentSchema,

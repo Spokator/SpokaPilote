@@ -430,12 +430,15 @@ public sealed class PolicyLoader
     {
         var embedded = LoadEmbeddedReference();
         if (!embedded.IsValid) Log.Warn($"Liste de référence intégrée invalide : {string.Join(" ; ", embedded.Errors)}");
+        foreach (var w in embedded.Warnings) Log.Warn($"Liste de référence intégrée : {w}");
         var best = embedded.IsValid ? embedded.Policy : null;
         var origin = "intégrée";
 
         if (RefreshReferenceList) await RefreshReferenceAsync(ct).ConfigureAwait(false);
 
-        // Copie rafraîchie depuis GitHub : retenue seulement si elle est au moins aussi récente que la liste intégrée.
+        // Copie rafraîchie depuis GitHub (fichier non signé) : retenue seulement si elle est au moins aussi récente que la liste
+        // intégrée, et TOUJOURS complétée par les règles de la liste intégrée (elle peut ajouter des blocages, jamais en retirer).
+        // Ses règles autres que « block » sont ignorées (voir DriverPolicy.RestrictReferenceLayer).
         try
         {
             if (File.Exists(ReferenceCacheFile))
@@ -443,8 +446,9 @@ public sealed class PolicyLoader
                 var cached = DriverPolicy.Parse(await File.ReadAllTextAsync(ReferenceCacheFile, ct).ConfigureAwait(false), PolicyLayer.Reference);
                 if (cached.IsValid && IsNewerOrSame(cached.Policy!, best))
                 {
-                    best = cached.Policy;
-                    origin = $"{ReferenceListUrl} (copie du {File.GetLastWriteTime(ReferenceCacheFile):dd/MM/yyyy})";
+                    foreach (var w in cached.Warnings) Log.Warn($"Liste de référence en ligne : {w}");
+                    best = DriverPolicy.UnionReference(cached.Policy!, embedded.IsValid ? embedded.Policy : null);
+                    origin = $"{ReferenceListUrl} (copie du {File.GetLastWriteTime(ReferenceCacheFile):dd/MM/yyyy}, complétée par la liste intégrée)";
                 }
             }
         }
@@ -487,6 +491,7 @@ public sealed class PolicyLoader
                 Log.Warn($"Liste de référence en ligne invalide, ignorée : {string.Join(" ; ", parsed.Errors.Take(3))}");
                 return;
             }
+            foreach (var w in parsed.Warnings) Log.Warn($"Liste de référence en ligne : {w}");
             File.WriteAllText(ReferenceCacheFile, json);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)

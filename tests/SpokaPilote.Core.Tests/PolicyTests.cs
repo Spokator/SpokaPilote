@@ -587,6 +587,73 @@ public class PolicyTests
         Assert.Contains("raw.githubusercontent.com", newer.ReferenceOrigin);
     }
 
+    /// <summary>
+    /// Copie de la liste de référence téléchargée chaque jour depuis GitHub (non signée) : un commit erroné ou malveillant qui
+    /// y place des règles « allow », « pin » ou « hide », des réglages ou une section « rollout » ne peut RIEN assouplir.
+    /// </summary>
+    [Fact]
+    public async Task A_downloaded_reference_list_can_only_add_blocks_never_lift_organization_settings()
+    {
+        using var dir = new TempDir();
+        var embedded = PolicyLoader.LoadEmbeddedReference().Policy!;
+        File.WriteAllText(dir.File("driver-policy.json"), """
+            { "name": "Parc", "version": "1", "settings": { "onlyMissingDrivers": true, "minimumDriverAgeDays": 30, "allowOptional": false },
+              "rules": [ { "id": "org-gel", "action": "block", "title": "Conexant*", "reason": "Gel" } ] }
+            """);
+        File.WriteAllText(dir.File("known-bad-drivers.json"), """
+            { "name": "ref", "version": "piégée", "updatedAt": "2099-01-01",
+              "settings": { "useReferenceBlocklist": false, "allowFirmware": true },
+              "rollout": { "decisions": true, "holdUnknown": false },
+              "rules": [
+                { "id": "ref-tout", "action": "allow", "title": "*", "reason": "tout autoriser" },
+                { "id": "ref-pin", "action": "pin", "title": "*", "pinVersion": "999.0" },
+                { "id": "ref-masque", "action": "block", "hide": true, "title": "Realtek*", "reason": "masqué" },
+                { "id": "ref-nouveau", "action": "block", "title": "Contoso Camera*", "versions": "2.4.0.1", "reason": "BSOD" }
+              ] }
+            """);
+        var loaded = await Loader(dir, new Settings { PolicySource = dir.File("driver-policy.json") }).LoadAsync();
+        var reference = loaded.Reference!;
+        Assert.Equal("piégée", reference.Version);
+        Assert.All(reference.Rules, r => Assert.Equal(PolicyAction.Block, r.ParsedAction));
+        Assert.DoesNotContain(reference.Rules, r => r.Hide);
+        Assert.Null(reference.Rollout);
+        Assert.True(reference.Settings.IsDefault);
+        // Les blocages de la liste intégrée restent en vigueur même si la copie téléchargée les a retirés.
+        Assert.All(embedded.Rules, r => Assert.Contains(reference.Rules, x => x.Id == r.Id));
+        Assert.Contains("complétée par la liste intégrée", loaded.ReferenceOrigin);
+
+        var effective = loaded.Effective;
+        var now = new DateTime(2026, 11, 26);
+        // Réglages de l'organisation toujours appliqués malgré l'« allow » de la copie.
+        Assert.Equal("onlyMissingDrivers", effective.Evaluate(Candidate("NVIDIA - Display - 31.0.15.5244", "31.0.15.5244", Gpu), Devices, now).Setting);
+        Assert.True(effective.Evaluate(Candidate("Pilote optionnel", "1.0", Gpu, kind: CandidateKind.Optional), Devices, now).IsBlocked);
+        var missing = Candidate("Realtek Audio", "6.0.9600.1", Gpu, kind: CandidateKind.MissingDriver);
+        // « hide » ignoré : bloqué mais affiché.
+        Assert.Equal(PolicyVerdict.Blocked, effective.Evaluate(missing, Devices, now).Verdict);
+        Assert.True(effective.Evaluate(Candidate("Contoso Camera", "2.4.0.1", Gpu, kind: CandidateKind.MissingDriver), Devices, now).IsBlocked);
+        // La règle « pin » de la copie n'a pas été reprise (une version illisible n'est pas bloquée par elle).
+        Assert.False(effective.Evaluate(Candidate("Pilote manquant", null, Gpu, kind: CandidateKind.MissingDriver), Devices, now).IsBlocked);
+        // Le blocage de l'organisation reste prioritaire, et la liste reste active malgré « useReferenceBlocklist » dans la copie.
+        Assert.Contains("Gel", effective.Evaluate(Candidate("Conexant Audio", "1.0", Gpu, kind: CandidateKind.MissingDriver), Devices, now).Reason);
+        Assert.True(loaded.ReferenceRuleCount > embedded.Rules.Count);
+    }
+
+    [Fact]
+    public void Reference_layer_rules_other_than_block_are_dropped_with_a_warning_even_when_combined_directly()
+    {
+        var parsed = DriverPolicy.Parse("""
+            { "name": "ref", "rules": [ { "id": "a", "action": "allow", "title": "*" }, { "id": "b", "action": "block", "title": "X*", "reason": "x" } ] }
+            """, PolicyLayer.Reference);
+        Assert.True(parsed.IsValid);
+        Assert.Equal(["b"], parsed.Policy!.Rules.Select(r => r.Id));
+        Assert.Contains(parsed.Warnings, w => w.Message.Contains("n'accepte que des règles « block »"));
+
+        // Même une politique lue comme « organisation » mais passée comme liste de référence n'apporte que ses blocages.
+        var org = Policy("", """{ "onlyMissingDrivers": true }""");
+        var notReference = Policy("""{ "action": "allow", "title": "*", "reason": "x" }""");
+        Assert.True(DriverPolicy.Combine(org, notReference).Evaluate(Candidate("Pilote", "1.0", Gpu), Devices).IsBlocked);
+    }
+
     [Fact]
     public void Reference_list_host_is_not_a_trusted_driver_host()
     {
