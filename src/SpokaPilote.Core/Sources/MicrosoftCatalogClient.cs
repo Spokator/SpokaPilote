@@ -73,9 +73,6 @@ public static partial class MicrosoftCatalogClient
     [GeneratedRegex(@"_originalSize"">(?<n>\d+)<", RegexOptions.IgnoreCase)]
     private static partial Regex SizeRegex();
 
-    [GeneratedRegex(@"files\[\d+\]\.url\s*=\s*'(?<url>[^']+)'", RegexOptions.IgnoreCase)]
-    private static partial Regex DownloadUrlRegex();
-
     [GeneratedRegex(@"\s+")]
     private static partial Regex Spaces();
 
@@ -89,6 +86,8 @@ public static partial class MicrosoftCatalogClient
         }
 
         // Console 4.0 : la recherche passe par son cache (une requête vers Microsoft pour tout le parc, requêtes espacées).
+        // Simple indication : les liens et empreintes de l'entrée retenue sont ensuite demandés directement à Microsoft
+        // (GetDownloadUrlsAsync), et le paquet est vérifié (SHA-1 publié, signature, ID matériel de l'INF).
         if (Online.ConsoleCache.Current is { Catalogs: true } console)
         {
             var viaConsole = await console.TryCatalogSearchAsync(query, ct).ConfigureAwait(false);
@@ -208,25 +207,76 @@ public static partial class MicrosoftCatalogClient
         return entries;
     }
 
-    /// <summary>Résout les URLs de téléchargement (.cab) d'une entrée du catalogue.</summary>
-    public static async Task<List<string>> GetDownloadUrlsAsync(string updateId, CancellationToken ct = default)
+    /// <summary>
+    /// Résout les URLs de téléchargement (.cab) d'une entrée du catalogue, TOUJOURS directement auprès de Microsoft (jamais
+    /// par le cache de la console, même quand la recherche est passée par elle) : l'URL porte le SHA-1 du fichier
+    /// (<see cref="Sha1FromUrl"/>), seule empreinte indépendante avec laquelle le poste vérifie le paquet, y compris
+    /// quand les octets viennent ensuite de la console. Requête légère (une par paquet installé), qui ne subit pas la
+    /// limitation des recherches.
+    /// </summary>
+    public static Task<List<string>> GetDownloadUrlsAsync(string updateId, CancellationToken ct = default) =>
+        GetDownloadUrlsAsync(updateId, Http.Client, ct);
+
+    [GeneratedRegex(@"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", RegexOptions.IgnoreCase)]
+    private static partial Regex UpdateIdRegex();
+
+    internal static async Task<List<string>> GetDownloadUrlsAsync(string updateId, HttpClient direct, CancellationToken ct)
     {
-        if (Online.ConsoleCache.Current is { Catalogs: true } console &&
-            await console.TryCatalogDownloadDialogAsync(updateId, ct).ConfigureAwait(false) is { Status: Online.ConsoleCatalogStatus.Ok, Text: { } dialog })
-        {
-            var fromConsole = DownloadUrlRegex().Matches(dialog).Select(m => m.Groups["url"].Value).Distinct().ToList();
-            // Les liens doivent rester des domaines officiels (le téléchargement le revérifie de toute façon).
-            if (fromConsole.Count > 0 && fromConsole.All(u => Uri.TryCreate(u, UriKind.Absolute, out var x) && OfficialHosts.IsOfficialDownload(x)))
-                return fromConsole;
-        }
+        if (!UpdateIdRegex().IsMatch(updateId))
+            throw new ArgumentException($"Identifiant d'entrée du catalogue Microsoft invalide : {updateId}", nameof(updateId));
         var payload = $"[{{\"size\":0,\"languages\":\"\",\"uidInfo\":\"{updateId}\",\"updateID\":\"{updateId}\"}}]";
         using var content = new FormUrlEncodedContent(new[] { new KeyValuePair<string, string>("updateIDs", payload) });
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         cts.CancelAfter(TimeSpan.FromSeconds(45));
-        using var response = await Http.Client.PostAsync($"{BaseUrl}/DownloadDialog.aspx", content, cts.Token).ConfigureAwait(false);
+        using var response = await direct.PostAsync($"{BaseUrl}/DownloadDialog.aspx", content, cts.Token).ConfigureAwait(false);
         response.EnsureSuccessStatusCode();
         var text = await response.Content.ReadAsStringAsync(cts.Token).ConfigureAwait(false);
-        return DownloadUrlRegex().Matches(text).Select(m => m.Groups["url"].Value).Distinct().ToList();
+        return ParseDownloadDialog(text);
+    }
+
+    [GeneratedRegex(@"(?:downloadInformation\[(?<u>\d+)\]\.)?files\[(?<f>\d+)\]\.(?<key>url|digest)\s*=\s*'(?<value>[^']*)'", RegexOptions.IgnoreCase)]
+    private static partial Regex DownloadFileFieldRegex();
+
+    /// <summary>
+    /// Liens de la réponse de DownloadDialog.aspx (« downloadInformation[0].files[0].url = '...' » et
+    /// « ....digest = '&lt;SHA-1 en Base64&gt;' ») : domaines officiels uniquement ; un lien dont le SHA-1 du nom de fichier
+    /// diffère de l'empreinte publiée à côté est écarté.
+    /// </summary>
+    internal static List<string> ParseDownloadDialog(string text)
+    {
+        var urls = new List<string>();
+        var fields = new Dictionary<string, Dictionary<string, string>>(StringComparer.Ordinal);
+        foreach (Match m in DownloadFileFieldRegex().Matches(text))
+        {
+            var id = $"{m.Groups["u"].Value}:{m.Groups["f"].Value}";
+            if (!fields.TryGetValue(id, out var f)) fields[id] = f = new(StringComparer.Ordinal);
+            f.TryAdd(m.Groups["key"].Value.ToLowerInvariant(), m.Groups["value"].Value.Trim());
+        }
+        foreach (var f in fields.Values)
+        {
+            if (!f.TryGetValue("url", out var url) || !Uri.TryCreate(url, UriKind.Absolute, out var uri) || !OfficialHosts.IsOfficialDownload(uri)) continue;
+            if (f.TryGetValue("digest", out var digest) && DigestToHex(digest) is { } published && Sha1FromUrl(url) is { } named &&
+                !published.Equals(named, StringComparison.OrdinalIgnoreCase))
+            {
+                Log.Warn($"Catalogue Microsoft : lien écarté, SHA-1 du nom ({named}) différent de l'empreinte publiée ({published}) : {url}");
+                continue;
+            }
+            if (!urls.Contains(url, StringComparer.Ordinal)) urls.Add(url);
+        }
+        return urls;
+    }
+
+    /// <summary>Empreinte Base64 (champ « digest ») → hexadécimal ; null si illisible.</summary>
+    private static string? DigestToHex(string base64)
+    {
+        try
+        {
+            return Convert.ToHexString(Convert.FromBase64String(base64));
+        }
+        catch (FormatException)
+        {
+            return null;
+        }
     }
 
     /// <summary>

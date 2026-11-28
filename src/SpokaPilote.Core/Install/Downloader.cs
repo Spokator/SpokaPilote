@@ -121,7 +121,7 @@ public sealed class Downloader
         if (!await cache.TryDownloadFileAsync(uri, tmp, sha256, sha1, md5,
                 (received, total) => progress?.Report(new DownloadProgress(fileName, received, total)), ct).ConfigureAwait(false))
             return false;
-        var rejection = await VerifyConsoleCopyAsync(tmp, sha256, sha1, md5, ct).ConfigureAwait(false);
+        var rejection = await VerifyConsoleCopyAsync(tmp, uri, sha256, sha1, md5, ct).ConfigureAwait(false);
         if (rejection is null) return true;
         try { File.Delete(tmp); } catch (IOException) { /* remplacé par le téléchargement direct */ }
         cache.ReportRejected(uri, rejection);
@@ -130,18 +130,22 @@ public sealed class Downloader
 
     /// <summary>
     /// Vérification d'une copie reçue de la console, AVANT tout usage : empreinte publiée par la source, ou à défaut
-    /// signature Authenticode valide d'un éditeur approuvé. Renvoie le motif du refus, ou null si la copie est acceptée.
-    /// Les contrôles habituels de l'installation (signature, éditeur, ID matériel de l'INF) s'appliquent ensuite comme
-    /// pour un téléchargement direct.
+    /// signature Authenticode valide (certificat non révoqué, révocation invérifiable tolérée) de l'éditeur ATTENDU pour ce
+    /// domaine (NVIDIA pour us.download.nvidia.com...), pas seulement d'un éditeur approuvé. Renvoie le motif du refus, ou
+    /// null si la copie est acceptée. Les contrôles habituels de l'installation (signature, éditeur, ID matériel de l'INF)
+    /// s'appliquent ensuite comme pour un téléchargement direct.
     /// </summary>
-    internal async Task<string?> VerifyConsoleCopyAsync(string path, string? sha256, string? sha1, string? md5, CancellationToken ct)
+    internal async Task<string?> VerifyConsoleCopyAsync(string path, Uri official, string? sha256, string? sha1, string? md5, CancellationToken ct)
     {
         var hashes = await VerifyHashesAsync(path, sha256, sha1, md5, ct).ConfigureAwait(false);
         if (hashes is true) return null;
         if (hashes is false) return "empreinte différente de celle publiée par la source officielle";
-        var sig = SignatureVerifier.Verify(path);
+        var sig = SignatureVerifier.Verify(path, checkRevocation: true);
         if (!sig.IsValid) return $"signature invalide ({sig.Detail})";
-        return _trust.IsTrustedPublisher(sig.Signer) ? null : $"éditeur non approuvé ({sig.Signer})";
+        if (TrustPolicy.ExpectedPublishers(official) is not { } expected) return $"aucun éditeur attendu connu pour {official.Host}";
+        if (!TrustPolicy.IsExpectedPublisher(official, sig.Signer) || !_trust.IsTrustedPublisher(sig.Signer))
+            return $"signé par {sig.Signer}, alors que {official.Host} publie des fichiers de {string.Join(" / ", expected)}";
+        return null;
     }
 
     /// <summary>true = au moins une empreinte fournie et toutes concordent ; false = discordance ; null = aucune empreinte connue.</summary>

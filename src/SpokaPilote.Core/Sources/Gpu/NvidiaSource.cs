@@ -149,13 +149,9 @@ public sealed partial class NvidiaSource : IDriverSource
     /// <summary>Renvoie le JSON de réponse, ou null si le service ne connaît aucun pilote pour cette carte (HTTP 404).</summary>
     private static async Task<string?> LookupAsync(string url, CancellationToken ct)
     {
-        // Console 4.0 : réponse du service NVIDIA gardée quelques heures pour tout le parc.
-        if (Online.ConsoleCache.Current is { Catalogs: true } console &&
-            await console.TryCatalogTextAsync(new Uri(url), ct).ConfigureAwait(false) is { } viaConsole)
-        {
-            if (viaConsole.Status == Online.ConsoleCatalogStatus.NotFoundAtSource) return null;
-            if (viaConsole is { Status: Online.ConsoleCatalogStatus.Ok, Text: { Length: > 0 } json }) return json;
-        }
+        // Toujours directement auprès de NVIDIA, jamais par le cache de la console : la réponse désigne le pilote à
+        // installer et rien ne l'authentifie (pas de signature) ; une console compromise pourrait sinon imposer un autre
+        // paquet NVIDIA (version ancienne). Le paquet lui-même peut ensuite venir de la console (vérifié par le poste).
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         cts.CancelAfter(TimeSpan.FromSeconds(45));
         using var response = await Http.Client.GetAsync(url, cts.Token).ConfigureAwait(false);

@@ -120,8 +120,45 @@ public sealed class ConsoleCacheTests
 
         var tmp = Path.Combine(AppPaths.Cache, Unique(".exe"));
         await System.IO.File.WriteAllBytesAsync(tmp, Bytes(100));
-        Assert.Contains("signature", await downloader.VerifyConsoleCopyAsync(tmp, null, null, null, default));
-        Assert.Contains("empreinte", await downloader.VerifyConsoleCopyAsync(tmp, new string('A', 64), null, null, default));
+        var source = new Uri(DellUrl("x.exe"));
+        Assert.Contains("signature", await downloader.VerifyConsoleCopyAsync(tmp, source, null, null, null, default));
+        Assert.Contains("empreinte", await downloader.VerifyConsoleCopyAsync(tmp, source, new string('A', 64), null, null, default));
+    }
+
+    /// <summary>Fichier réellement signé « O=Microsoft Corporation » (bibliothèque du runtime .NET), copié sous un autre nom.</summary>
+    private static string MicrosoftSignedCopy(string extension)
+    {
+        var copy = Path.Combine(AppPaths.Cache, Unique(extension));
+        System.IO.File.Copy(typeof(object).Assembly.Location, copy);
+        return copy;
+    }
+
+    [Fact]
+    public async Task Console_copy_without_hash_must_be_signed_by_the_vendor_of_its_source()
+    {
+        // Signature valide d'un éditeur approuvé (Microsoft), mais pour un fichier de NVIDIA : refusé. Une console
+        // compromise ne peut pas substituer à un paquet d'un constructeur n'importe quel fichier signé par un autre.
+        var downloader = MakeDownloader(null, new Stub(_ => throw new InvalidOperationException()));
+        var signed = MicrosoftSignedCopy(".exe");
+        Assert.True(SignatureVerifier.Verify(signed).IsValid);
+        var nvidia = await downloader.VerifyConsoleCopyAsync(signed, new Uri("https://us.download.nvidia.com/Windows/581.57/581.57-desktop.exe"), null, null, null, default);
+        Assert.Contains("NVIDIA Corporation", nvidia);
+        Assert.Contains("signé par", await downloader.VerifyConsoleCopyAsync(signed, new Uri(DellUrl("x.exe")), null, null, null, default));
+        // Domaine sans éditeur attendu connu (domaine ajouté dans les réglages) : jamais sans empreinte.
+        Assert.NotNull(await downloader.VerifyConsoleCopyAsync(signed, new Uri("https://pilotes.exemple.fr/x.exe"), null, null, null, default));
+        // Même fichier pour une adresse Microsoft : accepté (révocation contrôlée, invérifiable tolérée).
+        Assert.Null(await downloader.VerifyConsoleCopyAsync(signed, new Uri("https://download.microsoft.com/download/x/x.exe"), null, null, null, default));
+    }
+
+    [Fact]
+    public void Revocation_policy_refuses_revoked_certificates_but_tolerates_offline_checks()
+    {
+        Assert.Equal(SignatureVerifier.RevocationOutcome.Valid, SignatureVerifier.ClassifyRevocation(0));
+        Assert.Equal(SignatureVerifier.RevocationOutcome.Rejected, SignatureVerifier.ClassifyRevocation(unchecked((int)0x800B010C))); // CERT_E_REVOKED
+        Assert.Equal(SignatureVerifier.RevocationOutcome.Rejected, SignatureVerifier.ClassifyRevocation(unchecked((int)0x80092010))); // CRYPT_E_REVOKED
+        Assert.Equal(SignatureVerifier.RevocationOutcome.Unavailable, SignatureVerifier.ClassifyRevocation(unchecked((int)0x80092013))); // hors ligne
+        Assert.Equal(SignatureVerifier.RevocationOutcome.Unavailable, SignatureVerifier.ClassifyRevocation(unchecked((int)0x800B010E)));
+        Assert.Equal(SignatureVerifier.RevocationOutcome.Rejected, SignatureVerifier.ClassifyRevocation(unchecked((int)0x800B0100))); // non signé
     }
 
     [Fact]
@@ -272,21 +309,98 @@ public sealed class ConsoleCacheTests
         return r;
     }
 
-    [Fact]
-    public async Task Catalog_from_the_console_is_dated_from_its_fetch_at_the_source()
+    private static HttpResponseMessage CatalogBytes(byte[] body, DateTimeOffset fetchedAt)
     {
+        var r = new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(body) };
+        r.Content.Headers.ContentLength = body.Length;
+        r.Headers.TryAddWithoutValidation("X-SpokaPilote-Cache", "hit");
+        r.Headers.TryAddWithoutValidation("X-SpokaPilote-Fetched-At", fetchedAt.ToString("O"));
+        return r;
+    }
+
+    [Fact]
+    public async Task Signed_cab_catalog_from_the_console_is_dated_from_its_fetch_at_the_source()
+    {
+        // .cab signé par l'éditeur attendu de son domaine (Microsoft pour download.microsoft.com) : relayé et daté.
+        var signed = await System.IO.File.ReadAllBytesAsync(typeof(object).Assembly.Location);
         var fetched = DateTimeOffset.UtcNow.AddHours(-2);
-        var console = Console(_ => Catalog("<packages/>", fetched));
-        var name = Unique(".xml");
+        var console = Console(_ => CatalogBytes(signed, fetched));
+        var name = Unique(".cab");
         using (ConsoleCache.UseForTest(Cache(console)))
         {
-            var url = $"https://download.lenovo.com/catalog/{name}";
+            var url = $"https://download.microsoft.com/download/catalog/{name}";
             var path = await Http.GetCachedFileAsync(url, name, TimeSpan.FromHours(24));
-            Assert.Equal("<packages/>", await System.IO.File.ReadAllTextAsync(path));
+            Assert.Equal(signed, await System.IO.File.ReadAllBytesAsync(path));
             Assert.InRange(System.IO.File.GetLastWriteTimeUtc(path), fetched.UtcDateTime.AddSeconds(-2), fetched.UtcDateTime.AddSeconds(2));
             await Http.GetCachedFileAsync(url, name, TimeSpan.FromHours(24)); // encore frais : pas de nouvelle demande
             Assert.Equal(1, console.Count("/api/cache/catalog"));
         }
+    }
+
+    [Theory]
+    [InlineData("https://download.lenovo.com/catalog/20XW_Win11.xml")]                 // catalogue Lenovo (non signé)
+    [InlineData("https://download.lenovo.com/pccbbs/mobiles/n32ww12w_2_.xml")]        // descripteur : lignes de commande
+    [InlineData("https://download.lenovo.com/cdrt/td/catalogv2.xml")]                 // packs Lenovo
+    [InlineData("https://gfwsl.geforce.com/services_toolkit/services/com/nvidia/services/AjaxDriverService.php?func=DriverManualLookup")]
+    [InlineData("https://www.catalog.update.microsoft.com/DownloadDialog.aspx")]
+    [InlineData("https://www.microsoft.com/en-us/download/details.aspx?id=105847")]   // page Surface (hors domaines)
+    public async Task Unsigned_metadata_is_never_requested_from_the_console(string url)
+    {
+        // Ces métadonnées désignent les installeurs, leurs empreintes et leurs lignes de commande et rien ne les
+        // authentifie : une console compromise ne doit pas pouvoir les fournir. Lues directement à la source.
+        var console = Console(_ => Catalog("<Package><Install><Cmdline>x.exe &amp; calc</Cmdline></Install></Package>", DateTimeOffset.UtcNow));
+        var uri = new Uri(url);
+        Assert.False(ConsoleCache.CanRelayCatalog(uri));
+        Assert.Null(await Cache(console).TryCatalogFileAsync(uri, Path.Combine(AppPaths.Cache, Unique(".tmp"))));
+        Assert.Empty(console.Requests);
+        Assert.True(ConsoleCache.CanRelayCatalog(new Uri("https://downloads.dell.com/catalog/CatalogPC.cab")));
+        Assert.True(ConsoleCache.CanRelayCatalog(new Uri("https://hpia.hpcloud.hp.com/ref/8723/8723_64_11.0.23h2.cab")));
+    }
+
+    [Fact]
+    public async Task Cab_catalog_signed_by_another_vendor_is_rejected()
+    {
+        // Signature Microsoft valide, mais CatalogPC.cab doit être signé par Dell.
+        var signed = await System.IO.File.ReadAllBytesAsync(typeof(object).Assembly.Location);
+        var console = Console(_ => CatalogBytes(signed, DateTimeOffset.UtcNow));
+        var target = Path.Combine(AppPaths.Cache, Unique(".cab"));
+        Assert.Null(await Cache(console).TryCatalogFileAsync(new Uri("https://downloads.dell.com/catalog/CatalogPC.cab"), target));
+        Assert.False(System.IO.File.Exists(target));
+        Assert.Equal(1, console.Count("/api/cache/catalog"));
+    }
+
+    // ------------------------------------------------------------------ erreurs locales
+
+    [Fact]
+    public async Task Locked_local_file_falls_back_to_direct_without_blaming_the_console()
+    {
+        var data = Bytes(5000);
+        var console = Console(_ => File(data));
+        var cache = Cache(console);
+        var locked = Path.Combine(AppPaths.Cache, Unique(".part"));
+        await using (new FileStream(locked, FileMode.Create, FileAccess.Write, FileShare.None))
+            Assert.False(await cache.TryDownloadFileAsync(new Uri(DellUrl("a.exe")), locked, Sha256(data), null, null));
+        Assert.Null(cache.UnavailableReason); // la console reste sollicitée
+        var free = Path.Combine(AppPaths.Cache, Unique(".part"));
+        Assert.True(await cache.TryDownloadFileAsync(new Uri(DellUrl("b.exe")), free, Sha256(data), null, null));
+        Assert.Equal(data, await System.IO.File.ReadAllBytesAsync(free));
+    }
+
+    [Fact]
+    public async Task Access_denied_on_the_local_file_falls_back_to_direct()
+    {
+        var console = Console(_ => File(Bytes(100)));
+        var cache = Cache(console);
+        var directory = Directory.CreateDirectory(Path.Combine(AppPaths.Cache, Unique(".part"))).FullName; // ouverture : accès refusé
+        Assert.False(await cache.TryDownloadFileAsync(new Uri(DellUrl("c.exe")), directory, null, null, "abc"));
+        Assert.Null(cache.UnavailableReason);
+
+        var signed = await System.IO.File.ReadAllBytesAsync(typeof(object).Assembly.Location);
+        var catalogs = Cache(Console(_ => CatalogBytes(signed, DateTimeOffset.UtcNow)));
+        var lockedCab = Path.Combine(AppPaths.Cache, Unique(".cab"));
+        await using (new FileStream(lockedCab, FileMode.Create, FileAccess.Write, FileShare.None))
+            Assert.Null(await catalogs.TryCatalogFileAsync(new Uri("https://download.microsoft.com/download/c.cab"), lockedCab));
+        Assert.Null(catalogs.UnavailableReason);
     }
 
     [Fact]
@@ -321,8 +435,72 @@ public sealed class ConsoleCacheTests
     {
         var console = Console(_ => Catalog("x", DateTimeOffset.UtcNow));
         var cache = new ConsoleCache(ConsoleUri, "jeton", ConsoleCacheMode.Auto, catalogs: false, console);
-        Assert.Null(await cache.TryCatalogTextAsync(new Uri("https://gfwsl.geforce.com/lookup?x=1")));
+        Assert.Null(await cache.TryCatalogSearchAsync("PCI\\VEN_8086&DEV_15F3"));
+        Assert.Null(await cache.TryCatalogFileAsync(new Uri("https://downloads.dell.com/catalog/CatalogPC.cab"), Path.Combine(AppPaths.Cache, Unique(".cab"))));
         Assert.Empty(console.Requests);
+    }
+
+    // ------------------------------------------------------------------ Microsoft Update Catalog
+
+    private const string DialogUpdateId = "55e4c288-1590-4fed-b4c1-248ebd64da45";
+    private static readonly byte[] CatalogCab = Bytes(30_000, 7);
+
+    private static string CatalogUrl(byte[] content) =>
+        $"https://catalog.s.download.windowsupdate.com/d/msdownload/update/driver/drvs/2026/01/16270d4d-ca9d-4fb6-a0f4-e4354f3f98bb_{Convert.ToHexString(SHA1.HashData(content)).ToLowerInvariant()}.cab";
+
+    private static string Dialog(string url, string? digest = null) => $"""
+        downloadInformation[0] = new Object();
+        downloadInformation[0].updateID ='{DialogUpdateId}';
+        downloadInformation[0].enTitle ='Realtek Driver Update (10.79.50.1003)';
+        downloadInformation[0].files = new Array();
+        downloadInformation[0].files[0] = new Object();
+        downloadInformation[0].files[0].url = '{url}';
+        downloadInformation[0].files[0].digest = '{digest ?? Convert.ToBase64String(SHA1.HashData(CatalogCab))}';
+        downloadInformation[0].files[0].sha256 = '{Convert.ToBase64String(SHA256.HashData(CatalogCab))}';
+        """;
+
+    [Fact]
+    public async Task Catalog_download_links_are_always_resolved_directly_at_Microsoft()
+    {
+        // La console répondrait par un lien de son choix (SHA-1 de son choix dans le nom) : elle n'est jamais interrogée.
+        var forged = Bytes(30_000, 8);
+        var console = Console(req => Catalog(Dialog(CatalogUrl(forged), Convert.ToBase64String(SHA1.HashData(forged))), DateTimeOffset.UtcNow));
+        var microsoft = new Stub(req =>
+        {
+            Assert.Equal(HttpMethod.Post, req.Method);
+            Assert.Equal("www.catalog.update.microsoft.com", req.RequestUri!.Host);
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(Dialog(CatalogUrl(CatalogCab))) };
+        });
+        using (ConsoleCache.UseForTest(Cache(console)))
+        {
+            var urls = await MicrosoftCatalogClient.GetDownloadUrlsAsync(DialogUpdateId, new HttpClient(microsoft), default);
+            Assert.Equal(CatalogUrl(CatalogCab), Assert.Single(urls));
+        }
+        Assert.Empty(console.Requests);
+        Assert.Single(microsoft.Requests);
+        await Assert.ThrowsAsync<ArgumentException>(() => MicrosoftCatalogClient.GetDownloadUrlsAsync("x\"},{\"updateID\":\"y", new HttpClient(microsoft), default));
+    }
+
+    [Fact]
+    public void Catalog_link_whose_name_disagrees_with_the_published_digest_is_dropped()
+    {
+        Assert.Single(MicrosoftCatalogClient.ParseDownloadDialog(Dialog(CatalogUrl(CatalogCab))));
+        Assert.Empty(MicrosoftCatalogClient.ParseDownloadDialog(Dialog(CatalogUrl(CatalogCab), Convert.ToBase64String(SHA1.HashData(Bytes(10))))));
+        Assert.Empty(MicrosoftCatalogClient.ParseDownloadDialog(Dialog("https://evil.example/x_0000000000000000000000000000000000000000.cab")));
+    }
+
+    [Fact]
+    public async Task Catalog_package_served_by_the_console_is_checked_against_the_SHA1_obtained_from_Microsoft()
+    {
+        // La console sert d'autres octets que le paquet publié : la copie est refusée (SHA-1 du lien obtenu chez
+        // Microsoft) et le fichier officiel est téléchargé directement.
+        var url = Assert.Single(MicrosoftCatalogClient.ParseDownloadDialog(Dialog(CatalogUrl(CatalogCab))));
+        var console = Console(_ => File(Bytes(30_000, 9)));
+        var direct = new Stub(_ => new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(CatalogCab) });
+        var path = await MakeDownloader(Cache(console), direct).DownloadAsync(url, Unique(".cab"), sha1: MicrosoftCatalogClient.Sha1FromUrl(url));
+        Assert.Equal(CatalogCab, await System.IO.File.ReadAllBytesAsync(path));
+        Assert.Equal(1, console.Count("/api/cache/file"));
+        Assert.Single(direct.Requests);
     }
 
     [Fact]
