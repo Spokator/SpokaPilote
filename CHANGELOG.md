@@ -1,5 +1,24 @@
 # Journal des versions
 
+## 4.0.2 — 28/11/2026
+
+Correctif de la mise à jour 4.0.1, constaté en réel sur un poste mis à jour. **Mise à jour recommandée.**
+
+- **Fichiers des comptes administrateurs reconnus** : sur les PC où un fichier créé par un administrateur appartient à
+  son propre compte (contrôle de compte d'utilisateur désactivé, stratégie « propriétaire par défaut = créateur »,
+  technicien administrateur), la 4.0.1 mettait en quarantaine `settings.json`, les journaux et les rapports — le poste
+  perdait alors sa configuration et ne remontait plus à la console. Sont désormais de confiance : SYSTEM, le groupe
+  Administrateurs, TrustedInstaller et tout compte membre du groupe local Administrateurs (y compris par un groupe de
+  domaine imbriqué). Les fichiers déposés par un utilisateur standard restent refusés.
+- **Configuration jamais perdue en silence** : si `settings.json` doit être écarté, une erreur est journalisée, un
+  avertissement s'affiche au début de chaque commande et dans l'interface (bouton « Vérifier et restaurer »), et
+  `spokapilote config restore` la réimporte après vérification (jeton masqué, réglages sensibles signalés).
+- **Réparation automatique** des postes déjà touchés par la 4.0.1 : sans `settings.json`, la dernière configuration
+  mise en quarantaine est restaurée d'elle-même (jeton migré) si elle n'élargit pas la confiance ; sinon elle attend
+  `config restore` (`--yes` pour un déploiement par Intune / RMM, ou relancer le kit de déploiement).
+- Quarantaine nettoyée au bout de 90 jours.
+- Kit de déploiement : même règle de confiance pour un `settings.json` existant.
+
 ## 4.0.1 — 28/11/2026
 
 Version de sécurité et de robustesse, issue d'une revue indépendante avant déploiement à grande échelle. **Mise à jour

@@ -139,8 +139,33 @@ $KnownKeys = @('repositoryPaths', 'useWindowsUpdate', 'windowsUpdateBypassWsus',
     'printerCatalogUrl', 'catalogConcurrency', 'serverUrl', 'serverToken', 'policySource', 'useConsoleCache',
     'consoleCacheCatalogs', 'useGpuVendorSources', 'nvidiaBranch')
 
-# Comptes de confiance pour un settings.json existant : SYSTEM, Administrateurs, TrustedInstaller (+ le compte courant).
+# Comptes de confiance pour un settings.json existant : SYSTEM, Administrateurs, TrustedInstaller, le compte courant et
+# tout compte membre du groupe local Administrateurs (même règle que SpokaPilote 4.0.2 : un fichier écrit par un
+# technicien administrateur appartient souvent à son propre compte).
 $TrustedOwners = @('S-1-5-18', 'S-1-5-32-544', 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464')
+
+function Test-AdministratorOwner([string]$Sid) {
+    if ($TrustedOwners -contains $Sid) { return $true }
+    if ($Sid -notmatch '^S-1-(5-21|12-1)-') { return $false }          # comptes utilisateurs locaux, de domaine ou Entra ID
+    if ($Sid -match '-(501|503|504|513|514|515|516)$') { return $false } # invité, comptes et groupes génériques
+    try {
+        # Membres directs du groupe Administrateurs (désigné par son SID : nom localisé « Administrateurs »...).
+        $members = Get-LocalGroupMember -SID 'S-1-5-32-544' -ErrorAction Stop
+        if ($members | Where-Object { $_.SID.Value -eq $Sid }) { return $true }
+    }
+    catch {
+        # PowerShell 32 bits ou membre orphelin dans le groupe : repli sur l'interface ADSI.
+        try {
+            $group = [ADSI]("WinNT://./" + ([Security.Principal.SecurityIdentifier]'S-1-5-32-544').Translate([Security.Principal.NTAccount]).Value.Split('\')[-1] + ",group")
+            foreach ($m in @($group.Invoke('Members'))) {
+                $bytes = $m.GetType().InvokeMember('objectSid', 'GetProperty', $null, $m, $null)
+                if ((New-Object Security.Principal.SecurityIdentifier($bytes, 0)).Value -eq $Sid) { return $true }
+            }
+        }
+        catch { }
+    }
+    return $false   # appartenance indirecte (groupe de domaine imbriqué) non vérifiable ici : prudence
+}
 
 # ------------------------------------------------------------------------------------------------ journal
 $script:Secrets = New-Object Collections.Generic.List[string]
@@ -548,10 +573,10 @@ try {
         $map = [ordered]@{}
         if (Test-Path -LiteralPath $settingsFile) {
             $owner = (Get-Acl -LiteralPath $settingsFile).GetOwner([Security.Principal.SecurityIdentifier]).Value
-            if ($TrustedOwners -notcontains $owner -and $owner -ne $identity.User.Value) {
-                # Fichier créé par un autre compte (un utilisateur standard peut créer des fichiers dans ce dossier sur les
-                # versions qui ne le protègent pas) : son contenu n'est pas repris et il est mis de côté.
-                Write-Log "settings.json appartient à $owner (ni SYSTEM, ni Administrateurs) : contenu ignoré, fichier renommé." 'WARN'
+            if (-not (Test-AdministratorOwner $owner) -and $owner -ne $identity.User.Value) {
+                # Fichier créé par un compte non administrateur (un utilisateur standard peut créer des fichiers dans ce
+                # dossier sur les versions qui ne le protègent pas) : son contenu n'est pas repris et il est mis de côté.
+                Write-Log "settings.json appartient à $owner (ni SYSTEM, ni un administrateur) : contenu ignoré, fichier renommé." 'WARN'
                 if ($PSCmdlet.ShouldProcess($settingsFile, 'Mettre de côté')) { Rename-Item -LiteralPath $settingsFile -NewName "settings.json.ignore-$stamp" }
             }
             else {
