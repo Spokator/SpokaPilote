@@ -341,7 +341,9 @@ Utilisez-la la première fois sur un poste ou un groupe de postes.
 ### Activer l'agent sur les postes
 
 Les actions sont exécutées par l'**agent** : une tâche planifiée `\SpokaPilote\Agent` (compte SYSTEM) qui interroge la
-console toutes les N minutes. Dans une console **administrateur** (ou par Intune / GPO, avec le script d'enrôlement) :
+console toutes les N minutes. Dans l'interface : **Outils › Pour le parc › Console centrale et agent › Activer l'agent**
+(administrateur, connexion à la console réglée dans Paramètres). Dans une console **administrateur** (ou par Intune / GPO,
+avec le script d'enrôlement) :
 
 ```powershell
 spokapilote agent enable --every 15     # toutes les 15 minutes (5 à 1440)

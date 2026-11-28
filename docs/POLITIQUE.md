@@ -293,7 +293,7 @@ envoie alors aussi son identifiant (`X-SpokaPilote-Machine-Id`, `X-SpokaPilote-M
 - Si aucune source n'est plus configurée, le cache est ignoré.
 - Délai maximal de lecture : 15 s.
 - **Revérification avant l'installation** (4.0.1) : juste avant d'installer, l'interface (bouton « Installer » ou
-  « Simuler », sur une liste qui peut dater de plusieurs heures) et la ligne de commande (`install`, `update`, tâches
+  « Vérifier sans installer », sur une liste qui peut dater de plusieurs heures) et la ligne de commande (`install`, `update`, tâches
   planifiées `maintenance`, tâches envoyées par la console à l'agent) rechargent la politique et redemandent les décisions
   de diffusion pour les seuls pilotes sélectionnés. Un pilote suspendu par le disjoncteur, retenu par un changement
   d'anneau ou bloqué par une nouvelle règle depuis l'analyse est **écarté**, avec son motif (« 1 pilote(s) écarté(s) :
