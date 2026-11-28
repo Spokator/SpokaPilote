@@ -28,9 +28,13 @@ public sealed class MainViewModel : ObservableObject
     private CancellationTokenSource? _cts;
 
     /// <param name="displayAlias">Nom affiché à la place du nom de l'ordinateur (captures destinées à être publiées).</param>
-    public MainViewModel(string? displayAlias = null)
+    /// <param name="deepScan">Type d'analyse au démarrage (préférence de l'utilisateur, ou --deep en mode capture).</param>
+    /// <param name="persistPreferences">false en mode capture : les choix ne sont pas enregistrés dans les préférences.</param>
+    public MainViewModel(string? displayAlias = null, bool deepScan = false, bool persistPreferences = true)
     {
         DisplayAlias = string.IsNullOrWhiteSpace(displayAlias) ? null : displayAlias.Trim();
+        _deepScan = deepScan;
+        _persistPreferences = persistPreferences;
         Settings = Settings.Load();
         IsAdmin = Elevation.IsAdministrator();
         foreach (var p in Settings.RepositoryPaths) RepositoryPaths.Add(p);
@@ -44,6 +48,8 @@ public sealed class MainViewModel : ObservableObject
         }));
 
         ScanCommand = new RelayCommand(ScanAsync, () => !IsBusy);
+        QuickScanCommand = new RelayCommand(() => { DeepScan = false; return ScanAsync(); }, () => !IsBusy);
+        FullScanCommand = new RelayCommand(() => { DeepScan = true; return ScanAsync(); }, () => !IsBusy);
         CancelCommand = new RelayCommand(() => _cts?.Cancel(), () => IsBusy);
         RelaunchAsAdminCommand = new RelayCommand(RelaunchAsAdmin, () => !IsAdmin);
         RestoreQuarantineCommand = new RelayCommand(RestoreQuarantine, () => !IsBusy);
@@ -84,6 +90,16 @@ public sealed class MainViewModel : ObservableObject
         var index = Array.IndexOf(PageKeys, key);
         if (index >= 0) PageIndex = index;
     }
+
+    // ------------------------------------------------------------------ aide (F1)
+
+    /// <summary>Guide de l'interface : une section par page.</summary>
+    public const string HelpPage = "https://github.com/Spokator/SpokaPilote/blob/main/docs/INTERFACE.md";
+    /// <summary>Ancres GitHub des sections du guide, dans l'ordre de <see cref="PageKeys"/>.</summary>
+    private static readonly string[] HelpAnchors = { "accueil", "pilotes", "périphériques", "historique", "outils", "paramètres" };
+    /// <summary>F1 : section du guide qui décrit la page affichée.</summary>
+    public string HelpUrl => $"{HelpPage}#{Uri.EscapeDataString(HelpAnchors[PageIndex])}";
+    public void OpenHelp() => OpenPath(HelpUrl);
 
     // ------------------------------------------------------------------ poste et analyse
 
@@ -126,6 +142,90 @@ public sealed class MainViewModel : ObservableObject
     public RelayCommand ScanCommand { get; }
     public RelayCommand RestartCommand { get; }
 
+    // ------------------------------------------------------------------ type d'analyse (choisi avant d'analyser)
+
+    private readonly bool _persistPreferences;
+    private bool _deepScan;
+    /// <summary>
+    /// Analyse complète : le Microsoft Update Catalog est aussi interrogé pour chaque composant qui fonctionne avec un pilote
+    /// de fabricant (jamais pour un pilote intégré à Windows), et seule une version plus récente du même fabricant est
+    /// proposée. Choisie à l'Accueil avant l'analyse, mémorisée pour F5 et « Analyser à nouveau ».
+    /// </summary>
+    public bool DeepScan
+    {
+        get => _deepScan;
+        set
+        {
+            if (!Set(ref _deepScan, value)) return;
+            OnPropertyChanged(nameof(QuickScan));
+            OnPropertyChanged(nameof(ScanKindLabel));
+            if (_persistPreferences)
+            {
+                var prefs = UiPreferences.Load();
+                prefs.DeepScan = value;
+                prefs.Save();
+            }
+            Home.Refresh();
+        }
+    }
+    /// <summary>Pendant de <see cref="DeepScan"/> pour le bouton radio « Analyse rapide ».</summary>
+    public bool QuickScan { get => !DeepScan; set { if (value) DeepScan = false; } }
+    /// <summary>« analyse rapide » / « analyse complète » (infobulles de F5 et « Analyser à nouveau »).</summary>
+    public string ScanKindLabel => DeepScan ? Loc.T("analyse complète") : Loc.T("analyse rapide");
+
+    /// <summary>Le catalogue Microsoft est-il activé (sinon l'analyse complète n'apporte rien) ?</summary>
+    public bool CatalogEnabled => Settings.UseMicrosoftCatalog;
+
+    /// <summary>Lance une analyse rapide (et la retient comme type d'analyse).</summary>
+    public RelayCommand QuickScanCommand { get; }
+    /// <summary>Lance une analyse complète (et la retient comme type d'analyse).</summary>
+    public RelayCommand FullScanCommand { get; }
+
+    private bool _lastScanWasDeep;
+    /// <summary>Type de la dernière analyse terminée (affiché avec ses résultats).</summary>
+    public bool LastScanWasDeep { get => _lastScanWasDeep; private set => Set(ref _lastScanWasDeep, value); }
+
+    /// <summary>La dernière analyse a-t-elle réellement interrogé le catalogue Microsoft pour les pilotes déjà installés ?</summary>
+    private bool LastScanCoveredInstalled => LastScan is { } s && LastScanWasDeep &&
+        s.SourcesUsed.Contains("Microsoft Update Catalog", StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Après une analyse rapide : proposer l'analyse complète (si le catalogue Microsoft est activé).</summary>
+    public bool OfferFullScan => LastScan is not null && !LastScanCoveredInstalled && CatalogEnabled;
+    /// <summary>Après une analyse complète : proposer de revenir à l'analyse rapide.</summary>
+    public bool OfferQuickScan => LastScan is not null && LastScanCoveredInstalled;
+
+    /// <summary>Ce que la dernière analyse a couvert, en une phrase (Accueil et Pilotes).</summary>
+    public string ScanCoverageText
+    {
+        get
+        {
+            if (LastScan is not { } scan) return "";
+            string text;
+            if (LastScanCoveredInstalled)
+                text = Loc.T("Analyse complète : pilotes manquants, mises à jour recommandées, et chaque pilote de fabricant déjà installé comparé au Microsoft Update Catalog.");
+            else if (LastScanWasDeep)
+                text = Loc.T("Analyse complète demandée, mais le Microsoft Update Catalog n'a pas été interrogé (désactivé dans les Paramètres ou par la politique de pilotes) : seuls les pilotes manquants et les mises à jour recommandées ont été cherchés.");
+            else
+                text = Loc.T("Analyse rapide : pilotes manquants et mises à jour recommandées (dépôt, constructeur du PC, NVIDIA, Windows Update). Les autres pilotes déjà installés n'ont pas été comparés au Microsoft Update Catalog.");
+            var disabled = new List<string>();
+            if (!Settings.UseWindowsUpdate) disabled.Add("Windows Update");
+            if (!Settings.UseMicrosoftCatalog) disabled.Add("Microsoft Update Catalog");
+            if (!Settings.UseOemCatalogs) disabled.Add(Loc.T("catalogues des constructeurs"));
+            if (!Settings.UseGpuVendorSources) disabled.Add(Loc.T("pilotes graphiques des fabricants"));
+            if (disabled.Count > 0) text += " " + Loc.F("Sources désactivées dans les Paramètres : {0}.", string.Join(", ", disabled));
+            return text + " " + Loc.F("Durée : {0:0} s.", scan.Duration.TotalSeconds);
+        }
+    }
+
+    /// <summary>Rafraîchit ce qui dépend du type d'analyse et des sources (après une analyse ou un enregistrement des paramètres).</summary>
+    internal void RaiseScanCoverage()
+    {
+        OnPropertyChanged(nameof(CatalogEnabled));
+        OnPropertyChanged(nameof(OfferFullScan));
+        OnPropertyChanged(nameof(OfferQuickScan));
+        OnPropertyChanged(nameof(ScanCoverageText));
+    }
+
     private async Task LoadMachineAsync()
     {
         try
@@ -142,10 +242,11 @@ public sealed class MainViewModel : ObservableObject
     private async Task ScanAsync()
     {
         Home.ClearMessage();
-        var ok = await RunBusyAsync(Loc.T("Analyse en cours..."), async ct =>
+        var deep = DeepScan;
+        var ok = await RunBusyAsync(deep ? Loc.T("Analyse complète en cours...") : Loc.T("Analyse rapide en cours..."), async ct =>
         {
             var engine = new DriverScanEngine(Settings);
-            var scan = await engine.ScanAsync(new ScanOptions { DeepScan = Drivers.DeepScan },
+            var scan = await engine.ScanAsync(new ScanOptions { DeepScan = deep },
                 new Progress<ScanProgress>(p =>
                 {
                     Status = p.Message;
@@ -153,9 +254,13 @@ public sealed class MainViewModel : ObservableObject
                     else ProgressIndeterminate = true;
                 }), ct);
 
+            // Analyse d'abord connue de toutes les pages (états vides, couverture), puis listes chargées.
+            LastScanWasDeep = deep;
+            LastScan = scan;
             Drivers.Load(scan);
             Devices.Load(scan);
-            LastScan = scan;
+            RaiseScanCoverage();
+            Home.Refresh();
             Status = Loc.F("Analyse terminée en {0:0} s — {1}", scan.Duration.TotalSeconds, Home.Headline);
             await UploadToServerAsync(scan, null, ct);
         }, BusyKind.Scan);
@@ -305,6 +410,7 @@ public sealed class MainViewModel : ObservableObject
         Settings.CreateRestorePoint = CreateRestorePoint;
         Settings.BackupDriversBeforeInstall = BackupDrivers;
         var ok = Settings.Save();
+        RaiseScanCoverage();
         Status = ok
             ? Loc.F("Paramètres enregistrés ({0}).", AppPaths.SettingsFile)
             : IsAdmin
@@ -342,10 +448,27 @@ public sealed class MainViewModel : ObservableObject
 
     // ------------------------------------------------------------------ configuration mise en quarantaine
 
-    private IReadOnlyList<string> _quarantineNotices = ConfigQuarantine.Notices();
+    private IReadOnlyList<QuarantineEntry> _quarantine = ConfigQuarantine.Pending();
     /// <summary>settings.json ou jeton mis en quarantaine (fichier créé par un compte non administrateur) : bandeau de l'accueil et des paramètres.</summary>
-    public string QuarantineNotice => string.Join(Environment.NewLine, _quarantineNotices);
-    public bool HasQuarantineNotice => _quarantineNotices.Count > 0;
+    public string QuarantineNotice => string.Join(Environment.NewLine, _quarantine.Select(QuarantineText));
+    public bool HasQuarantineNotice => _quarantine.Count > 0;
+
+    /// <summary>
+    /// Message du bandeau, traduit : mêmes informations que <see cref="QuarantineEntry.Notice"/> (texte de la ligne de
+    /// commande, en français), mais renvoie au bouton « Vérifier et restaurer » au lieu de « spokapilote config restore ».
+    /// </summary>
+    internal static string QuarantineText(QuarantineEntry e)
+    {
+        var date = e.QuarantinedAt.ToString(Loc.IsEnglish ? "yyyy-MM-dd HH:mm" : "dd/MM/yyyy 'à' HH:mm", System.Globalization.CultureInfo.InvariantCulture);
+        var why = e.Legacy
+            ? e.TrustExtendingSettings.Count > 0
+                ? Loc.F("par la version 4.0.1 (propriétaire d'origine inconnu ; réglages qui étendent la confiance : {0})", string.Join(", ", e.TrustExtendingSettings))
+                : Loc.T("par la version 4.0.1 (propriétaire d'origine inconnu)")
+            : Loc.F("(fichier créé par un compte non administrateur : {0})", e.Owner ?? e.OwnerSid ?? Loc.T("propriétaire illisible"));
+        return e.Name.Equals(ConfigQuarantine.SettingsFileName, StringComparison.OrdinalIgnoreCase)
+            ? Loc.F("Configuration ({0}) mise en quarantaine le {1} {2} : vérifiez-la avec « Vérifier et restaurer ».", e.Name, date, why)
+            : Loc.F("Jeton de la console ({0}) mis en quarantaine le {1} {2} : vérifiez-le avec « Vérifier et restaurer ».", e.Name, date, why);
+    }
     public RelayCommand RestoreQuarantineCommand { get; }
 
     /// <summary>Affiche la configuration mise en quarantaine (jeton masqué) et la restaure après confirmation (administrateur).</summary>
@@ -386,7 +509,7 @@ public sealed class MainViewModel : ObservableObject
             MessageBox.Show(Loc.F("Restauration impossible : {0}", ex.Message), "SpokaPilote", MessageBoxButton.OK, MessageBoxImage.Error);
             return;
         }
-        _quarantineNotices = ConfigQuarantine.Notices();
+        _quarantine = ConfigQuarantine.Pending();
         OnPropertyChanged(nameof(QuarantineNotice));
         OnPropertyChanged(nameof(HasQuarantineNotice));
         MessageBox.Show(Loc.T("Configuration restaurée. Redémarrez SpokaPilote pour l'appliquer."), "SpokaPilote", MessageBoxButton.OK, MessageBoxImage.Information);

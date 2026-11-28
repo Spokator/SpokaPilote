@@ -22,7 +22,9 @@
             </StackPanel>
             <StackPanel>
                 <TextBlock Style="{StaticResource PageTitle}" Text="Paramètres" />
-                <TextBlock Style="{StaticResource PageSubtitle}" Margin="0" Text="{Binding SettingsFileNote, Mode=OneWay}" />
+                <TextBlock Style="{StaticResource PageSubtitle}" Margin="0,0,0,4"
+                           Text="Réglages de ce poste. Un changement s'applique tout de suite ; «&#160;Enregistrer&#160;» le garde pour les prochains démarrages et les tâches planifiées." />
+                <TextBlock Style="{StaticResource Caption}" Text="{Binding SettingsFileNote, Mode=OneWay}" />
             </StackPanel>
         </DockPanel>
 
@@ -42,7 +44,86 @@
                     </DockPanel>
                 </Border>
 
+                <!-- 1. Ce que SpokaPilote cherche (change les résultats de l'analyse : en premier, jamais caché). -->
                 <Border Style="{StaticResource Card}">
+                    <StackPanel>
+                        <TextBlock Style="{StaticResource CardTitle}" Text="Sources de pilotes" />
+                        <TextBlock Style="{StaticResource Secondary}" Margin="0,2,0,8"
+                                   Text="Où SpokaPilote cherche les pilotes. Le dépôt de pilotes de l'entreprise (Outils) est toujours consulté en premier. Une source décochée est signalée avec les résultats de l'analyse." />
+                        <CheckBox Content="Windows Update" IsChecked="{Binding Settings.UseWindowsUpdate}" Margin="0,4" />
+                        <CheckBox Content="Interroger Windows Update directement même si le poste est géré par WSUS" IsChecked="{Binding Settings.WindowsUpdateBypassWsus}" Margin="28,4,0,4" />
+                        <CheckBox Content="Microsoft Update Catalog (recherche par identifiant matériel ; nécessaire pour l'analyse complète)" IsChecked="{Binding Settings.UseMicrosoftCatalog}" Margin="0,4" />
+                        <CheckBox Content="Catalogues officiels des constructeurs (Dell, HP, Lenovo)" IsChecked="{Binding Settings.UseOemCatalogs}" Margin="0,4" />
+                        <CheckBox Content="Pilotes graphiques des fabricants (NVIDIA automatique ; Intel et AMD : lien officiel)" IsChecked="{Binding Settings.UseGpuVendorSources}" Margin="0,4" />
+                        <StackPanel Orientation="Horizontal" Margin="28,4,0,4">
+                            <TextBlock Text="Branche NVIDIA :" VerticalAlignment="Center" Margin="0,0,8,0" />
+                            <ComboBox SelectedValue="{Binding Settings.NvidiaBranch}" SelectedValuePath="Tag" Width="320" AutomationProperties.Name="Branche NVIDIA">
+                                <ComboBoxItem Tag="studio" Content="Studio (stable, recommandé pour un parc)" />
+                                <ComboBoxItem Tag="gameready" Content="Game Ready (la plus récente)" />
+                            </ComboBox>
+                        </StackPanel>
+                        <CheckBox Content="Proposer aussi les mises à jour de BIOS et de firmware" IsChecked="{Binding Settings.IncludeBiosAndFirmware}" Margin="0,4"
+                                  ToolTip="Jamais cochées d'office dans la liste des pilotes : chaque mise à jour de BIOS se choisit à la main" />
+                    </StackPanel>
+                </Border>
+
+                <!-- 2. Avant chaque installation. -->
+                <Border Style="{StaticResource Card}" Margin="0,12,0,0">
+                    <StackPanel>
+                        <TextBlock Style="{StaticResource CardTitle}" Text="Avant chaque installation" />
+                        <TextBlock Style="{StaticResource Secondary}" Margin="0,2,0,8"
+                                   Text="Filets de sécurité proposés par défaut (modifiables aussi juste avant d'installer, page Pilotes)." />
+                        <CheckBox Content="Créer un point de restauration avant installation" IsChecked="{Binding Shell.CreateRestorePoint}" Margin="0,4" />
+                        <CheckBox Content="Sauvegarder les pilotes actuels avant installation" IsChecked="{Binding Shell.BackupDrivers}" Margin="0,4" />
+                        <TextBlock Style="{StaticResource Secondary}" Margin="0,8,0,0"
+                                   Text="Toujours actif : HTTPS uniquement, domaines officiels uniquement, empreinte vérifiée, signature Authenticode d'un éditeur approuvé, et l'INF doit déclarer l'identifiant exact du matériel." />
+                    </StackPanel>
+                </Border>
+
+                <!-- 3. Console centrale (parc) : l'essentiel visible, le reste replié. -->
+                <Border Style="{StaticResource Card}" Margin="0,12,0,0">
+                    <StackPanel>
+                        <TextBlock Style="{StaticResource CardTitle}" Text="Console centrale (parc)" />
+                        <TextBlock Style="{StaticResource Secondary}" Margin="0,2,0,12"
+                                   Text="Pour relier ce poste à la console : son adresse et le jeton d'enrôlement (page Enrôlement de la console), puis « Enregistrer » et « Tester la connexion ». Chaque analyse et chaque installation envoient alors leur rapport. Installer la console : docs/CONSOLE-CENTRALE.md." />
+                        <TextBlock Text="Adresse de la console centrale (ex. https://spokapilote.mon-entreprise.fr)" Margin="0,0,0,4" />
+                        <TextBox Text="{Binding Settings.ServerUrl, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="Adresse de la console centrale" />
+                        <TextBlock Text="Jeton d'enrôlement des postes" Margin="0,12,0,4" />
+                        <!-- Jeton jamais affiché : saisie masquée d'un nouveau jeton (vide = inchangé). -->
+                        <PasswordBox x:Name="TokenBox" PasswordChanged="OnTokenChanged" IsEnabled="{Binding CanEditToken, Mode=OneWay}"
+                                     AutomationProperties.Name="Jeton d'enrôlement des postes" />
+                        <TextBlock Style="{StaticResource Caption}" Margin="0,4,0,0" TextWrapping="Wrap" Text="{Binding TokenStatus, Mode=OneWay}" />
+                        <DockPanel Margin="0,12,0,0">
+                            <Button DockPanel.Dock="Left" Content="Tester la connexion" Command="{Binding TestServerCommand}" Margin="0,0,12,0" />
+                            <TextBlock VerticalAlignment="Center" TextWrapping="Wrap" Text="{Binding ServerStatusText, Mode=OneWay}" AutomationProperties.LiveSetting="Polite" />
+                        </DockPanel>
+                        <TextBlock Style="{StaticResource Caption}" Margin="0,10,0,0"
+                                   Text="L'agent (actions demandées par la console) et la maintenance planifiée se règlent dans Outils." />
+
+                        <Expander Margin="0,14,0,0" Header="Options avancées : politique de pilotes et cache de la console">
+                            <StackPanel Margin="0,10,0,0">
+                                <TextBlock Text="Source de la politique (fichier, \\serveur\partage\driver-policy.json ou URL HTTPS ; vide = console centrale)" Margin="0,0,0,4" TextWrapping="Wrap" />
+                                <TextBox Text="{Binding Settings.PolicySource, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="Source de la politique de pilotes" />
+                                <TextBlock Style="{StaticResource Caption}" Margin="0,4,0,0" TextWrapping="Wrap"
+                                           Text="La politique peut bloquer ou retenir des pilotes : ils apparaissent dans Pilotes › Bloqués, avec la raison." />
+                                <TextBlock Text="Cache de pilotes de la console" Margin="0,12,0,4" />
+                                <ComboBox SelectedValue="{Binding Settings.UseConsoleCache}" SelectedValuePath="Tag" Width="420" HorizontalAlignment="Left"
+                                          AutomationProperties.Name="Cache de pilotes de la console">
+                                    <ComboBoxItem Tag="auto" Content="Automatique (si la console le propose)" />
+                                    <ComboBoxItem Tag="on" Content="Activé (avertir à chaque téléchargement direct)" />
+                                    <ComboBoxItem Tag="off" Content="Désactivé (toujours télécharger directement)" />
+                                </ComboBox>
+                                <CheckBox Content="Demander aussi les catalogues à la console (Microsoft Update Catalog, Dell, HP, Lenovo, NVIDIA)"
+                                          IsChecked="{Binding Settings.ConsoleCacheCatalogs}" Margin="0,6,0,0" />
+                                <TextBlock Style="{StaticResource Caption}" Margin="0,4,0,0" TextWrapping="Wrap"
+                                           Text="La console ne sert que de relais : chaque fichier reste vérifié sur ce poste (empreinte, signature, matériel). Si elle ne répond pas, le téléchargement se fait directement depuis la source officielle." />
+                            </StackPanel>
+                        </Expander>
+                    </StackPanel>
+                </Border>
+
+                <!-- 4. Interface. -->
+                <Border Style="{StaticResource Card}" Margin="0,12,0,0">
                     <StackPanel>
                         <TextBlock Style="{StaticResource CardTitle}" Text="Langue" Margin="0,0,0,10" />
                         <DockPanel>
@@ -54,71 +135,6 @@
                                    Visibility="{Binding LanguageNote, Converter={StaticResource VisibleWhen}}" />
                     </StackPanel>
                 </Border>
-
-                <Border Style="{StaticResource Card}" Margin="0,12,0,0">
-                    <StackPanel>
-                        <TextBlock Style="{StaticResource CardTitle}" Text="Sources de pilotes" />
-                        <TextBlock Style="{StaticResource Secondary}" Margin="0,2,0,8" Text="Le dépôt de pilotes de l'entreprise (Outils) est toujours consulté en premier." />
-                        <CheckBox Content="Windows Update" IsChecked="{Binding Settings.UseWindowsUpdate}" Margin="0,4" />
-                        <CheckBox Content="Interroger Windows Update directement même si le poste est géré par WSUS" IsChecked="{Binding Settings.WindowsUpdateBypassWsus}" Margin="28,4,0,4" />
-                        <CheckBox Content="Microsoft Update Catalog (recherche par identifiant matériel)" IsChecked="{Binding Settings.UseMicrosoftCatalog}" Margin="0,4" />
-                        <CheckBox Content="Catalogues officiels des constructeurs (Dell, HP, Lenovo)" IsChecked="{Binding Settings.UseOemCatalogs}" Margin="0,4" />
-                        <CheckBox Content="Pilotes graphiques des fabricants (NVIDIA automatique ; Intel et AMD : lien officiel)" IsChecked="{Binding Settings.UseGpuVendorSources}" Margin="0,4" />
-                        <StackPanel Orientation="Horizontal" Margin="28,4,0,4">
-                            <TextBlock Text="Branche NVIDIA :" VerticalAlignment="Center" Margin="0,0,8,0" />
-                            <ComboBox SelectedValue="{Binding Settings.NvidiaBranch}" SelectedValuePath="Tag" Width="320" AutomationProperties.Name="Branche NVIDIA">
-                                <ComboBoxItem Tag="studio" Content="Studio (stable, recommandé pour un parc)" />
-                                <ComboBoxItem Tag="gameready" Content="Game Ready (la plus récente)" />
-                            </ComboBox>
-                        </StackPanel>
-                        <CheckBox Content="Proposer aussi les mises à jour de BIOS et de firmware" IsChecked="{Binding Settings.IncludeBiosAndFirmware}" Margin="0,4" />
-                    </StackPanel>
-                </Border>
-
-                <Border Style="{StaticResource Card}" Margin="0,12,0,0">
-                    <StackPanel>
-                        <TextBlock Style="{StaticResource CardTitle}" Text="Sécurité" Margin="0,0,0,8" />
-                        <CheckBox Content="Créer un point de restauration avant installation" IsChecked="{Binding Shell.CreateRestorePoint}" Margin="0,4" />
-                        <CheckBox Content="Sauvegarder les pilotes actuels avant installation" IsChecked="{Binding Shell.BackupDrivers}" Margin="0,4" />
-                        <TextBlock Style="{StaticResource Secondary}" Margin="0,8,0,0"
-                                   Text="Toujours actif : HTTPS uniquement, domaines officiels uniquement, empreinte vérifiée, signature Authenticode d'un éditeur approuvé, et l'INF doit déclarer l'identifiant exact du matériel." />
-                    </StackPanel>
-                </Border>
-
-                <Border Style="{StaticResource Card}" Margin="0,12,0,0">
-                    <StackPanel>
-                        <TextBlock Style="{StaticResource CardTitle}" Text="Console centrale et politique de pilotes" />
-                        <TextBlock Style="{StaticResource Secondary}" Margin="0,2,0,12"
-                                   Text="Une fois configurée, chaque analyse et chaque installation envoient leur rapport à la console. La console s'installe avec Docker : voir docs/CONSOLE-CENTRALE.md." />
-                        <TextBlock Text="Adresse de la console centrale (ex. https://spokapilote.mon-entreprise.fr)" Margin="0,0,0,4" />
-                        <TextBox Text="{Binding Settings.ServerUrl, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="Adresse de la console centrale" />
-                        <TextBlock Text="Jeton d'enrôlement des postes" Margin="0,12,0,4" />
-                        <!-- Jeton jamais affiché : saisie masquée d'un nouveau jeton (vide = inchangé). -->
-                        <PasswordBox x:Name="TokenBox" PasswordChanged="OnTokenChanged" IsEnabled="{Binding CanEditToken, Mode=OneWay}"
-                                     AutomationProperties.Name="Jeton d'enrôlement des postes" />
-                        <TextBlock Style="{StaticResource Caption}" Margin="0,4,0,0" TextWrapping="Wrap" Text="{Binding TokenStatus, Mode=OneWay}" />
-                        <TextBlock Text="Source de la politique (fichier, \\serveur\partage\driver-policy.json ou URL HTTPS ; vide = console centrale)" Margin="0,12,0,4" TextWrapping="Wrap" />
-                        <TextBox Text="{Binding Settings.PolicySource, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="Source de la politique de pilotes" />
-                        <TextBlock Text="Cache de pilotes de la console" Margin="0,12,0,4" />
-                        <ComboBox SelectedValue="{Binding Settings.UseConsoleCache}" SelectedValuePath="Tag" Width="420" HorizontalAlignment="Left"
-                                  AutomationProperties.Name="Cache de pilotes de la console">
-                            <ComboBoxItem Tag="auto" Content="Automatique (si la console le propose)" />
-                            <ComboBoxItem Tag="on" Content="Activé (avertir à chaque téléchargement direct)" />
-                            <ComboBoxItem Tag="off" Content="Désactivé (toujours télécharger directement)" />
-                        </ComboBox>
-                        <CheckBox Content="Demander aussi les catalogues à la console (Microsoft Update Catalog, Dell, HP, Lenovo, NVIDIA)"
-                                  IsChecked="{Binding Settings.ConsoleCacheCatalogs}" Margin="0,6,0,0" />
-                        <TextBlock Style="{StaticResource Caption}" Margin="0,4,0,0" TextWrapping="Wrap"
-                                   Text="La console ne sert que de relais : chaque fichier reste vérifié sur ce poste (empreinte, signature, matériel). Si elle ne répond pas, le téléchargement se fait directement depuis la source officielle." />
-                        <DockPanel Margin="0,12,0,0">
-                            <Button DockPanel.Dock="Left" Content="Tester la connexion" Command="{Binding TestServerCommand}" Margin="0,0,12,0" />
-                            <TextBlock VerticalAlignment="Center" TextWrapping="Wrap" Text="{Binding ServerStatusText, Mode=OneWay}" AutomationProperties.LiveSetting="Polite" />
-                        </DockPanel>
-                        <TextBlock Style="{StaticResource Caption}" Margin="0,10,0,0"
-                                   Text="La maintenance planifiée et l'agent (actions demandées par la console) se règlent dans Outils." />
-                    </StackPanel>
-                </Border>
-
                 <Border Style="{StaticResource Card}" Margin="0,12,0,0">
                     <StackPanel>
                         <TextBlock Style="{StaticResource CardTitle}" Text="À propos et mises à jour" />
@@ -130,14 +146,14 @@
                                     Visibility="{Binding Shell.HasInstallerUpdate, Converter={StaticResource BoolToVisibility}}" />
                             <Button Content="Télécharger sur la clé" Style="{DynamicResource AccentButtonStyle}" Command="{Binding Shell.DownloadPortableUpdateCommand}" Margin="0,0,8,8"
                                     Visibility="{Binding Shell.HasPortableUpdate, Converter={StaticResource BoolToVisibility}}" />
-                            <Button Content="Aide en ligne" Command="{Binding Shell.OpenUrlCommand}" CommandParameter="https://github.com/Spokator/SpokaPilote#readme"
-                                    Margin="0,0,8,8" ToolTip="Aide en ligne (F1)" />
+                            <Button Content="Guide de l'interface" Command="{Binding Shell.OpenUrlCommand}" CommandParameter="{x:Static vm:MainViewModel.HelpPage}"
+                                    Margin="0,0,8,8" ToolTip="Chaque page expliquée (F1 : aide de la page affichée)" />
                             <Button Content="Ouvrir le dossier des paramètres" Command="{Binding OpenSettingsFolderCommand}" Margin="0,0,8,8" />
                         </WrapPanel>
                         <TextBlock Style="{StaticResource Secondary}" Text="{Binding UpdateStatusText, Mode=OneWay}" AutomationProperties.LiveSetting="Polite"
                                    Visibility="{Binding UpdateStatusText, Converter={StaticResource VisibleWhen}}" />
                         <TextBlock Margin="0,10,0,0" Style="{StaticResource Caption}"
-                                   Text="Raccourcis : F5 analyser · Ctrl+1 à Ctrl+6 changer de page · F1 aide en ligne." />
+                                   Text="Raccourcis : F5 analyser (même type d'analyse que la dernière fois) · Ctrl+1 à Ctrl+6 changer de page · F1 aide de la page affichée." />
                     </StackPanel>
                 </Border>
             </StackPanel>

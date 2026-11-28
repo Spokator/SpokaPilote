@@ -130,8 +130,11 @@ public static class Loc
         if (node is FrameworkElement fe)
         {
             if (fe.ToolTip is string tip && !IsBound(fe, FrameworkElement.ToolTipProperty)) fe.ToolTip = Tr(tip);
+            // Noms et aides des lecteurs d'écran : un texte lié aux données n'est pas remplacé (la liaison serait perdue).
             var name = AutomationProperties.GetName(fe);
-            if (!string.IsNullOrEmpty(name)) AutomationProperties.SetName(fe, Tr(name));
+            if (!string.IsNullOrEmpty(name) && !IsBound(fe, AutomationProperties.NameProperty)) AutomationProperties.SetName(fe, Tr(name));
+            var help = AutomationProperties.GetHelpText(fe);
+            if (!string.IsNullOrEmpty(help) && !IsBound(fe, AutomationProperties.HelpTextProperty)) AutomationProperties.SetHelpText(fe, Tr(help));
         }
     }
 

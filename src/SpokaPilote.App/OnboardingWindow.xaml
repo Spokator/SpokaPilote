@@ -68,7 +68,8 @@
                     <TextBlock Text="Adresse de la console centrale (facultatif)" Margin="0,12,0,4" />
                     <TextBox x:Name="ServerBox" AutomationProperties.Name="Adresse de la console centrale" />
                     <TextBlock Text="Jeton d'enrôlement (fourni par la console, page Enrôlement)" Margin="0,12,0,4" />
-                    <TextBox x:Name="TokenBox" AutomationProperties.Name="Jeton d'enrôlement" />
+                    <!-- Jeton jamais affiché en clair (comme dans les Paramètres). -->
+                    <PasswordBox x:Name="TokenBox" AutomationProperties.Name="Jeton d'enrôlement" />
                     <TextBlock Margin="0,12,0,0" Opacity="0.75" TextWrapping="Wrap"
                                Text="L'entretien automatique et le dépôt de pilotes se règlent ensuite dans Outils, la console dans Paramètres. Tout reste modifiable plus tard." />
                 </StackPanel>
@@ -82,8 +83,24 @@
                 <TextBlock Margin="0,8,0,16" FontSize="14" TextWrapping="Wrap" Opacity="0.85"
                            Text="Lancez une première analyse : SpokaPilote inventorie le matériel et vous montre ce qui manque, sans rien installer. Ensuite, un clic sur « Installer » depuis l'Accueil, après votre accord." />
                 <CheckBox x:Name="ScanNow" IsChecked="True" Content="Analyser ce poste maintenant" />
+                <!-- Type d'analyse choisi avant de lancer (le même choix figure sur l'Accueil). -->
+                <StackPanel Margin="28,10,0,0" IsEnabled="{Binding IsChecked, ElementName=ScanNow}">
+                    <RadioButton x:Name="ScanQuick" GroupName="WizardScanKind" IsChecked="True" AutomationProperties.Name="Analyse rapide (recommandée)">
+                        <StackPanel>
+                            <TextBlock FontWeight="SemiBold" Text="Analyse rapide (recommandée)" />
+                            <TextBlock Opacity="0.8" TextWrapping="Wrap" Text="Pilotes manquants et mises à jour recommandées. En général moins de 2 minutes." />
+                        </StackPanel>
+                    </RadioButton>
+                    <RadioButton x:Name="ScanFull" GroupName="WizardScanKind" Margin="0,10,0,0" AutomationProperties.Name="Analyse complète">
+                        <StackPanel>
+                            <TextBlock FontWeight="SemiBold" Text="Analyse complète" />
+                            <TextBlock Opacity="0.8" TextWrapping="Wrap" Text="Vérifie aussi les pilotes déjà installés dans le Microsoft Update Catalog (plus long)." />
+                        </StackPanel>
+                    </RadioButton>
+                    <TextBlock Margin="0,10,0,0" Opacity="0.75" TextWrapping="Wrap" Text="Ce choix se retrouve sur l'Accueil, avant chaque analyse." />
+                </StackPanel>
                 <TextBlock Margin="0,20,0,0" Opacity="0.75" TextWrapping="Wrap"
-                           Text="Raccourcis : F5 analyser · Ctrl+1 à Ctrl+6 changer de page · F1 aide en ligne." />
+                           Text="Raccourcis : F5 analyser · Ctrl+1 à Ctrl+6 changer de page · F1 aide de la page affichée." />
             </StackPanel>
         </ScrollViewer>
 

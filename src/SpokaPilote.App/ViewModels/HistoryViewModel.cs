@@ -17,22 +17,25 @@ public sealed class HistoryViewModel : ObservableObject
     }
 
     public MainViewModel Shell { get; }
-    public ObservableCollection<Intervention> Interventions { get; } = new();
-    public ObservableCollection<string> Backups { get; } = new();
+    public ObservableCollection<InterventionRow> Interventions { get; } = new();
+    public ObservableCollection<BackupRow> Backups { get; } = new();
     public bool IsEmpty => Interventions.Count == 0;
     public bool HasBackups => Backups.Count > 0;
 
-    private Intervention? _selectedIntervention;
-    public Intervention? SelectedIntervention
+    private InterventionRow? _selectedRow;
+    /// <summary>Ligne sélectionnée dans la liste (intervention et son état en clair).</summary>
+    public InterventionRow? SelectedRow
     {
-        get => _selectedIntervention;
+        get => _selectedRow;
         set
         {
-            Set(ref _selectedIntervention, value);
+            Set(ref _selectedRow, value);
+            OnPropertyChanged(nameof(SelectedIntervention));
             OnPropertyChanged(nameof(SelectedInterventionDetails));
             OnPropertyChanged(nameof(RollbackHint));
         }
     }
+    public Intervention? SelectedIntervention => SelectedRow?.Intervention;
 
     public string SelectedInterventionDetails => SelectedIntervention is null ? Loc.T("Sélectionnez une intervention dans la liste.")
         : string.Join("\n", SelectedIntervention.Items.Select(i => $"{StatusIcon(i.Status)} {i.Title} {i.Version} — {i.Message}"))
@@ -49,8 +52,8 @@ public sealed class HistoryViewModel : ObservableObject
         _ => Loc.T("Rien à annuler : cette intervention n'a ajouté aucun pilote."),
     };
 
-    private string? _selectedBackup;
-    public string? SelectedBackup { get => _selectedBackup; set => Set(ref _selectedBackup, value); }
+    private BackupRow? _selectedBackup;
+    public BackupRow? SelectedBackup { get => _selectedBackup; set => Set(ref _selectedBackup, value); }
 
     public RelayCommand RollbackCommand { get; }
     public RelayCommand RestoreBackupCommand { get; }
@@ -67,10 +70,10 @@ public sealed class HistoryViewModel : ObservableObject
     public void Refresh()
     {
         Interventions.Clear();
-        foreach (var i in InterventionHistory.List()) Interventions.Add(i);
+        foreach (var i in InterventionHistory.List()) Interventions.Add(new InterventionRow(i));
         Backups.Clear();
-        try { foreach (var b in InterventionHistory.Backups()) Backups.Add(b); } catch { /* aucun dossier */ }
-        SelectedIntervention = Interventions.FirstOrDefault();
+        try { foreach (var b in InterventionHistory.Backups()) Backups.Add(new BackupRow(b)); } catch { /* aucun dossier */ }
+        SelectedRow = Interventions.FirstOrDefault();
         SelectedBackup = Backups.FirstOrDefault();
         OnPropertyChanged(nameof(IsEmpty));
         OnPropertyChanged(nameof(HasBackups));
@@ -97,7 +100,10 @@ public sealed class HistoryViewModel : ObservableObject
     {
         if (SelectedBackup is null) return;
         if (!Shell.IsAdmin) { Shell.AskRelaunch(Loc.T("La restauration d'une sauvegarde")); return; }
-        var folder = SelectedBackup;
+        var folder = SelectedBackup.Path;
+        if (MessageBox.Show(Loc.F("Réinstaller les pilotes de cette sauvegarde ({0}) ?\n\nTous les pilotes sauvegardés sont remis dans Windows et installés sur les périphériques concernés.", SelectedBackup.Label),
+                "SpokaPilote", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
+            return;
         await Shell.RunBusyAsync(Loc.T("Restauration de la sauvegarde..."), async ct =>
         {
             var (_, message) = await InterventionHistory.RestoreBackupAsync(folder, ct);

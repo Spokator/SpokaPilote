@@ -82,6 +82,8 @@
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
 
                     <!-- Note de santé A à E (couleur selon la note). -->
@@ -136,6 +138,43 @@
                         <TextBlock Margin="0,6,0,0" Style="{StaticResource Secondary}" Text="{Binding SubHeadline, Mode=OneWay}" />
                     </StackPanel>
 
+
+                    <!-- Avant la première analyse : le type d'analyse se choisit AVANT de lancer (rien de caché qui change le résultat). -->
+                    <Border Grid.Row="1" Grid.ColumnSpan="3" Margin="0,18,0,0" Padding="0,14,0,0" BorderThickness="0,1,0,0"
+                            BorderBrush="{DynamicResource DividerStrokeColorDefaultBrush}"
+                            Visibility="{Binding HasScan, Converter={StaticResource VisibleWhen}, ConverterParameter=not}">
+                        <StackPanel>
+                            <TextBlock Style="{StaticResource CardTitle}" FontSize="14" Margin="0,0,0,10" Text="Type d'analyse" />
+                            <UniformGrid Columns="2" IsEnabled="{Binding Shell.IsIdle}" AutomationProperties.Name="Type d'analyse">
+                                <RadioButton GroupName="HomeScanKind" Margin="0,0,16,0" VerticalContentAlignment="Top"
+                                             IsChecked="{Binding Shell.QuickScan}" AutomationProperties.Name="Analyse rapide (recommandée)"
+                                             AutomationProperties.HelpText="Pilotes manquants et mises à jour recommandées. En général moins de 2 minutes.">
+                                    <StackPanel>
+                                        <TextBlock FontWeight="SemiBold" TextWrapping="Wrap" Text="Analyse rapide (recommandée)" />
+                                        <TextBlock Margin="0,2,0,0" Style="{StaticResource Secondary}"
+                                                   Text="Pilotes manquants et mises à jour recommandées : dépôt, constructeur du PC, NVIDIA, Windows Update. En général moins de 2 minutes." />
+                                    </StackPanel>
+                                </RadioButton>
+                                <RadioButton GroupName="HomeScanKind" VerticalContentAlignment="Top"
+                                             IsChecked="{Binding Shell.DeepScan}" AutomationProperties.Name="Analyse complète"
+                                             AutomationProperties.HelpText="Vérifie aussi les pilotes déjà installés dans le Microsoft Update Catalog. Plus long.">
+                                    <StackPanel>
+                                        <TextBlock FontWeight="SemiBold" TextWrapping="Wrap" Text="Analyse complète" />
+                                        <TextBlock Margin="0,2,0,0" Style="{StaticResource Secondary}"
+                                                   Text="Vérifie aussi, dans le Microsoft Update Catalog, s'il existe une version plus récente de chaque pilote de fabricant déjà installé. Plus long : jusqu'à plusieurs minutes selon le matériel." />
+                                    </StackPanel>
+                                </RadioButton>
+                            </UniformGrid>
+                            <TextBlock Margin="0,10,0,0" Style="{StaticResource Caption}"
+                                       Text="Les pilotes intégrés à Windows ne sont jamais remplacés. Votre choix est retenu pour les analyses suivantes (F5)." />
+                            <DockPanel Margin="0,8,0,0" Visibility="{Binding Shell.CatalogEnabled, Converter={StaticResource VisibleWhen}, ConverterParameter=not}">
+                                <app:Glyph Style="{StaticResource WarningIcon}" FontSize="14" />
+                                <TextBlock TextWrapping="Wrap" Style="{StaticResource Caption}"
+                                           Text="Le Microsoft Update Catalog est désactivé dans les Paramètres : l'analyse complète cherchera la même chose que l'analyse rapide." />
+                            </DockPanel>
+                        </StackPanel>
+                    </Border>
+                    <!-- Action principale : après le choix du type d'analyse dans l'ordre de tabulation (le choix d'abord). -->
                     <StackPanel Grid.Column="2" Margin="24,0,0,0" VerticalAlignment="Center" MinWidth="200">
                         <Button Padding="24,11" FontSize="15" HorizontalAlignment="Stretch" Style="{DynamicResource AccentButtonStyle}"
                                 Content="{Binding PrimaryLabel, Mode=OneWay}" Command="{Binding PrimaryCommand}"
@@ -152,16 +191,39 @@
                                            Text="{Binding PrimaryLabel, Mode=OneWay}" AutomationProperties.LiveSetting="Polite" />
                             </StackPanel>
                         </Border>
-                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,8,0,0"
-                                    Visibility="{Binding HasScan, Converter={StaticResource BoolToVisibility}}">
-                            <Button Style="{StaticResource LinkButton}" Content="Voir le détail" Command="{Binding ShowDetailsCommand}" />
+                        <WrapPanel HorizontalAlignment="Center" Margin="0,8,0,0" MaxWidth="280"
+                                   Visibility="{Binding HasScan, Converter={StaticResource BoolToVisibility}}">
+                            <Button Style="{StaticResource LinkButton}" Content="Voir la liste des pilotes" Command="{Binding ShowDetailsCommand}" />
                             <Button Style="{StaticResource LinkButton}" Content="Analyser à nouveau" Command="{Binding Shell.ScanCommand}"
-                                    ToolTip="Analyser à nouveau (F5)" />
-                        </StackPanel>
+                                    ToolTip="{Binding RescanHelp, Mode=OneWay}" AutomationProperties.HelpText="{Binding RescanHelp, Mode=OneWay}" />
+                            <Button Style="{StaticResource LinkButton}" Content="{Binding ProblemDevicesLabel, Mode=OneWay}" Command="{Binding ShowDevicesCommand}"
+                                    AutomationProperties.Name="{Binding ProblemDevicesLabel, Mode=OneWay}"
+                                    ToolTip="Voir la cause de chaque erreur et la réparation proposée"
+                                    Visibility="{Binding HasProblemDevices, Converter={StaticResource BoolToVisibility}}" />
+                        </WrapPanel>
                     </StackPanel>
 
+                    <!-- Après l'analyse : ce qu'elle a couvert, et l'autre type d'analyse en un clic. -->
+                    <Border Grid.Row="2" Grid.ColumnSpan="3" Margin="0,18,0,0" Padding="0,14,0,0" BorderThickness="0,1,0,0"
+                            BorderBrush="{DynamicResource DividerStrokeColorDefaultBrush}"
+                            Visibility="{Binding HasScan, Converter={StaticResource BoolToVisibility}}">
+                        <DockPanel>
+                            <app:Glyph Style="{StaticResource InfoIcon}" FontSize="15" />
+                            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Margin="16,0,0,0" VerticalAlignment="Center">
+                                <Button Content="Lancer l'analyse complète" Command="{Binding Shell.FullScanCommand}"
+                                        ToolTip="Vérifie aussi les pilotes déjà installés dans le Microsoft Update Catalog (plus long)"
+                                        Visibility="{Binding Shell.OfferFullScan, Converter={StaticResource BoolToVisibility}}" />
+                                <Button Content="Relancer en analyse rapide" Command="{Binding Shell.QuickScanCommand}"
+                                        ToolTip="Pilotes manquants et mises à jour recommandées seulement (plus court)"
+                                        Visibility="{Binding Shell.OfferQuickScan, Converter={StaticResource BoolToVisibility}}" />
+                            </StackPanel>
+                            <TextBlock VerticalAlignment="Center" Style="{StaticResource Secondary}" Text="{Binding Shell.ScanCoverageText, Mode=OneWay}"
+                                       AutomationProperties.Name="Ce que l'analyse a couvert" />
+                        </DockPanel>
+                    </Border>
+
                     <!-- Progression en clair pendant l'analyse ou l'installation. -->
-                    <StackPanel Grid.Row="1" Grid.ColumnSpan="3" Margin="0,18,0,0"
+                    <StackPanel Grid.Row="3" Grid.ColumnSpan="3" Margin="0,18,0,0"
                                 Visibility="{Binding Shell.IsBusy, Converter={StaticResource BoolToVisibility}}">
                         <ProgressBar Height="4" Value="{Binding Shell.Progress, Mode=OneWay}" IsIndeterminate="{Binding Shell.ProgressIndeterminate, Mode=OneWay}"
                                      AutomationProperties.Name="Progression" />
@@ -172,7 +234,7 @@
                     </StackPanel>
 
                     <!-- Résultat de la dernière opération (installation, erreur d'analyse...). -->
-                    <Border Grid.Row="2" Grid.ColumnSpan="3" Margin="0,18,0,0" Style="{StaticResource InfoBarByKind}" Tag="{Binding MessageKind}"
+                    <Border Grid.Row="4" Grid.ColumnSpan="3" Margin="0,18,0,0" Style="{StaticResource InfoBarByKind}" Tag="{Binding MessageKind}"
                             Visibility="{Binding HasMessage, Converter={StaticResource BoolToVisibility}}">
                         <DockPanel>
                             <app:Glyph Style="{StaticResource IconByKind}" Tag="{Binding MessageKind}" />

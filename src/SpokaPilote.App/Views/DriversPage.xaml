@@ -19,20 +19,35 @@
 
         <!-- ============================================ en-tête -->
         <DockPanel>
-            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Top" Margin="16,6,0,0">
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Top" Margin="16,6,0,0"
+                        Visibility="{Binding Shell.HasScan, Converter={StaticResource BoolToVisibility}}">
                 <Button Content="Exporter le rapport..." Command="{Binding ExportReportCommand}" Margin="0,0,8,0"
                         ToolTip="Rapport de ce poste au format HTML ou JSON" />
-                <Button Content="Analyser à nouveau" Command="{Binding Shell.ScanCommand}" ToolTip="Analyser à nouveau (F5)" />
+                <Button Content="Analyser à nouveau" Command="{Binding Shell.ScanCommand}" ToolTip="{Binding Shell.Home.RescanHelp, Mode=OneWay}"
+                        AutomationProperties.HelpText="{Binding Shell.Home.RescanHelp, Mode=OneWay}" />
             </StackPanel>
             <StackPanel>
                 <TextBlock Style="{StaticResource PageTitle}" Text="Pilotes" />
-                <TextBlock Style="{StaticResource PageSubtitle}"
-                           Text="Pilotes proposés pour ce poste. Chacun vient d'une source officielle et est vérifié (signature, compatibilité) avant d'être installé. Les pilotes optionnels et les BIOS ne sont pas cochés d'office." />
+                <TextBlock Style="{StaticResource PageSubtitle}" Margin="0,0,0,12"
+                           Text="Ce que l'analyse propose pour ce poste. Cochez les pilotes à installer, puis «&#160;Installer la sélection&#160;». Les pilotes optionnels et les BIOS ne sont jamais cochés d'office." />
             </StackPanel>
         </DockPanel>
 
-        <!-- ============================================ filtres et sélection -->
-        <DockPanel Grid.Row="1" Margin="0,0,0,8" Visibility="{Binding Shell.HasScan, Converter={StaticResource BoolToVisibility}}">
+        <!-- ============================================ ce que l'analyse a couvert, filtres -->
+        <StackPanel Grid.Row="1" Margin="0,0,0,8" Visibility="{Binding Shell.HasScan, Converter={StaticResource BoolToVisibility}}">
+            <DockPanel Margin="0,0,0,12">
+                <app:Glyph Style="{StaticResource InfoIcon}" FontSize="15" />
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Margin="16,0,0,0" VerticalAlignment="Center">
+                    <Button Content="Lancer l'analyse complète" Command="{Binding Shell.FullScanCommand}"
+                            ToolTip="Vérifie aussi les pilotes déjà installés dans le Microsoft Update Catalog (plus long)"
+                            Visibility="{Binding Shell.OfferFullScan, Converter={StaticResource BoolToVisibility}}" />
+                    <Button Content="Relancer en analyse rapide" Command="{Binding Shell.QuickScanCommand}"
+                            ToolTip="Pilotes manquants et mises à jour recommandées seulement (plus court)"
+                            Visibility="{Binding Shell.OfferQuickScan, Converter={StaticResource BoolToVisibility}}" />
+                </StackPanel>
+                <TextBlock VerticalAlignment="Center" Style="{StaticResource Secondary}" Text="{Binding Shell.ScanCoverageText, Mode=OneWay}"
+                           AutomationProperties.Name="Ce que l'analyse a couvert" />
+            </DockPanel>
             <WrapPanel AutomationProperties.Name="Filtrer les pilotes">
                 <RadioButton Style="{StaticResource FilterChip}" GroupName="DriverFilter" AutomationProperties.Name="Tous les pilotes"
                              IsChecked="{Binding Filter, Converter={StaticResource EqualsToBool}, ConverterParameter=all}">
@@ -46,12 +61,26 @@
                              IsChecked="{Binding Filter, Converter={StaticResource EqualsToBool}, ConverterParameter=updates}">
                     <TextBlock><Run Text="Mises à jour" /> <Run Text="{Binding UpdateCount, Mode=OneWay, StringFormat='({0})'}" /></TextBlock>
                 </RadioButton>
-                <RadioButton Style="{StaticResource FilterChip}" GroupName="DriverFilter" AutomationProperties.Name="Pilotes bloqués par la politique"
+                <RadioButton Style="{StaticResource FilterChip}" GroupName="DriverFilter" AutomationProperties.Name="Pilotes bloqués ou retenus par la politique"
                              IsChecked="{Binding Filter, Converter={StaticResource EqualsToBool}, ConverterParameter=blocked}">
                     <TextBlock><Run Text="Bloqués" /> <Run Text="{Binding BlockedCount, Mode=OneWay, StringFormat='({0})'}" /></TextBlock>
                 </RadioButton>
             </WrapPanel>
-        </DockPanel>
+            <!-- Pourquoi un pilote est bloqué ou retenu : expliqué là où on le cherche. -->
+            <Border Style="{StaticResource InfoBar}" Margin="0,4,0,0"
+                    Visibility="{Binding Filter, Converter={StaticResource EqualsToVisibility}, ConverterParameter=blocked}">
+                <DockPanel>
+                    <app:Glyph Style="{StaticResource InfoIcon}" />
+                    <TextBlock TextWrapping="Wrap">
+                        <Run FontWeight="SemiBold">Bloqué :</Run>
+                        <Run>la politique de pilotes de votre organisation, ou la liste de référence des pilotes connus pour provoquer des écrans bleus, interdit ce pilote.</Run>
+                        <Run FontWeight="SemiBold">Retenu :</Run>
+                        <Run>la console le diffuse par étapes (anneaux) et le proposera à ce poste à la date indiquée.</Run>
+                        <Run>La raison exacte est écrite sous le nom de chaque pilote ; ces pilotes ne peuvent pas être cochés.</Run>
+                    </TextBlock>
+                </DockPanel>
+            </Border>
+        </StackPanel>
 
         <!-- ============================================ liste -->
         <DataGrid Grid.Row="2" ItemsSource="{Binding View}" AutoGenerateColumns="False" CanUserAddRows="False" CanUserDeleteRows="False" IsReadOnly="True"
@@ -151,9 +180,17 @@
                 <app:Glyph Style="{StaticResource Icon}" FontSize="32" HorizontalAlignment="Center" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Text="&#xE896;" />
                 <TextBlock Margin="0,12,0,4" HorizontalAlignment="Center" Style="{StaticResource CardTitle}" Text="{Binding EmptyTitle, Mode=OneWay}" />
                 <TextBlock HorizontalAlignment="Center" TextAlignment="Center" MaxWidth="520" Style="{StaticResource Secondary}" Text="{Binding EmptyText, Mode=OneWay}" />
-                <Button Margin="0,16,0,0" HorizontalAlignment="Center" Style="{DynamicResource AccentButtonStyle}" Content="Analyser ce poste"
-                        Command="{Binding Shell.ScanCommand}" ToolTip="Analyser ce poste (F5)"
-                        Visibility="{Binding Shell.HasScan, Converter={StaticResource VisibleWhen}, ConverterParameter=not}" />
+                <!-- Le type d'analyse se choisit au moment de lancer : deux boutons explicites. -->
+                <StackPanel Margin="0,16,0,0" Orientation="Horizontal" HorizontalAlignment="Center"
+                            Visibility="{Binding Shell.HasScan, Converter={StaticResource VisibleWhen}, ConverterParameter=not}">
+                    <Button Style="{DynamicResource AccentButtonStyle}" Content="Lancer l'analyse rapide" Command="{Binding Shell.QuickScanCommand}"
+                            ToolTip="Pilotes manquants et mises à jour recommandées. En général moins de 2 minutes." Margin="0,0,8,0" />
+                    <Button Content="Lancer l'analyse complète" Command="{Binding Shell.FullScanCommand}"
+                            ToolTip="Vérifie aussi les pilotes déjà installés dans le Microsoft Update Catalog (plus long)" />
+                </StackPanel>
+                <!-- Analyse complète déjà possible après une analyse rapide sans résultat. -->
+                <Button Margin="0,16,0,0" HorizontalAlignment="Center" Content="Lancer l'analyse complète" Command="{Binding Shell.FullScanCommand}"
+                        Visibility="{Binding ShowFullScanInEmptyState, Converter={StaticResource BoolToVisibility}}" />
             </StackPanel>
         </Border>
 
@@ -162,8 +199,8 @@
                 Visibility="{Binding Shell.HasScan, Converter={StaticResource BoolToVisibility}}">
             <DockPanel>
                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
-                    <Button Content="Simuler" Command="{Binding SimulateCommand}" Margin="0,0,8,0"
-                            ToolTip="Télécharge et vérifie les pilotes cochés, sans rien installer" />
+                    <Button Content="Vérifier sans installer" Command="{Binding SimulateCommand}" Margin="0,0,8,0"
+                            ToolTip="Télécharge et vérifie les pilotes cochés (empreinte, signature, compatibilité), sans rien installer" />
                     <Button Content="{Binding InstallLabel, Mode=OneWay}" Command="{Binding InstallCommand}" Style="{DynamicResource AccentButtonStyle}"
                             AutomationProperties.Name="{Binding InstallLabel, Mode=OneWay}" Padding="18,6" />
                 </StackPanel>
@@ -176,12 +213,14 @@
         </Border>
 
         <!-- ============================================ options et détails techniques -->
-        <Expander Grid.Row="4" Margin="0,10,0,0" Header="Options d'analyse, sources et politique">
+        <!-- Information seulement : rien ici ne change le résultat (le type d'analyse se choisit à l'Accueil, les sources dans Paramètres). -->
+        <Expander Grid.Row="4" Margin="0,10,0,0" Header="Détails techniques : sources interrogées et politique de pilotes"
+                  Visibility="{Binding Shell.HasScan, Converter={StaticResource BoolToVisibility}}">
             <ScrollViewer MaxHeight="150" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
             <StackPanel Margin="0,10,0,0">
-                <CheckBox Content="Chercher aussi les mises à jour des composants qui fonctionnent (analyse approfondie)" IsChecked="{Binding DeepScan}" />
-                <TextBlock Margin="0,10,0,0" Style="{StaticResource Secondary}" Text="{Binding SourcesUsed, Mode=OneWay}"
+                <TextBlock Style="{StaticResource Secondary}" Text="{Binding SourcesUsed, Mode=OneWay}"
                            Visibility="{Binding SourcesUsed, Converter={StaticResource VisibleWhen}}" />
+                <TextBlock Style="{StaticResource Caption}" Margin="0,2,0,0" Text="Les sources se règlent dans Paramètres › Sources de pilotes." />
                 <TextBlock Margin="0,8,0,0" FontWeight="SemiBold" Text="Sources qui n'ont pas répondu"
                            Visibility="{Binding HasSourceWarnings, Converter={StaticResource BoolToVisibility}}" />
                 <TextBlock Style="{StaticResource Secondary}" Text="{Binding SourceWarnings, Mode=OneWay}"

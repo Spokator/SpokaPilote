@@ -32,7 +32,10 @@ public partial class MainWindow : Window
         }
         // Mode portable (clé USB) : visible dès la barre de titre (détail dans la barre d'état).
         if (Core.Infrastructure.AppPaths.IsPortable) Title += " · " + Localization.Loc.T("mode portable");
-        _vm = new MainViewModel(IsScreenshotMode ? Argument("--alias") : null);
+        // Type d'analyse : celui choisi la dernière fois ; en mode capture, analyse rapide sauf --deep (préférences intactes).
+        _vm = IsScreenshotMode
+            ? new MainViewModel(Argument("--alias"), deepScan: _args.Contains("--deep"), persistPreferences: false)
+            : new MainViewModel(deepScan: _prefs.DeepScan);
         DataContext = _vm;
         if (IsScreenshotMode && Argument("--size") is { } size && TryParseSize(size, out var w, out var h))
         {
@@ -66,7 +69,7 @@ public partial class MainWindow : Window
         return parts.Length == 2 && double.TryParse(parts[0], out width) && double.TryParse(parts[1], out height) && width >= 600 && height >= 400;
     }
 
-    /// <summary>Raccourcis : F5 analyser, Ctrl+1..6 pages, F1 aide en ligne.</summary>
+    /// <summary>Raccourcis : F5 analyser (type d'analyse retenu), Ctrl+1..6 pages, F1 aide de la page affichée.</summary>
     private void OnPreviewKeyDown(object sender, KeyEventArgs e)
     {
         var ctrl = (Keyboard.Modifiers & ModifierKeys.Control) != 0;
@@ -77,7 +80,7 @@ public partial class MainWindow : Window
         }
         else if (e.Key == Key.F1)
         {
-            _vm.OpenUrlCommand.Execute("https://github.com/Spokator/SpokaPilote#readme");
+            _vm.OpenHelp(); // section du guide de l'interface qui décrit la page affichée
             e.Handled = true;
         }
         else if (ctrl && (e.Key is >= Key.D1 and <= Key.D9 || e.Key is >= Key.NumPad1 and <= Key.NumPad9))
@@ -112,7 +115,9 @@ public partial class MainWindow : Window
         _prefs.Save();
         if (!accepted) return;
         if (wizard.FleetMode) _vm.ApplyFleetSetup(wizard.Repository, wizard.ServerUrl, wizard.ServerToken);
-        if (wizard.StartScan && _vm.ScanCommand.CanExecute(null)) _vm.ScanCommand.Execute(null);
+        if (!wizard.StartScan) return;
+        _vm.DeepScan = wizard.DeepScan; // type choisi dans l'assistant, retenu comme sur l'Accueil
+        if (_vm.ScanCommand.CanExecute(null)) _vm.ScanCommand.Execute(null);
     }
 
     private async void OnContentRendered(object? sender, EventArgs e)
@@ -128,9 +133,11 @@ public partial class MainWindow : Window
 
     /// <summary>
     /// Mode capture (contrôle de l'interface par scripts\publish.ps1, visuels du Store et du site) :
-    /// <c>SpokaPilote.App.exe --screenshot dossier [--scan] [--lang en] [--theme dark|light] [--size 1000x660] [--alias PC-DEMO] [--expand]</c>.
+    /// <c>SpokaPilote.App.exe --screenshot dossier [--scan] [--deep] [--lang en] [--theme dark|light] [--size 1000x660] [--alias PC-DEMO] [--expand]</c>.
+    /// --deep : analyse complète au lieu de l'analyse rapide.
     /// Écrit page-N-nom.png pour chaque page de la navigation (page entière en plus dans complet-N-nom.png quand elle
-    /// défile), puis assistant-N.png pour chaque étape de l'assistant, et quitte. Toute erreur d'interface : code 3.
+    /// défile), extra-pilotes-bloques.png si la politique bloque des pilotes, puis assistant-N.png pour chaque étape de
+    /// l'assistant, et quitte. Toute erreur d'interface : code 3.
     /// --alias remplace le nom de l'ordinateur (et masque le numéro de série) ; --expand ouvre les volets de détail.
     /// Les préférences de l'utilisateur (dernière page, premier lancement) ne sont pas modifiées.
     /// </summary>
@@ -163,6 +170,16 @@ public partial class MainWindow : Window
             if (page is not null && FindScrollViewer(page) is { Content: FrameworkElement content } scroller
                 && content.ActualHeight > scroller.ViewportHeight + 1)
                 CaptureElement(content, this, Path.Combine(folder, $"complet-{name}.png"));
+        }
+
+        // Pilotes bloqués ou retenus par la politique : le filtre « Bloqués » et son explication.
+        if (_vm.Drivers.BlockedCount > 0)
+        {
+            _vm.PageIndex = 1;
+            _vm.Drivers.Filter = "blocked";
+            await Task.Delay(700);
+            Capture(Path.Combine(folder, "extra-pilotes-bloques.png"));
+            _vm.Drivers.Filter = "all";
         }
 
         // Assistant de premier lancement (non modal pour la capture).

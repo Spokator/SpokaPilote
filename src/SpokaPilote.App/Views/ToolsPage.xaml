@@ -19,131 +19,32 @@
             <Setter Property="Margin" Value="0,10,0,0" />
             <Setter Property="TextWrapping" Value="Wrap" />
         </Style>
+        <!-- Introduction d'une section (à qui elle s'adresse). -->
+        <Style x:Key="SectionIntro" TargetType="TextBlock" BasedOn="{StaticResource Secondary}">
+            <Setter Property="Margin" Value="0,-6,0,10" />
+        </Style>
     </UserControl.Resources>
     <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
         <StackPanel Margin="36,28,36,28" MaxWidth="1000">
             <TextBlock Style="{StaticResource PageTitle}" Text="Outils" />
             <TextBlock Style="{StaticResource PageSubtitle}" Margin="0,0,0,4"
-                       Text="Fonctions avancées pour préparer et entretenir un parc. Rien ici n'est nécessaire pour équiper un poste : l'Accueil suffit." />
+                       Text="Outils avancés, rangés par usage : entretenir ce poste, puis préparer et suivre un parc. Pour équiper un poste, l'Accueil suffit." />
 
-            <!-- ==================================================== DÉPLOIEMENT -->
-            <TextBlock Style="{StaticResource SectionTitle}" Text="Déploiement de parc" />
+            <!-- ==================================================== POUR CE POSTE -->
+            <TextBlock Style="{StaticResource SectionTitle}" Text="Pour ce poste" />
+            <TextBlock Style="{StaticResource SectionIntro}" Text="Entretien et diagnostic du poste sur lequel SpokaPilote est ouvert." />
 
             <Border Style="{StaticResource Card}">
-                <DockPanel>
-                    <app:Glyph DockPanel.Dock="Left" Style="{StaticResource ToolGlyph}" Text="&#xE8B7;" />
-                    <StackPanel>
-                        <TextBlock Style="{StaticResource CardTitle}" Text="Dépôt de pilotes" />
-                        <TextBlock Style="{StaticResource Secondary}" Margin="0,2,0,10"
-                                   Text="Dossiers (local, clé USB ou \\serveur\partage) consultés en priorité, même sans Internet. Préparez un poste de référence par modèle, exportez ses pilotes ici, ou téléchargez le pack du constructeur ci-dessous." />
-                        <ListBox MaxHeight="150" ItemsSource="{Binding RepositoryPaths}" SelectedItem="{Binding SelectedRepository}"
-                                 AutomationProperties.Name="Dépôts de pilotes utilisés"
-                                 Visibility="{Binding RepositoryPaths.Count, Converter={StaticResource VisibleWhen}}" />
-                        <TextBlock Style="{StaticResource Secondary}" FontStyle="Italic"
-                                   Text="Aucun dépôt pour l'instant : ajoutez un dossier ou un partage réseau contenant des pilotes."
-                                   Visibility="{Binding RepositoryPaths.Count, Converter={StaticResource VisibleWhen}, ConverterParameter=not}" />
-                        <TextBlock Margin="0,6,0,0" Style="{StaticResource Caption}" Text="{Binding DefaultRepositoryNote, Mode=OneWay}"
-                                   Visibility="{Binding DefaultRepositoryNote, Converter={StaticResource VisibleWhen}}" />
-                        <WrapPanel Margin="0,10,0,0">
-                            <Button Content="Ajouter un dépôt..." Command="{Binding AddRepositoryCommand}" Margin="0,0,8,8" />
-                            <Button Content="Retirer" Command="{Binding RemoveRepositoryCommand}" Margin="0,0,24,8" ToolTip="Retirer le dépôt sélectionné de la liste (rien n'est supprimé)" />
-                            <Button Content="Exporter les pilotes de ce poste..." Command="{Binding ExportDriversCommand}" Margin="0,0,8,8"
-                                    ToolTip="Poste de référence : exporte ses pilotes dans &lt;dépôt&gt;\Fabricant\Modèle\Windows" />
-                            <Button Content="Importer un pilote..." Command="{Binding ImportDriversCommand}" Margin="0,0,8,8"
-                                    ToolTip="Ajoute au dépôt un pilote téléchargé sur le site officiel d'un constructeur (.zip, .cab ou dossier extrait)" />
-                        </WrapPanel>
-                        <TextBlock Style="{StaticResource ToolResult}" Text="{Binding RepositoryResult}"
-                                   Visibility="{Binding RepositoryResult, Converter={StaticResource VisibleWhen}}" />
-                    </StackPanel>
-                </DockPanel>
-            </Border>
-
-            <Border Style="{StaticResource Card}" Margin="0,12,0,0">
-                <DockPanel>
-                    <app:Glyph DockPanel.Dock="Left" Style="{StaticResource ToolGlyph}" Text="&#xE7B8;" />
-                    <StackPanel>
-                        <TextBlock Style="{StaticResource CardTitle}" Text="Packs constructeur (Dell, HP, Lenovo, Microsoft Surface)" />
-                        <TextBlock Style="{StaticResource Secondary}" Margin="0,2,0,10"
-                                   Text="Le pack de déploiement complet publié par le constructeur pour un modèle, rangé dans le dépôt : plus besoin de poste de référence." />
-                        <TextBlock Margin="0,0,0,4" Text="Modèle (laisser vide pour ce poste)" />
-                        <DockPanel>
-                            <Button DockPanel.Dock="Right" Content="Rechercher" Command="{Binding SearchDriverPacksCommand}" Margin="8,0,0,0" />
-                            <ComboBox DockPanel.Dock="Right" ItemsSource="{Binding PackOsChoices}" SelectedIndex="{Binding PackOs}" Width="140" Margin="8,0,0,0"
-                                      AutomationProperties.Name="Version de Windows du pack" />
-                            <TextBox Text="{Binding PackModel, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="Modèle recherché"
-                                     ToolTip="ex. Latitude 7420, EliteBook 840 G8, ThinkPad T14 Gen 3, Surface Pro 9" />
-                        </DockPanel>
-                        <ListBox ItemsSource="{Binding DriverPacks}" SelectedItem="{Binding SelectedDriverPack}" MaxHeight="180" Margin="0,8,0,0"
-                                 AutomationProperties.Name="Packs trouvés" Visibility="{Binding DriverPacks.Count, Converter={StaticResource VisibleWhen}}">
-                            <ListBox.ItemTemplate>
-                                <DataTemplate>
-                                    <StackPanel Margin="2,4">
-                                        <TextBlock FontWeight="SemiBold">
-                                            <Run Text="{Binding Pack.VendorName, Mode=OneWay}" /> <Run Text="{Binding ModelLabel, Mode=OneWay}" />
-                                        </TextBlock>
-                                        <TextBlock Style="{StaticResource Caption}">
-                                            <Run Text="{Binding Pack.OsLabel, Mode=OneWay}" /> · <Run Text="{Binding Pack.Id, Mode=OneWay}" /> <Run Text="{Binding Pack.Version, Mode=OneWay}" /> · <Run Text="{Binding Pack.SizeLabel, Mode=OneWay}" />
-                                        </TextBlock>
-                                    </StackPanel>
-                                </DataTemplate>
-                            </ListBox.ItemTemplate>
-                        </ListBox>
-                        <Button HorizontalAlignment="Left" Margin="0,8,0,0" Content="Télécharger dans le dépôt..." Command="{Binding DownloadDriverPackCommand}"
-                                Visibility="{Binding DriverPacks.Count, Converter={StaticResource VisibleWhen}}" />
-                        <TextBlock Style="{StaticResource ToolResult}" Text="{Binding PackResult}"
-                                   Visibility="{Binding PackResult, Converter={StaticResource VisibleWhen}}" />
-                    </StackPanel>
-                </DockPanel>
-            </Border>
-
-            <Grid Margin="0,12,0,0">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="12" />
-                    <ColumnDefinition Width="*" />
-                </Grid.ColumnDefinitions>
-                <Border Style="{StaticResource Card}">
-                    <DockPanel>
-                        <app:Glyph DockPanel.Dock="Left" Style="{StaticResource ToolGlyph}" Text="&#xE88E;" />
-                        <StackPanel>
-                            <TextBlock Style="{StaticResource CardTitle}" Text="Pack hors ligne" />
-                            <TextBlock Style="{StaticResource Secondary}" Margin="0,2,0,10"
-                                       Text="Pour un poste sans réseau : sur ce poste, lancez « spokapilote scan --json E:\poste.json » depuis la clé, puis choisissez ce rapport ici. Annulez le choix du rapport pour préparer le pack de ce poste-ci." />
-                            <CheckBox Content="Inclure les mises à jour de tout le matériel" IsChecked="{Binding PackAllHardware}" Margin="0,0,0,10" />
-                            <Button HorizontalAlignment="Left" Content="Préparer un pack..." Command="{Binding BuildPackCommand}" />
-                            <TextBlock Style="{StaticResource ToolResult}" Text="{Binding OfflineResult}"
-                                       Visibility="{Binding OfflineResult, Converter={StaticResource VisibleWhen}}" />
-                        </StackPanel>
-                    </DockPanel>
-                </Border>
-                <Border Grid.Column="2" Style="{StaticResource Card}">
-                    <DockPanel>
-                        <app:Glyph DockPanel.Dock="Left" Style="{StaticResource ToolGlyph}" Text="&#xE9D9;" />
-                        <StackPanel>
-                            <TextBlock Style="{StaticResource CardTitle}" Text="Rapport de parc" />
-                            <TextBlock Style="{StaticResource Secondary}" Margin="0,2,0,10"
-                                       Text="Rassemble les rapports déposés par les postes (« spokapilote install --yes --output-dir \\serveur\rapports ») : postes à traiter, matériel sans pilote sur tout le parc, modèles." />
-                            <Button HorizontalAlignment="Left" Content="Générer le rapport de parc..." Command="{Binding FleetReportCommand}" />
-                            <TextBlock Style="{StaticResource ToolResult}" Text="{Binding FleetResult}"
-                                       Visibility="{Binding FleetResult, Converter={StaticResource VisibleWhen}}" />
-                        </StackPanel>
-                    </DockPanel>
-                </Border>
-            </Grid>
-
-            <!-- ==================================================== ENTRETIEN -->
-            <TextBlock Style="{StaticResource SectionTitle}" Text="Entretien des postes" />
-
-            <Border Style="{StaticResource Card}" Margin="0,0,0,12">
                 <DockPanel>
                     <app:Glyph DockPanel.Dock="Left" Style="{StaticResource ToolGlyph}" Text="&#xE74D;" />
                     <StackPanel>
                         <TextBlock Style="{StaticResource CardTitle}" Text="Nettoyage du magasin de pilotes" />
                         <TextBlock Style="{StaticResource Secondary}" Margin="0,2,0,10"
-                                   Text="Windows garde toutes les anciennes versions de pilotes. SpokaPilote repère celles qui ne servent plus et ont été remplacées (jamais un pilote utilisé, jamais la seule version, jamais un pilote d'imprimante), les sauvegarde puis les supprime." />
+                                   Text="Windows garde toutes les anciennes versions de pilotes. SpokaPilote repère celles qui ne servent plus et ont été remplacées (jamais un pilote utilisé, jamais la seule version, jamais un pilote d'imprimante), les sauvegarde puis les supprime. Commencez par « Analyser le magasin » : rien n'est supprimé sans votre accord." />
                         <WrapPanel>
                             <Button Content="Analyser le magasin" Command="{Binding AnalyzeDriverStoreCommand}" Margin="0,0,8,0" />
-                            <Button Content="Nettoyer..." Command="{Binding CleanDriverStoreCommand}" />
+                            <Button Content="Nettoyer..." Command="{Binding CleanDriverStoreCommand}"
+                                    ToolTip="Disponible après « Analyser le magasin » s'il y a des versions à supprimer" />
                         </WrapPanel>
                         <TextBlock Style="{StaticResource ToolResult}" Text="{Binding DriverStoreText, Mode=OneWay}"
                                    Visibility="{Binding DriverStoreText, Converter={StaticResource VisibleWhen}}" />
@@ -151,13 +52,13 @@
                 </DockPanel>
             </Border>
 
-            <Border Style="{StaticResource Card}" DataContext="{Binding Maintenance}">
+            <Border Style="{StaticResource Card}" Margin="0,12,0,0" DataContext="{Binding Maintenance}">
                 <DockPanel>
                     <app:Glyph DockPanel.Dock="Left" Style="{StaticResource ToolGlyph}" Text="&#xE823;" />
                     <StackPanel>
-                        <TextBlock Style="{StaticResource CardTitle}" Text="Maintenance planifiée et agent" />
+                        <TextBlock Style="{StaticResource CardTitle}" Text="Maintenance planifiée" />
                         <TextBlock Style="{StaticResource Secondary}" Margin="0,2,0,12"
-                                   Text="Une tâche Windows (compte système) entretient le poste seule et peut déposer son rapport pour le suivi du parc." />
+                                   Text="Une tâche Windows (compte système) entretient ce poste seule, même sans session ouverte. Choisissez quand et quoi, puis « Activer »." />
                         <WrapPanel>
                             <ComboBox ItemsSource="{Binding ScheduleTriggers}" SelectedIndex="{Binding ScheduleTrigger}" Width="200" Margin="0,0,8,8"
                                       AutomationProperties.Name="Fréquence" />
@@ -172,41 +73,14 @@
                         <TextBlock Text="Dossier des rapports du parc (facultatif, ex. \\serveur\rapports)" Margin="0,4,0,4" />
                         <TextBox Text="{Binding ScheduleOutputDir, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="Dossier des rapports du parc" />
                         <WrapPanel Margin="0,12,0,0">
-                            <Button Content="Activer" Style="{DynamicResource AccentButtonStyle}" Command="{Binding EnableScheduleCommand}" Margin="0,0,8,0" />
-                            <Button Content="Lancer maintenant" Command="{Binding RunScheduleNowCommand}" Margin="0,0,8,0" />
-                            <Button Content="Désactiver" Command="{Binding DisableScheduleCommand}" />
+                            <Button Content="Activer" Style="{DynamicResource AccentButtonStyle}" Command="{Binding EnableScheduleCommand}" Margin="0,0,8,0"
+                                    AutomationProperties.Name="Activer la maintenance planifiée" />
+                            <Button Content="Lancer maintenant" Command="{Binding RunScheduleNowCommand}" Margin="0,0,8,0"
+                                    AutomationProperties.Name="Lancer la maintenance maintenant" />
+                            <Button Content="Désactiver" Command="{Binding DisableScheduleCommand}"
+                                    AutomationProperties.Name="Désactiver la maintenance planifiée" />
                         </WrapPanel>
                         <TextBlock Margin="0,8,0,0" Style="{StaticResource Secondary}" Text="{Binding ScheduleStatusText, Mode=OneWay}" />
-
-                        <Border Margin="0,16,0,0" Padding="0,14,0,0" BorderThickness="0,1,0,0" BorderBrush="{DynamicResource DividerStrokeColorDefaultBrush}">
-                            <StackPanel>
-                                <TextBlock FontWeight="SemiBold" Text="Agent : actions demandées par la console" />
-                                <TextBlock Style="{StaticResource Secondary}" Margin="0,2,0,10"
-                                           Text="L'agent vérifie toutes les 15 minutes si la console a demandé une action pour ce poste (analyse, installation des pilotes manquants, imprimantes, annulation, mise à jour). Aucune autre commande n'est possible." />
-                                <WrapPanel>
-                                    <Button Content="Activer l'agent" Command="{Binding EnableAgentCommand}" Margin="0,0,8,0" />
-                                    <Button Content="Désactiver l'agent" Command="{Binding DisableAgentCommand}" />
-                                </WrapPanel>
-                                <TextBlock Margin="0,8,0,0" Style="{StaticResource Secondary}" Text="{Binding AgentStatusText, Mode=OneWay}" />
-                            </StackPanel>
-                        </Border>
-                    </StackPanel>
-                </DockPanel>
-            </Border>
-
-            <!-- ==================================================== CONSOLE ET JOURNAL -->
-            <TextBlock Style="{StaticResource SectionTitle}" Text="Suivi et diagnostic" />
-
-            <Border Style="{StaticResource Card}" DataContext="{Binding Maintenance}">
-                <DockPanel>
-                    <app:Glyph DockPanel.Dock="Left" Style="{StaticResource ToolGlyph}" Text="&#xE968;" />
-                    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center" Margin="16,0,0,0">
-                        <Button Content="Ouvrir la console" Command="{Binding OpenConsoleCommand}" Margin="0,0,8,0" />
-                        <Button Content="Régler la connexion" Command="{Binding Shell.NavigateCommand}" CommandParameter="parametres" />
-                    </StackPanel>
-                    <StackPanel>
-                        <TextBlock Style="{StaticResource CardTitle}" Text="Console centrale" />
-                        <TextBlock Style="{StaticResource Secondary}" Margin="0,2,0,0" Text="{Binding ConsoleStatusText, Mode=OneWay}" />
                     </StackPanel>
                 </DockPanel>
             </Border>
@@ -241,8 +115,153 @@
                 </DockPanel>
             </Border>
 
-            <!-- ==================================================== IMPRIMANTES → SPOKAPRINT -->
-            <TextBlock Style="{StaticResource SectionTitle}" Text="Imprimantes" />
+            <!-- ==================================================== POUR LE PARC -->
+            <TextBlock Style="{StaticResource SectionTitle}" Text="Pour le parc (avancé)" />
+            <TextBlock Style="{StaticResource SectionIntro}"
+                       Text="Préparer les pilotes de plusieurs postes et suivre le parc. Rien ici n'est nécessaire pour un poste isolé." />
+
+            <Border Style="{StaticResource Card}">
+                <DockPanel>
+                    <app:Glyph DockPanel.Dock="Left" Style="{StaticResource ToolGlyph}" Text="&#xE8B7;" />
+                    <StackPanel>
+                        <TextBlock Style="{StaticResource CardTitle}" Text="Dépôt de pilotes" />
+                        <TextBlock Style="{StaticResource Secondary}" Margin="0,2,0,10"
+                                   Text="Dossiers (local, clé USB ou \\serveur\partage) consultés en priorité, même sans Internet. Ajoutez un dépôt, puis remplissez-le : exportez les pilotes d'un poste de référence, importez un pilote téléchargé, ou téléchargez le pack du constructeur ci-dessous." />
+                        <ListBox MaxHeight="150" ItemsSource="{Binding RepositoryPaths}" SelectedItem="{Binding SelectedRepository}"
+                                 AutomationProperties.Name="Dépôts de pilotes utilisés"
+                                 Visibility="{Binding RepositoryPaths.Count, Converter={StaticResource VisibleWhen}}" />
+                        <TextBlock Style="{StaticResource Secondary}" FontStyle="Italic"
+                                   Text="Aucun dépôt pour l'instant : ajoutez un dossier ou un partage réseau contenant des pilotes."
+                                   Visibility="{Binding RepositoryPaths.Count, Converter={StaticResource VisibleWhen}, ConverterParameter=not}" />
+                        <TextBlock Margin="0,6,0,0" Style="{StaticResource Caption}" Text="{Binding DefaultRepositoryNote, Mode=OneWay}"
+                                   Visibility="{Binding DefaultRepositoryNote, Converter={StaticResource VisibleWhen}}" />
+                        <WrapPanel Margin="0,10,0,0">
+                            <Button Content="Ajouter un dépôt..." Command="{Binding AddRepositoryCommand}" Margin="0,0,8,8" />
+                            <Button Content="Retirer de la liste" Command="{Binding RemoveRepositoryCommand}" Margin="0,0,24,8"
+                                    ToolTip="Retirer le dépôt sélectionné de la liste (rien n'est supprimé)" />
+                            <Button Content="Exporter les pilotes de ce poste..." Command="{Binding ExportDriversCommand}" Margin="0,0,8,8"
+                                    ToolTip="Poste de référence : exporte ses pilotes dans &lt;dépôt&gt;\Fabricant\Modèle\Windows" />
+                            <Button Content="Importer un pilote..." Command="{Binding ImportDriversCommand}" Margin="0,0,8,8"
+                                    ToolTip="Ajoute au dépôt un pilote téléchargé sur le site officiel d'un constructeur (.zip, .cab ou dossier extrait). Ajoutez d'abord un dépôt." />
+                        </WrapPanel>
+                        <TextBlock Style="{StaticResource ToolResult}" Text="{Binding RepositoryResult}"
+                                   Visibility="{Binding RepositoryResult, Converter={StaticResource VisibleWhen}}" />
+                    </StackPanel>
+                </DockPanel>
+            </Border>
+
+            <Border Style="{StaticResource Card}" Margin="0,12,0,0">
+                <DockPanel>
+                    <app:Glyph DockPanel.Dock="Left" Style="{StaticResource ToolGlyph}" Text="&#xE7B8;" />
+                    <StackPanel>
+                        <TextBlock Style="{StaticResource CardTitle}" Text="Packs constructeur (Dell, HP, Lenovo, Microsoft Surface)" />
+                        <TextBlock Style="{StaticResource Secondary}" Margin="0,2,0,10"
+                                   Text="Le pack de déploiement complet publié par le constructeur pour un modèle, rangé dans le dépôt : plus besoin de poste de référence." />
+                        <TextBlock Margin="0,0,0,4" Text="Modèle (laisser vide pour ce poste)" />
+                        <DockPanel>
+                            <Button DockPanel.Dock="Right" Content="Rechercher" Command="{Binding SearchDriverPacksCommand}" Margin="8,0,0,0"
+                                    AutomationProperties.Name="Rechercher un pack constructeur" />
+                            <ComboBox DockPanel.Dock="Right" ItemsSource="{Binding PackOsChoices}" SelectedIndex="{Binding PackOs}" Width="140" Margin="8,0,0,0"
+                                      AutomationProperties.Name="Version de Windows du pack" />
+                            <TextBox Text="{Binding PackModel, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="Modèle recherché"
+                                     ToolTip="ex. Latitude 7420, EliteBook 840 G8, ThinkPad T14 Gen 3, Surface Pro 9" />
+                        </DockPanel>
+                        <ListBox ItemsSource="{Binding DriverPacks}" SelectedItem="{Binding SelectedDriverPack}" MaxHeight="180" Margin="0,8,0,0"
+                                 AutomationProperties.Name="Packs trouvés" Visibility="{Binding DriverPacks.Count, Converter={StaticResource VisibleWhen}}">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <StackPanel Margin="2,4">
+                                        <TextBlock FontWeight="SemiBold">
+                                            <Run Text="{Binding Pack.VendorName, Mode=OneWay}" /> <Run Text="{Binding ModelLabel, Mode=OneWay}" />
+                                        </TextBlock>
+                                        <TextBlock Style="{StaticResource Caption}">
+                                            <Run Text="{Binding Pack.OsLabel, Mode=OneWay}" /> · <Run Text="{Binding Pack.Id, Mode=OneWay}" /> <Run Text="{Binding Pack.Version, Mode=OneWay}" /> · <Run Text="{Binding Pack.SizeLabel, Mode=OneWay}" />
+                                        </TextBlock>
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                        <Button HorizontalAlignment="Left" Margin="0,8,0,0" Content="Télécharger dans le dépôt..." Command="{Binding DownloadDriverPackCommand}"
+                                Visibility="{Binding DriverPacks.Count, Converter={StaticResource VisibleWhen}}" />
+                        <TextBlock Style="{StaticResource ToolResult}" Text="{Binding PackResult}"
+                                   Visibility="{Binding PackResult, Converter={StaticResource VisibleWhen}}" />
+                    </StackPanel>
+                </DockPanel>
+            </Border>
+
+            <!-- Console centrale : état de la connexion et agent (actions demandées par la console), au même endroit. -->
+            <Border Style="{StaticResource Card}" Margin="0,12,0,0" DataContext="{Binding Maintenance}">
+                <DockPanel>
+                    <app:Glyph DockPanel.Dock="Left" Style="{StaticResource ToolGlyph}" Text="&#xE968;" />
+                    <StackPanel>
+                        <DockPanel>
+                            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Top" Margin="16,0,0,0">
+                                <Button Content="Ouvrir la console" Command="{Binding OpenConsoleCommand}" Margin="0,0,8,0" />
+                                <Button Content="Régler la connexion" Command="{Binding Shell.NavigateCommand}" CommandParameter="parametres"
+                                        ToolTip="Adresse et jeton de la console : page Paramètres" />
+                            </StackPanel>
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource CardTitle}" Text="Console centrale et agent" />
+                                <TextBlock Style="{StaticResource Secondary}" Margin="0,2,0,0" Text="{Binding ConsoleStatusText, Mode=OneWay}" />
+                            </StackPanel>
+                        </DockPanel>
+                        <Border Margin="0,14,0,0" Padding="0,12,0,0" BorderThickness="0,1,0,0" BorderBrush="{DynamicResource DividerStrokeColorDefaultBrush}">
+                            <StackPanel>
+                                <TextBlock FontWeight="SemiBold" Text="Agent : actions demandées par la console" />
+                                <TextBlock Style="{StaticResource Secondary}" Margin="0,2,0,10"
+                                           Text="L'agent vérifie toutes les 15 minutes si la console a demandé une action pour ce poste (analyse, installation des pilotes manquants, imprimantes, annulation, mise à jour). Aucune autre commande n'est possible. La connexion à la console doit être réglée d'abord." />
+                                <WrapPanel>
+                                    <Button Content="Activer l'agent" Command="{Binding EnableAgentCommand}" Margin="0,0,8,0" />
+                                    <Button Content="Désactiver l'agent" Command="{Binding DisableAgentCommand}" />
+                                </WrapPanel>
+                                <TextBlock Margin="0,8,0,0" Style="{StaticResource Secondary}" Text="{Binding AgentStatusText, Mode=OneWay}" />
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </DockPanel>
+            </Border>
+
+            <Grid Margin="0,12,0,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="12" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <Border Style="{StaticResource Card}">
+                    <DockPanel>
+                        <app:Glyph DockPanel.Dock="Left" Style="{StaticResource ToolGlyph}" Text="&#xE88E;" />
+                        <StackPanel>
+                            <TextBlock Style="{StaticResource CardTitle}" Text="Pack hors ligne" />
+                            <TextBlock Style="{StaticResource Secondary}" Margin="0,2,0,10"
+                                       Text="Pour un poste sans réseau : sur ce poste-là, lancez « spokapilote scan --json E:\poste.json » depuis la clé ; ici, « Préparer un pack... » puis choisissez ce rapport. Sans rapport (Annuler), le pack est celui de ce poste-ci." />
+                            <CheckBox IsChecked="{Binding PackAllHardware}" Margin="0,0,0,10"
+                                      AutomationProperties.Name="Analyse complète : inclure aussi les mises à jour des pilotes déjà installés"
+                                      ToolTip="Interroge aussi le Microsoft Update Catalog pour chaque pilote de fabricant déjà installé (plus long, pack plus gros)">
+                                <TextBlock TextWrapping="Wrap" Text="Analyse complète : inclure aussi les mises à jour des pilotes déjà installés" />
+                            </CheckBox>
+                            <Button HorizontalAlignment="Left" Content="Préparer un pack..." Command="{Binding BuildPackCommand}" />
+                            <TextBlock Style="{StaticResource ToolResult}" Text="{Binding OfflineResult}"
+                                       Visibility="{Binding OfflineResult, Converter={StaticResource VisibleWhen}}" />
+                        </StackPanel>
+                    </DockPanel>
+                </Border>
+                <Border Grid.Column="2" Style="{StaticResource Card}">
+                    <DockPanel>
+                        <app:Glyph DockPanel.Dock="Left" Style="{StaticResource ToolGlyph}" Text="&#xE9D9;" />
+                        <StackPanel>
+                            <TextBlock Style="{StaticResource CardTitle}" Text="Rapport de parc (sans console)" />
+                            <TextBlock Style="{StaticResource Secondary}" Margin="0,2,0,10"
+                                       Text="Rassemble les rapports déposés par les postes dans un dossier partagé (« spokapilote install --yes --output-dir \\serveur\rapports », ou le dossier des rapports de la maintenance planifiée) : postes à traiter, matériel sans pilote sur tout le parc, modèles." />
+                            <Button HorizontalAlignment="Left" Content="Générer le rapport de parc..." Command="{Binding FleetReportCommand}" />
+                            <TextBlock Style="{StaticResource ToolResult}" Text="{Binding FleetResult}"
+                                       Visibility="{Binding FleetResult, Converter={StaticResource VisibleWhen}}" />
+                        </StackPanel>
+                    </DockPanel>
+                </Border>
+            </Grid>
+
+            <!-- ==================================================== AUTRES OUTILS -->
+            <TextBlock Style="{StaticResource SectionTitle}" Text="Autres outils" />
             <Border Style="{StaticResource Card}">
                 <DockPanel>
                     <app:Glyph DockPanel.Dock="Left" Style="{StaticResource ToolGlyph}" Text="&#xE749;" />
