@@ -692,7 +692,8 @@ public sealed class DriverCacheTests : IDisposable
         var packages = new Dictionary<string, long?>();
         DriverCachePrefetch.Collect("""
             { "system": { "manufacturer": "HP", "model": "HP EliteBook 840 G9", "baseBoardProduct": "8A7F", "osDisplayVersion": "24H2", "osBuild": 26100 },
-              "candidates": [ { "downloadUrl": "https://ftp.hp.com/pub/softpaq/sp150001-150500/sp150123.exe", "sizeBytes": 1000 },
+              "candidates": [ { "downloadUrl": "https://ftp.hp.com/pub/softpaq/sp150001-150500/sp150123.exe", "sizeBytes": 1000, "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" },
+                              { "downloadUrl": "https://ftp.hp.com/pub/softpaq/sp150001-150500/sp150124.exe", "sizeBytes": 1000 },
                               { "downloadUrl": "https://evil.example/x.exe" },
                               { "downloadUrl": "https://ftp.hp.com/blocked.exe", "blockedReason": "politique" } ] }
             """, catalogs, packages);

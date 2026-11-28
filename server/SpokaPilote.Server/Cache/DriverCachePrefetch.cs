@@ -152,6 +152,10 @@ public sealed class DriverCachePrefetch(ServerStore store, DriverCacheStore cach
             if (c.TryGetProperty("blockedReason", out var blocked) && blocked.ValueKind == JsonValueKind.String) continue;
             if (!c.TryGetProperty("downloadUrl", out var u) || u.ValueKind != JsonValueKind.String) continue;
             if (!Uri.TryCreate(u.GetString(), UriKind.Absolute, out var uri) || !OfficialHosts.IsOfficialDownload(uri)) continue;
+            // 4.0.1 : un poste n'accepte une copie de la console que s'il connaît l'empreinte officielle du fichier ; un
+            // paquet sans empreinte publiée sera téléchargé directement, inutile de le précharger.
+            if (!new[] { "sha256", "sha1", "md5" }.Any(h => c.TryGetProperty(h, out var hv) && hv.ValueKind == JsonValueKind.String && hv.GetString() is { Length: > 0 }))
+                continue;
             long? size = c.TryGetProperty("sizeBytes", out var s) && s.TryGetInt64(out var sv) && sv > 0 ? sv : null;
             packages.TryAdd(DriverCacheStore.Normalize(uri), size);
         }
