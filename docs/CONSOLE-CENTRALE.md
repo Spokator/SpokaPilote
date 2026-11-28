@@ -193,14 +193,21 @@ Sur un poste où SpokaPilote est installé, dans une console **administrateur** 
 
 ```powershell
 spokapilote config set ServerUrl https://spokapilote.mon-entreprise.fr
-spokapilote config set ServerToken <jeton-d-enrolement>
+spokapilote config set ServerToken -     # 4.0.1 : jeton saisi sans affichage (ou lu sur l'entrée standard)
 spokapilote server status        # teste l'adresse, le certificat HTTPS et le jeton
 ```
 
-La configuration est enregistrée dans `%ProgramData%\SpokaPilote\settings.json`, commune à tout le poste : ce
-fichier peut aussi être déployé directement par GPO ou Intune (clés `serverUrl` et `serverToken`, casse indifférente).
-Depuis la 4.0.1, le jeton n'y reste pas : à chaque démarrage élevé, il est déplacé dans `server-token.dat`, lisible
-des seuls SYSTEM et Administrateurs (voir § 7).
+La configuration est enregistrée dans `%ProgramData%\SpokaPilote\settings.json`, commune à tout le poste ; le jeton,
+depuis la 4.0.1, dans `server-token.dat`, chiffré et lisible des seuls SYSTEM et Administrateurs (voir § 7) — jamais
+dans `settings.json`, lisible par tous les utilisateurs du poste. `config set ServerToken -` lit le jeton sur l'entrée
+standard (ou le demande sans l'afficher) : il n'apparaît pas sur la ligne de commande, visible des autres utilisateurs
+et conservée par les journaux d'audit. Un jeton identique à celui enregistré ne change rien. Postes en 4.0.0 :
+`config set ServerToken <jeton>` (le jeton va alors dans `settings.json`, lisible par tous : déployez la 4.0.1).
+
+Pour le parc, préférez le kit de déploiement ([DEPLOIEMENT-ENTREPRISE.md](DEPLOIEMENT-ENTREPRISE.md)) : il fait de
+même (`-ServerTokenFile`, `-ServerTokenVariable`) et n'écrit jamais le jeton dans `settings.json`. **Ne déployez pas
+`serverToken` dans `settings.json`** par GPO / Intune : un démarrage élevé l'en retire, mais chaque nouvelle copie du
+fichier le remet en clair jusqu'au démarrage élevé suivant.
 
 Ensuite, **chaque `spokapilote scan` ou `spokapilote install` envoie son rapport** à la console (compressé). Un échec
 d'envoi n'est jamais bloquant : l'analyse ou l'installation se termine normalement, avec un avertissement, et le
@@ -212,7 +219,7 @@ Déploiement sur le parc (Intune « script de plateforme », RMM, GPO de démarr
 ```powershell
 $exe = "$env:ProgramFiles\SpokaPilote\spokapilote.exe"
 & $exe config set ServerUrl "https://spokapilote.mon-entreprise.fr"
-& $exe config set ServerToken "<jeton-d-enrolement>"
+$env:SPOKA_TOKEN | & $exe config set ServerToken -   # variable secrète du RMM / Intune : jamais sur la ligne de commande
 & $exe server status
 & $exe scan --quiet                   # premier rapport : le poste apparaît dans la console
 & $exe agent enable --every 15        # actions à distance (§ 5)
@@ -539,10 +546,18 @@ Les déclencheurs s'activent ou se désactivent un par un dans la page **Paramè
 - Le jeton administrateur ne doit jamais être déployé sur les postes.
 - **Sur les postes (4.0.1)** : `%ProgramData%\SpokaPilote` n'est modifiable que par SYSTEM et les Administrateurs
   (lecture seule pour les utilisateurs), et le jeton d'enrôlement est dans `server-token.dat`, lisible des seuls
-  administrateurs (DPAPI « machine »). Un `serverToken` déployé en clair dans `settings.json` (GPO, Intune, kit de
-  déploiement) est déplacé à chaque démarrage élevé ; entre son dépôt et ce démarrage, le fichier reste lisible par
-  les utilisateurs : préférez `spokapilote config set ServerToken` dans un script SYSTEM. Une interface non élevée
-  n'envoie rien à la console. Détail : [OUTILS-TECHNICIEN.md, § 6](OUTILS-TECHNICIEN.md#6-dossier-de-données-et-droits-401).
+  administrateurs. C'est cette DACL qui le protège : le chiffrement DPAPI « machine » peut être levé par tout compte
+  du poste ; il rend inexploitable une copie du fichier seul, pas une image disque complète (ruches `SYSTEM` et
+  `SECURITY` comprises) — protégez les sauvegardes système. Le kit de déploiement 4.0.1 et `spokapilote config set
+  ServerToken -` (jeton sur l'entrée standard) l'y enregistrent directement, sans jamais l'écrire dans `settings.json`
+  ni sur une ligne de commande. Un `serverToken` encore déployé en clair dans `settings.json` (GPO, Intune, ancien kit)
+  est déplacé au démarrage élevé suivant ; d'ici là le fichier est lisible par les utilisateurs : ne le faites plus.
+  **N'intégrez pas le jeton à une image de référence** (sysprep) : un poste qui ne peut pas le déchiffrer le signale, le
+  supprime et attend son redéploiement ([DEPLOIEMENT-ENTREPRISE.md, § 12](DEPLOIEMENT-ENTREPRISE.md#12-sécurité)).
+  Une interface non élevée n'envoie rien à la console et ne lit pas le jeton : elle affiche les blocages et retenues
+  d'après la dernière politique reçue par les exécutions SYSTEM du poste, et la politique complète est revérifiée,
+  avec les droits administrateur, au moment d'installer. Le désinstalleur supprime toujours `server-token.dat`.
+  Détail : [OUTILS-TECHNICIEN.md, § 6](OUTILS-TECHNICIEN.md#6-dossier-de-données-et-droits-401).
   Mode portable : le jeton reste dans `Data\settings.json` de la clé, à réserver au technicien.
 - **Annulations** : seuls les paquets ajoutés par SpokaPilote lui-même, et inchangés depuis, sont retirés, sans
   `/force` ([OUTILS-TECHNICIEN.md, § 5](OUTILS-TECHNICIEN.md#5-retour-arrière-et-sauvegardes-401)).
@@ -1011,8 +1026,9 @@ postes se servent chez elle** (réseau local), et elle relaie les catalogues ave
   sécurité ci-dessous). Chaque catalogue est gardé `SPOKAPILOTE_CACHE_CATALOG_HOURS` heures (12 par défaut) puis
   redemandé une fois pour tout le parc ; un catalogue absent de la source (`404`) est mémorisé une heure (les postes
   4.0.1 le redemandent alors directement à la source) ; si la source est injoignable, la dernière copie est servie. Le
-  poste date sa copie locale du moment où la console l'a obtenue : l'âge maximal compte depuis la source. (La console sait toujours relayer catalogues Lenovo, réponses NVIDIA et liens
-  du Microsoft Update Catalog pour les postes 4.0.0, qui les demandent encore.)
+  poste date sa copie locale du moment où la console l'a obtenue : l'âge maximal compte depuis la source. (Les postes
+  4.0.0 demandent encore à la console le catalogue Lenovo, les réponses NVIDIA et les liens du Microsoft Update
+  Catalog : la console 4.0.1 refuse, et ils vont à la source.)
 - **Microsoft Update Catalog** : la console fait ses recherches deux à la fois, espacées de 400 ms. Une page
   « Too many search requests » **n'est jamais mise en cache** : la console suspend ses recherches 3 minutes et répond
   `429` + `Retry-After` (ou sert la copie précédente) ; le poste applique alors sa pause habituelle (et, en mode
@@ -1020,6 +1036,16 @@ postes se servent chez elle** (réseau local), et elle relaie les catalogues ave
   transmise sans être gardée.
 
 ### Modèle de sécurité : la console n'est qu'un transport
+
+> **Mettez tous les postes à jour en 4.0.1.** Les postes **4.0.0** demandent encore à la console le catalogue Lenovo
+> (XML sans signature), les réponses NVIDIA et les liens du Microsoft Update Catalog, et acceptent ce qu'elle renvoie :
+> une console compromise (ou un serveur qui se fait passer pour elle avec un certificat valide) peut leur servir un XML
+> Lenovo dont les lignes de commande sont exécutées en SYSTEM. La console 4.0.1 refuse de relayer ces métadonnées (le
+> poste 4.0.0 va alors à la source), mais une console compromise ou une fausse console les servirait quand même : seul
+> le **poste** 4.0.1 ne les demande plus à la console. Tant qu'un poste reste en 4.0.0, il reste exposé. Suivez la
+> progression dans la console (la fiche de chaque poste indique sa version), déployez la 4.0.1 par le kit, Intune ou
+> l'action à distance « mise à jour ». En attendant, `spokapilote config set ConsoleCacheCatalogs false` sur les postes 4.0.0 leur fait lire
+> les catalogues directement à la source (réglage du poste : une console compromise ne peut pas le contourner).
 
 Une console compromise ne doit pas pouvoir faire installer à un poste ce qu'il n'aurait pas accepté de la source
 officielle. Côté poste (`Online/ConsoleCache`, `Install/Downloader`) :

@@ -175,11 +175,23 @@ try {
     $left += Remove-ProductTasks   # après : filet de sécurité (tâche recréée pendant la désinstallation)
     if ($left -gt 0) { $result = $ExitError }
 
+    $data = Join-Path $env:ProgramData $Product
+    # Jeton d'enrôlement (secret) : supprimé même sans -RemoveData (les désinstalleurs 4.0.1 et ultérieurs le font aussi).
+    $tokenFile = Join-Path $data 'server-token.dat'
+    if ((Test-Path -LiteralPath $tokenFile) -and $PSCmdlet.ShouldProcess($tokenFile, 'Supprimer le jeton d''enrôlement')) {
+        Remove-Item -LiteralPath $tokenFile -Force
+        Write-Log "Jeton d'enrôlement supprimé : $tokenFile."
+    }
+
     if ($RemoveData) {
-        $data = Join-Path $env:ProgramData $Product
         if (Test-Path -LiteralPath $data) {
             $items = Get-ChildItem -LiteralPath $data -Force | Where-Object { $RemoveBackups -or $_.Name -ne 'Backups' }
             foreach ($item in $items) {
+                # Mount : une image Windows encore montée serait endommagée ; jamais vidé, supprimé seulement s'il est vide.
+                if ($item.Name -eq 'Mount' -and $item.PSIsContainer -and @(Get-ChildItem -LiteralPath $item.FullName -Force -ErrorAction SilentlyContinue).Count -gt 0) {
+                    Write-Log "$($item.FullName) conservé : une image Windows y est montée (démontez-la : spokapilote image cleanup ou dism /Cleanup-Mountpoints)." 'WARN'
+                    continue
+                }
                 if ($PSCmdlet.ShouldProcess($item.FullName, 'Supprimer')) { Remove-Item -LiteralPath $item.FullName -Recurse -Force }
             }
             if ((Get-ChildItem -LiteralPath $data -Force -ErrorAction SilentlyContinue | Measure-Object).Count -eq 0 -and

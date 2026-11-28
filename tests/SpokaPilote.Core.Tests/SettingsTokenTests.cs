@@ -116,4 +116,26 @@ public sealed class SettingsTokenTests : IDisposable
         File.WriteAllBytes(SecretStore.TokenFile, bytes);
         Assert.Null(SecretStore.ReadToken());
     }
+
+    [Fact]
+    public void Token_that_cannot_be_decrypted_on_this_machine_is_discarded_and_the_machine_carries_on_without_console()
+    {
+        // Poste cloné depuis une image de référence qui contenait le jeton (clé DPAPI machine différente), ou fichier
+        // recopié d'un autre poste : blob indéchiffrable ici (simulé par un blob DPAPI d'une autre clé).
+        var foreign = SecretStore.Protect(Encoding.UTF8.GetBytes("jeton-du-master"));
+        foreign[foreign.Length / 2] ^= 0x5A; // une clé différente produit la même erreur de CryptUnprotectData
+        File.WriteAllBytes(SecretStore.TokenFile, [.. "SPKT1"u8.ToArray(), .. foreign]);
+        File.WriteAllText(AppPaths.SettingsFile, """{ "catalogConcurrency": 2 }""");
+
+        var settings = Settings.Load();
+        Assert.Null(settings.ServerToken);
+        Assert.Equal(2, settings.CatalogConcurrency); // le reste de la configuration s'applique
+        Assert.False(File.Exists(SecretStore.TokenFile)); // supprimé : redéployé ensuite par le kit / Intune
+        Assert.Null(SecretStore.ReadToken());
+
+        // Fichier d'un autre format (version future, contenu quelconque) : de même.
+        File.WriteAllText(SecretStore.TokenFile, "pas un jeton");
+        Assert.Null(SecretStore.ReadToken());
+        Assert.False(File.Exists(SecretStore.TokenFile));
+    }
 }

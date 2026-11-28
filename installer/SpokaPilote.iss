@@ -72,7 +72,7 @@ fr.DesktopIcon=Créer un raccourci sur le Bureau
 fr.AddToPath=Rendre la commande « spokapilote » disponible dans tous les terminaux (scripts de déploiement)
 fr.Options=Options :
 fr.LaunchApp=Lancer {#AppName}
-fr.RemoveData=Voulez-vous aussi supprimer les réglages, les journaux, les rapports et le cache de SpokaPilote ?%n%n(Les sauvegardes de pilotes sont conservées. Choisissez « Non » pour tout garder en cas de réinstallation.)
+fr.RemoveData=Voulez-vous aussi supprimer les réglages, les journaux, les rapports, la quarantaine et le cache de SpokaPilote ?%n%n(Le jeton de la console centrale est supprimé dans tous les cas. Les sauvegardes de pilotes et l'historique des interventions sont conservés. Choisissez « Non » pour garder les réglages en cas de réinstallation.)
 
 [Messages]
 fr.WelcomeLabel2=Cet assistant va installer [name/ver] sur votre ordinateur.%n%nSpokaPilote inventorie le poste, trouve les pilotes manquants ou à jour chez Microsoft et chez le constructeur du PC, les vérifie et les installe. Il s'occupe aussi des imprimantes et copieurs réseau.
@@ -160,6 +160,9 @@ begin
   if CurUninstallStep = usPostUninstall then
   begin
     DataDir := ExpandConstant('{commonappdata}\{#AppName}');
+    { Jeton d'enrôlement de la console : un secret, supprimé à chaque désinstallation, même silencieuse. Une mise à jour
+      ne désinstalle rien et le conserve ; une réinstallation le redéploie (kit, Intune, « config set ServerToken - »). }
+    DeleteFile(DataDir + '\server-token.dat');
     if DirExists(DataDir) and not UninstallSilent then
     begin
       if MsgBox(CustomMessage('RemoveData'), mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES then
@@ -167,11 +170,27 @@ begin
         DelTree(DataDir + '\Cache', True, True, True);
         DelTree(DataDir + '\Downloads', True, True, True);
         DelTree(DataDir + '\Extracted', True, True, True);
+        DelTree(DataDir + '\Work', True, True, True);
+        DelTree(DataDir + '\Mises-a-jour', True, True, True);
+        { Quarantaine : peut contenir un ancien settings.json avec un jeton en clair. }
+        DelTree(DataDir + '\Quarantaine', True, True, True);
         DelTree(DataDir + '\Logs', True, True, True);
         DelTree(DataDir + '\Reports', True, True, True);
+        { Anciens dossiers renouvelés par la protection du dossier de données (Cache.ancien-xxxx...). }
+        DelTree(DataDir + '\*.ancien-*', False, True, True);
+        { Mount : jamais vidé (une image Windows encore montée serait endommagée) ; supprimé seulement s'il est vide. }
+        RemoveDir(DataDir + '\Mount');
         DeleteFile(DataDir + '\settings.json');
+        DelTree(DataDir + '\settings.json.*', False, True, False);
+        DeleteFile(DataDir + '\policy-cache.json');
+        DeleteFile(DataDir + '\rollout-decisions.json');
+        DeleteFile(DataDir + '\deploiement.json');
+        DeleteFile(DataDir + '\.protection');
         DeleteFile(DataDir + '\maintenance-task.xml');
         DeleteFile(DataDir + '\agent-task.xml');
+        DelTree(DataDir + '\*.tmp', False, True, False);
+        { Dossier de données supprimé s'il ne reste rien (les sauvegardes de pilotes, Backups et History, sont conservées). }
+        RemoveDir(DataDir);
       end;
     end;
   end;

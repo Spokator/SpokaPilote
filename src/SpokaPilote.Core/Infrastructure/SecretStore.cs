@@ -6,10 +6,18 @@ namespace SpokaPilote.Core.Infrastructure;
 /// <summary>
 /// Jeton d'enrôlement de la console centrale (<see cref="Settings.ServerToken"/>), hors de settings.json (lisible par tous
 /// les utilisateurs du poste) : fichier <see cref="TokenFileName"/> du dossier de données, lisible des seuls SYSTEM et
-/// Administrateurs (DACL protégée dès sa création), chiffré par DPAPI « machine » (une copie du fichier hors du poste,
-/// sauvegarde ou image disque, est inexploitable). Un processus non élevé ne le lit pas : l'envoi à la console est le
-/// fait des exécutions administrateur et des tâches SYSTEM (agent, maintenance).
-/// Mode portable : le jeton reste dans settings.json sur la clé (pas d'ACL sur FAT32/exFAT, DPAPI propre à chaque poste).
+/// Administrateurs (DACL protégée dès sa création). C'est cette DACL qui le protège des utilisateurs du poste : le
+/// chiffrement DPAPI « machine » (CRYPTPROTECT_LOCAL_MACHINE) peut être levé par n'importe quel compte du même poste.
+/// DPAPI rend inexploitable une copie du fichier SEUL (sauvegarde de fichiers, copie vers un autre PC), mais pas une
+/// image disque complète ou une sauvegarde système : avec les ruches SYSTEM et SECURITY du poste, la clé DPAPI machine se
+/// retrouve hors ligne. Protégez ces sauvegardes comme le poste lui-même, et révoquez le jeton (console) en cas de doute.
+/// Un processus non élevé ne le lit pas : l'envoi à la console est le fait des exécutions administrateur et des tâches
+/// SYSTEM (agent, maintenance).
+/// Image de référence (sysprep) ou poste cloné : la conservation de la clé DPAPI machine par « sysprep /generalize »
+/// n'est pas documentée. Un jeton indéchiffrable est signalé, supprimé, et le poste continue sans console jusqu'à ce
+/// que le jeton soit redéployé (kit de déploiement, Intune) : ne l'intégrez jamais à une image de référence.
+/// Mode portable et emplacement sans ACL (<see cref="DataProtection.UnprotectedLocation"/>) : le jeton reste dans
+/// settings.json (pas d'ACL sur FAT32/exFAT, DPAPI propre à chaque poste).
 /// </summary>
 public static class SecretStore
 {
@@ -19,8 +27,8 @@ public static class SecretStore
 
     public static string TokenFile => Path.Combine(AppPaths.Root, TokenFileName);
 
-    /// <summary>Jeton hors de settings.json : tout sauf le mode portable.</summary>
-    public static bool UsesTokenFile => AppPaths.Layout.Mode != DataLocationMode.Portable;
+    /// <summary>Jeton hors de settings.json : tout sauf le mode portable et un emplacement sans ACL.</summary>
+    public static bool UsesTokenFile => AppPaths.Layout.Mode != DataLocationMode.Portable && !DataProtection.UnprotectedLocation;
 
     /// <summary>Jeton enregistré, null s'il est absent ou illisible (processus non élevé, fichier non fiable).</summary>
     public static string? ReadToken() => ReadToken(TokenFile);
@@ -36,19 +44,45 @@ public static class SecretStore
                 return null;
             }
             var data = File.ReadAllBytes(path);
-            if (data.Length <= Magic.Length || !data.AsSpan(0, Magic.Length).SequenceEqual(Magic)) return null;
-            var token = Encoding.UTF8.GetString(Unprotect(data[Magic.Length..]));
+            if (data.Length <= Magic.Length || !data.AsSpan(0, Magic.Length).SequenceEqual(Magic))
+            {
+                DiscardUnreadable(path, "format inconnu");
+                return null;
+            }
+            byte[] plain;
+            try
+            {
+                plain = Unprotect(data[Magic.Length..]);
+            }
+            catch (System.ComponentModel.Win32Exception ex)
+            {
+                // Clé DPAPI machine différente (poste cloné depuis une image de référence, fichier copié d'un autre poste) ou
+                // fichier altéré : le blob ne sera jamais lisible ici.
+                DiscardUnreadable(path, ex.Message);
+                return null;
+            }
+            var token = Encoding.UTF8.GetString(plain);
             return string.IsNullOrWhiteSpace(token) ? null : token;
         }
         catch (UnauthorizedAccessException)
         {
             return null; // processus non élevé : normal
         }
-        catch (Exception ex) when (ex is IOException or System.ComponentModel.Win32Exception)
+        catch (IOException ex)
         {
-            Log.Warn($"Jeton de la console illisible ({path}) : {ex.Message}. Reconfigurez-le : spokapilote config set ServerToken <jeton>.");
+            Log.Warn($"Jeton de la console illisible ({path}) : {ex.Message}.");
             return null;
         }
+    }
+
+    /// <summary>Jeton indéchiffrable sur ce poste : erreur claire, fichier supprimé (le poste fonctionne sans console).</summary>
+    private static void DiscardUnreadable(string path, string reason)
+    {
+        Log.Error($"Jeton de la console indéchiffrable sur ce poste ({path} : {reason}). Cas typique : poste cloné depuis une image de " +
+                  "référence qui contenait le jeton, ou fichier copié d'un autre poste. Fichier supprimé ; le poste n'envoie plus rien " +
+                  "à la console tant que le jeton n'est pas redéployé (kit de déploiement, Intune, ou « spokapilote config set ServerToken - »).");
+        try { File.Delete(path); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { Log.Debug($"{path} non supprimé : {ex.Message}"); }
     }
 
     /// <summary>Enregistre (ou supprime si vide) le jeton. Lève une exception en cas d'échec (droits insuffisants).</summary>

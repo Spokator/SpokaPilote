@@ -9,11 +9,16 @@
     2. Copie l'installeur dans un dossier temporaire local, vérifie son SHA-256 (obligatoire : -Sha256, fichier
        <installeur>.sha256 ou SHA256SUMS à côté, ou empreinte publiée par GitHub), puis l'exécute en silence.
        Rien n'est fait si la même version (ou une plus récente) est déjà installée, sauf -Force.
-    3. Fusionne les réglages demandés dans %ProgramData%\<Produit>\settings.json (clés existantes conservées).
+    3. Jeton d'enrôlement (SpokaPilote 4.0.1 et ultérieurs) : confié à la ligne de commande installée, qui l'enregistre
+       chiffré dans server-token.dat (SYSTEM et Administrateurs seulement), sans rien modifier s'il est déjà le même. Il
+       n'est jamais écrit dans settings.json (lisible par tous les utilisateurs du poste) ; un ancien jeton en clair y est
+       retiré. SpokaPrint et SpokaPilote 4.0.0 : écrit dans settings.json, avec un avertissement.
+       Fusionne ensuite les réglages demandés dans %ProgramData%\<Produit>\settings.json (clés existantes conservées).
     4. Active si demandé l'agent (actions à distance) et la tâche de maintenance, en compte SYSTEM.
 
     Idempotent : relancé sur un poste déjà conforme, il ne réinstalle rien et ne réécrit pas un settings.json
-    identique. Le jeton d'enrôlement n'apparaît jamais dans le journal ni sur une ligne de commande.
+    identique ni un jeton déjà enregistré. Le jeton d'enrôlement n'apparaît jamais dans le journal ni sur une ligne de
+    commande (il est transmis à spokapilote.exe par son entrée standard).
 
     Compatible Windows PowerShell 5.1 et PowerShell 7. À exécuter en administrateur ou en SYSTEM (sauf -WhatIf).
 
@@ -29,7 +34,8 @@
 .PARAMETER ServerUrl
     Adresse HTTPS de la console centrale (clé serverUrl).
 .PARAMETER ServerToken
-    Jeton d'enrôlement (clé serverToken). Préférez -ServerTokenFile : une ligne de commande est souvent journalisée.
+    Jeton d'enrôlement. Préférez -ServerTokenFile ou -ServerTokenVariable : la ligne de commande du script est souvent
+    journalisée. Enregistré chiffré (server-token.dat), jamais dans settings.json (SpokaPilote 4.0.1 et ultérieurs).
 .PARAMETER ServerTokenFile
     Fichier texte contenant le jeton (première ligne), par exemple dans le paquet Intune ou sur un partage lisible par
     les seuls comptes ordinateur.
@@ -325,6 +331,37 @@ function Invoke-ProductCli([string]$Cli, [string[]]$Arguments, [string]$What) {
     return $code
 }
 
+function Invoke-ProductCliWithSecret([string]$Cli, [string[]]$Arguments, [string]$Secret, [string]$What, [ref]$Output) {
+    # Le secret passe par l'entrée standard du processus : jamais sur sa ligne de commande (visible de tous les
+    # utilisateurs du poste dans le Gestionnaire des tâches, journalisée par l'audit des processus ou un EDR).
+    if (-not $PSCmdlet.ShouldProcess("$Cli $($Arguments -join ' ') (jeton sur l'entrée standard)", $What)) { return $ExitOk }
+    Write-Log "$What : $(Split-Path $Cli -Leaf) $($Arguments -join ' ') (jeton sur l'entrée standard)"
+    $psi = New-Object Diagnostics.ProcessStartInfo
+    $psi.FileName = $Cli
+    $psi.Arguments = ($Arguments | ForEach-Object { if ($_ -match '[\s"]') { '"' + ($_ -replace '"', '\"') + '"' } else { $_ } }) -join ' '
+    $psi.UseShellExecute = $false
+    $psi.CreateNoWindow = $true
+    $psi.RedirectStandardInput = $true
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $psi.StandardOutputEncoding = New-Object Text.UTF8Encoding($false)
+    $psi.StandardErrorEncoding = New-Object Text.UTF8Encoding($false)
+    $proc = [Diagnostics.Process]::Start($psi)
+    try {
+        $stdout = $proc.StandardOutput.ReadToEndAsync()
+        $stderr = $proc.StandardError.ReadToEndAsync()
+        $proc.StandardInput.WriteLine($Secret)
+        $proc.StandardInput.Close()
+        $proc.WaitForExit()
+        $lines = @(($stdout.Result + "`n" + $stderr.Result) -split "`r?`n" | Where-Object { $_.Trim() })
+        foreach ($line in $lines) { Write-Log "    $line" }
+        $Output.Value = $lines
+        Write-Log "$What : code $($proc.ExitCode)"
+        return $proc.ExitCode
+    }
+    finally { $proc.Dispose() }
+}
+
 # ------------------------------------------------------------------------------------------------ paramètres
 if (@($ServerToken, $ServerTokenFile, $ServerTokenVariable | Where-Object { $_ }).Count -gt 1) { Exit-Script $ExitUsage "Indiquez une seule source de jeton : -ServerToken, -ServerTokenFile ou -ServerTokenVariable." }
 if ($ServerTokenVariable) {
@@ -366,6 +403,7 @@ catch [Threading.AbandonedMutexException] { }
 catch { $mutex = $null }   # simulation sans droits : pas de verrou global
 
 $result = $ExitOk
+$plannedVersion = $null
 $workDir = $null
 $didInstall = $false
 $didWriteSettings = $false
@@ -401,6 +439,7 @@ try {
             $source = [pscustomobject]@{ Path = $null; Url = $release.Url; Name = $release.Name; Version = $release.Version; Sha256 = $release.Sha256 }
             Write-Log "Source : $($release.Url) (version $($release.Version))"
         }
+        $plannedVersion = $source.Version
         if (-not $source.Sha256) {
             Exit-Script $ExitError $(if ($source.Path) { "Empreinte SHA-256 inconnue : indiquez -Sha256, ou déposez $($source.Name).sha256 ou SHA256SUMS à côté de l'installeur." } else { "La Release ne publie pas d'empreinte SHA-256 pour $($source.Name) : indiquez -Sha256." })
         }
@@ -457,11 +496,55 @@ try {
         }
     }
 
+    # -------------------------------------------------------------------------------------------- jeton d'enrôlement
+    # SpokaPilote 4.0.1 et ultérieurs : le jeton est confié à la ligne de commande installée (« config set ServerToken - »,
+    # lu sur l'entrée standard : absent des lignes de commande visibles des autres utilisateurs), qui l'enregistre chiffré
+    # dans server-token.dat (SYSTEM et Administrateurs seulement) et ne touche à rien s'il est déjà le même. Il n'est
+    # JAMAIS écrit dans settings.json, lisible par tous les utilisateurs du poste.
+    $template = $null
+    if ($SettingsTemplate) {
+        $templatePath = Resolve-InputPath $SettingsTemplate
+        try { $template = ConvertTo-SettingsMap (Read-JsonFile $templatePath) (Split-Path $templatePath -Leaf) }
+        catch { Exit-Script $ExitUsage "Modèle illisible ($templatePath) : $($_.Exception.Message)" }
+        if ($template.Contains('serverToken')) {
+            if ($template['serverToken']) {
+                $script:Secrets.Add([string]$template['serverToken'])
+                Write-Log "Le modèle contient un jeton d'enrôlement : rangez-le là où seuls les comptes ordinateur le lisent (pas dans SYSVOL), ou utilisez -ServerTokenFile." 'WARN'
+                if (-not $ServerToken) { $ServerToken = ([string]$template['serverToken']).Trim() }
+            }
+            $template.Remove('serverToken')
+        }
+    }
+    $settingsFile = Join-Path $DataDirectory 'settings.json'
+    $cli = if ($installed) { $installed.Cli } else { Join-Path (Join-Path $(if ($env:ProgramW6432) { $env:ProgramW6432 } else { $env:ProgramFiles }) $Product) $P.Cli }
+    $productVersion = if ($didInstall -and $plannedVersion) { $plannedVersion } elseif ($installed) { $installed.Version } else { $null }
+    # SpokaPrint, SpokaPilote 4.0.0 et antérieurs : pas de « config set ServerToken - » ; le jeton va dans settings.json.
+    $tokenViaCli = $Product -eq 'SpokaPilote' -and $productVersion -and $productVersion -ge [version]'4.0.1'
+    $tokenInSettings = $false
+    if ($customData) { [Environment]::SetEnvironmentVariable($P.HomeVariable, $DataDirectory, 'Process') }
+
+    if ($ServerToken -and $tokenViaCli) {
+        if (-not (Test-Path -LiteralPath $cli) -and -not $WhatIfPreference) { Exit-Script $ExitError "$cli introuvable : impossible d'enregistrer le jeton d'enrôlement." }
+        $tokenOutput = @()
+        $code = Invoke-ProductCliWithSecret $cli @('config', 'set', 'ServerToken', '-') $ServerToken 'Jeton d''enrôlement (chiffré, server-token.dat)' ([ref]$tokenOutput)
+        if ($code -ne 0) { $result = $ExitError; Write-Log "Jeton d'enrôlement non enregistré (code $code) : relancer le script en administrateur ou en SYSTEM." 'ERROR' }
+        elseif (@($tokenOutput | Where-Object { "$_" -match 'Jeton enregistr' }).Count -gt 0) { $didWriteSettings = $true }
+        elseif ($WhatIfPreference) { $didWriteSettings = $true }   # simulation
+    }
+    elseif ($ServerToken) {
+        $tokenInSettings = $true
+        Write-Log "$Product $(if ($productVersion) { $productVersion } else { '(version inconnue)' }) ne sait pas recevoir le jeton hors de settings.json : il y est écrit, lisible par les utilisateurs du poste$(if ($Product -eq 'SpokaPilote') { ' (déployez la 4.0.1 ou ultérieure : le jeton est alors chiffré et réservé aux administrateurs)' })." 'WARN'
+    }
+
     # -------------------------------------------------------------------------------------------- settings.json
-    $wantSettings = $SettingsTemplate -or $PSBoundParameters.ContainsKey('ServerUrl') -or $ServerToken -or
+    $wantSettings = $SettingsTemplate -or $PSBoundParameters.ContainsKey('ServerUrl') -or $tokenInSettings -or
         $PSBoundParameters.ContainsKey('RepositoryPath') -or $PSBoundParameters.ContainsKey('PolicySource') -or $UseConsoleCache
-    if ($wantSettings) {
-        $settingsFile = Join-Path $DataDirectory 'settings.json'
+    # Ancien jeton en clair (kit précédent, version 4.0.0) : retiré de settings.json une fois enregistré à part.
+    $legacyToken = $false
+    if (-not $wantSettings -and $tokenViaCli -and (Test-Path -LiteralPath $settingsFile)) {
+        try { $legacyToken = (ConvertTo-SettingsMap (Read-JsonFile $settingsFile) 'settings.json existant').Contains('serverToken') } catch { }
+    }
+    if ($wantSettings -or $legacyToken) {
         $map = [ordered]@{}
         if (Test-Path -LiteralPath $settingsFile) {
             $owner = (Get-Acl -LiteralPath $settingsFile).GetOwner([Security.Principal.SecurityIdentifier]).Value
@@ -478,18 +561,19 @@ try {
         }
         $before = ConvertTo-Json -InputObject $map -Depth 10
 
-        if ($SettingsTemplate) {
-            $templatePath = Resolve-InputPath $SettingsTemplate
-            try { $template = ConvertTo-SettingsMap (Read-JsonFile $templatePath) (Split-Path $templatePath -Leaf) }
-            catch { Exit-Script $ExitUsage "Modèle illisible ($templatePath) : $($_.Exception.Message)" }
-            if ($template.Contains('serverToken') -and $template['serverToken']) {
-                $script:Secrets.Add([string]$template['serverToken'])
-                Write-Log "Le modèle contient un jeton d'enrôlement : rangez-le là où seuls les comptes ordinateur le lisent (pas dans SYSVOL)." 'WARN'
-            }
-            foreach ($k in @($template.Keys)) { Set-MapValue $map $k $template[$k] }
-        }
+        if ($template) { foreach ($k in @($template.Keys)) { Set-MapValue $map $k $template[$k] } }
         if ($PSBoundParameters.ContainsKey('ServerUrl')) { Set-MapValue $map 'serverUrl' $(if ($ServerUrl) { $ServerUrl.TrimEnd('/') } else { $null }) }
-        if ($ServerToken) { $map['serverToken'] = $ServerToken }
+        if ($tokenInSettings) { $map['serverToken'] = $ServerToken }
+        elseif ($map.Contains('serverToken')) {
+            if ($tokenViaCli -and -not $ServerToken -and $map['serverToken']) {
+                # Jeton en clair laissé par un passage précédent : confié à la ligne de commande avant d'être retiré.
+                $script:Secrets.Add([string]$map['serverToken'])
+                $legacyOutput = @()
+                $code = Invoke-ProductCliWithSecret $cli @('config', 'set', 'ServerToken', '-') ([string]$map['serverToken']).Trim() 'Ancien jeton de settings.json (chiffré, server-token.dat)' ([ref]$legacyOutput)
+                if ($code -ne 0) { Exit-Script $ExitError "Jeton en clair de settings.json non enregistré à part (code $code) : settings.json inchangé." }
+            }
+            if ($tokenViaCli) { $map.Remove('serverToken') }
+        }
         if ($PSBoundParameters.ContainsKey('RepositoryPath')) { $map['repositoryPaths'] = [string[]]@($RepositoryPath | Where-Object { $_ }) }
         if ($PSBoundParameters.ContainsKey('PolicySource')) { Set-MapValue $map 'policySource' $(if ($PolicySource) { $PolicySource } else { $null }) }
         if ($UseConsoleCache) { $map['useConsoleCache'] = $UseConsoleCache }
@@ -506,16 +590,11 @@ try {
             Write-Log "settings.json écrit : $settingsFile ($shown)."
         }
         else { $didWriteSettings = $true }   # simulation
-        if ($ServerToken -and $installed -and $installed.Version -and $Product -eq 'SpokaPilote' -and $installed.Version -le [version]'4.0.0') {
-            Write-Log "SpokaPilote $($installed.Version) laisse settings.json (et donc le jeton) lisible par les utilisateurs du poste : déployez la 4.0.1 ou ultérieure, qui protège %ProgramData%\SpokaPilote." 'WARN'
-        }
     }
 
     # -------------------------------------------------------------------------------------------- tâches et analyse
-    $cli = if ($installed) { $installed.Cli } else { Join-Path (Join-Path $(if ($env:ProgramW6432) { $env:ProgramW6432 } else { $env:ProgramFiles }) $Product) $P.Cli }
     $needCli = $EnableAgent -or $EnableMaintenance -or $InitialScan
     if ($needCli -and -not (Test-Path -LiteralPath $cli) -and -not $WhatIfPreference) { Exit-Script $ExitError "$cli introuvable : $Product n'est pas installé." }
-    if ($customData -and $needCli) { [Environment]::SetEnvironmentVariable($P.HomeVariable, $DataDirectory, 'Process') }
 
     # Options appliquées à chaque tâche par ce script (une tâche identique déjà en place est conservée).
     $stateFile = Join-Path $DataDirectory 'deploiement.json'

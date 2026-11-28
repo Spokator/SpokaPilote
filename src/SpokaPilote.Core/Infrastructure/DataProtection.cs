@@ -27,6 +27,16 @@ internal interface IFileSecurity
     void CreateProtectedDirectory(string path, IReadOnlyList<AclRule> rules);
     /// <summary>Active SeTakeOwnershipPrivilege / SeRestorePrivilege (au mieux) : reprise d'éléments verrouillés par leur créateur.</summary>
     void EnableOwnershipPrivileges();
+    /// <summary>
+    /// DACL protégée de l'élément lui-même, SANS propagation à ses sous-dossiers et fichiers (SetFileSecurity) : dossier
+    /// Mount qui contient une image Windows montée par DISM, dont les droits ne doivent jamais être modifiés.
+    /// </summary>
+    void SetOwnDaclOnly(string path, bool isDirectory, IReadOnlyList<AclRule> rules);
+    /// <summary>
+    /// Volume local qui conserve propriétaires et ACL (NTFS, ReFS) ? Non pour FAT32 / exFAT et pour un partage réseau
+    /// (propriétaires et droits gérés par un autre ordinateur).
+    /// </summary>
+    bool SupportsOwnersAndAcls(string path);
 }
 
 /// <summary>
@@ -44,7 +54,10 @@ internal interface IFileSecurity
 /// symboliques) sont supprimés sans être suivis.</item>
 /// </list>
 /// Rien n'est fait en mode portable (clé FAT32/exFAT sans ACL : la clé du technicien est réputée de confiance) ni par
-/// un processus non élevé (qui écrit alors dans %LocalAppData%\SpokaPilote, voir <see cref="AppLayout.UserRoot"/>).
+/// un processus non élevé (qui écrit alors dans %LocalAppData%\SpokaPilote, voir <see cref="AppLayout.UserRoot"/>). Un
+/// SPOKAPILOTE_HOME sur un volume sans propriétaires ni ACL (FAT32, exFAT) ou sur un partage réseau est traité de même
+/// (<see cref="UnprotectedLocation"/>, avertissement à chaque démarrage élevé) : aucun droit n'y est modifié, rien n'y
+/// est mis en quarantaine.
 /// </summary>
 public static class DataProtection
 {
@@ -76,7 +89,32 @@ public static class DataProtection
     /// Contrôles actifs : processus élevé, hors mode portable. Un processus non élevé n'a rien à protéger (il n'exécute
     /// rien avec des droits supérieurs) ; une clé portable n'a souvent pas d'ACL.
     /// </summary>
-    public static bool Enforced => _enforcedOverride ?? (IsElevated && AppPaths.Layout.Mode != DataLocationMode.Portable);
+    public static bool Enforced => _enforcedOverride ?? (IsElevated && AppPaths.Layout.Mode != DataLocationMode.Portable && !UnprotectedLocation);
+
+    private static (string Root, bool Value)? _unprotectedLocation;
+
+    /// <summary>
+    /// SPOKAPILOTE_HOME sur un volume sans propriétaires ni ACL (FAT32, exFAT) ou sur un partage réseau : le dossier ne peut
+    /// pas être protégé, et les propriétaires y sont illisibles ou gérés par un autre ordinateur. Traité comme une clé
+    /// portable : contrôles inactifs, jeton dans settings.json, avertissement à chaque démarrage élevé.
+    /// </summary>
+    public static bool UnprotectedLocation
+    {
+        get
+        {
+            var layout = AppPaths.Layout;
+            if (layout.Mode != DataLocationMode.Override) return false;
+            if (_unprotectedLocation is { } cached && string.Equals(cached.Root, layout.Root, StringComparison.OrdinalIgnoreCase)) return cached.Value;
+            bool value;
+            try { value = !Security.SupportsOwnersAndAcls(layout.Root); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException) { value = true; }
+            _unprotectedLocation = (layout.Root, value);
+            return value;
+        }
+    }
+
+    /// <summary>Tests : oublie le type de volume mémorisé.</summary>
+    internal static void ResetLocationCache() => _unprotectedLocation = null;
 
     /// <summary>Tests : force l'état des contrôles (null = calcul normal).</summary>
     internal static IDisposable OverrideEnforcedForTest(bool? value)
@@ -113,6 +151,11 @@ public static class DataProtection
                 return null;
             }
             if (!IsElevated) return null;
+            if (UnprotectedLocation)
+            {
+                Log.Warn(UnprotectedLocationMessage(layout.Root));
+                return null;
+            }
             var report = Protect(layout.Root, forceFullPass);
             if (report is null) return null;
             Settings.MigrateLegacyToken();
@@ -130,20 +173,34 @@ public static class DataProtection
     /// <summary>Protège le dossier de données (processus élevé). Null si le dossier ne ressemble pas à un dossier de données.</summary>
     public static ProtectionReport? Protect(string root, bool forceFullPass = false)
     {
+        if (UnprotectedLocation)
+        {
+            Log.Warn(UnprotectedLocationMessage(root));
+            return null;
+        }
         if (!LooksLikeDataRoot(root, AppPaths.Layout.Mode))
         {
-            Log.Warn($"{root} ne ressemble pas à un dossier de données {AppIdentity.Current.ProductName} : droits non modifiés.");
+            Log.Warn($"{root} ne ressemble pas à un dossier de données {AppIdentity.Current.ProductName} (fichiers ou dossiers qui ne sont pas les siens) : " +
+                     "droits non modifiés, rien n'est mis en quarantaine. Indiquez dans SPOKAPILOTE_HOME un dossier vide ou réservé à SpokaPilote.");
             return null;
         }
         var report = new DataRootProtector(Security).Ensure(root, DateTime.Now, forceFullPass);
-        if (report.FullPass) Log.Write(report.Quarantined.Count + report.Deleted.Count + report.LinksRemoved.Count > 0 ? LogLevel.Warning : LogLevel.Info, report.Summary(root));
+        if (report.FullPass) Log.Write(report.Quarantined.Count + report.Deleted.Count + report.LinksRemoved.Count + report.Errors.Count > 0 ? LogLevel.Warning : LogLevel.Info, report.Summary(root));
         foreach (var q in report.Quarantined) Log.Warn($"Élément non créé par un administrateur mis en quarantaine (ignoré) : {q}");
+        foreach (var e in report.Errors) Log.Warn($"Protection du dossier de données : {e}");
         return report;
     }
 
+    internal static string UnprotectedLocationMessage(string root) =>
+        $"{root} est sur un volume sans propriétaires ni ACL (FAT32, exFAT) ou sur un partage réseau : dossier de données NON protégé, " +
+        "traité comme une clé portable (les exécutions élevées font confiance à son contenu, le jeton de la console reste dans settings.json). " +
+        $"Réservez cet emplacement aux administrateurs, ou retirez {AppIdentity.Current.HomeVariable} pour utiliser %ProgramData%.";
+
     /// <summary>
-    /// Garde-fou d'un SPOKAPILOTE_HOME mal réglé : jamais la racine d'un lecteur ; un dossier existant doit être vide ou
-    /// contenir des données reconnaissables. La version installée (%ProgramData%\SpokaPilote) est toujours acceptée.
+    /// Garde-fou d'un SPOKAPILOTE_HOME mal réglé : jamais la racine d'un lecteur ; un dossier existant doit être vide, porter
+    /// le témoin d'une protection précédente, ou ne contenir QUE des éléments de SpokaPilote, dont settings.json (un dossier
+    /// de l'utilisateur qui contient par hasard « Logs » ou « Reports » n'est jamais repris ni mis en quarantaine). La
+    /// version installée (%ProgramData%\SpokaPilote) est toujours acceptée.
     /// </summary>
     internal static bool LooksLikeDataRoot(string root, DataLocationMode mode)
     {
@@ -151,27 +208,76 @@ public static class DataProtection
         if (string.Equals(Path.TrimEndingDirectorySeparator(Path.GetPathRoot(full) ?? ""), full, StringComparison.OrdinalIgnoreCase)) return false;
         if (mode == DataLocationMode.Installed || !Directory.Exists(full)) return true;
         var entries = Directory.EnumerateFileSystemEntries(full).Select(Path.GetFileName).OfType<string>().ToList();
-        string[] known = ["settings.json", DataRootProtector.MarkerFileName, "Logs", "History", "Cache", "Backups", "Reports", WorkDirectory.FolderName];
-        return entries.Count == 0 || entries.Any(e => known.Contains(e, StringComparer.OrdinalIgnoreCase));
+        if (entries.Count == 0) return true;
+        if (entries.Contains(DataRootProtector.MarkerFileName, StringComparer.OrdinalIgnoreCase) &&
+            File.Exists(Path.Combine(full, DataRootProtector.MarkerFileName)) &&
+            File.ReadAllText(Path.Combine(full, DataRootProtector.MarkerFileName)).StartsWith(DataRootProtector.MarkerPrefix, StringComparison.Ordinal))
+            return true;
+        return entries.Contains("settings.json", StringComparer.OrdinalIgnoreCase) && entries.All(DataRootProtector.IsKnownRootEntry);
     }
 
     /// <summary>
-    /// Un processus élevé peut-il se fier à cet élément du dossier de données ? Oui s'il appartient à SYSTEM, aux
-    /// Administrateurs ou à TrustedInstaller et n'est pas un lien. Toujours oui quand les contrôles sont inactifs.
+    /// Un processus élevé peut-il se fier à cet élément du dossier de données ? Oui si l'élément ET chaque dossier qui le
+    /// contient, depuis la racine du dossier de données, appartiennent à SYSTEM, aux Administrateurs ou à TrustedInstaller
+    /// et ne sont pas des liens (jonction créée dans Cache par un descripteur ouvert avant la protection, par exemple). Hors
+    /// du dossier de données (dépôt réseau...), seul l'élément lui-même est contrôlé. Toujours oui quand les contrôles sont
+    /// inactifs.
     /// </summary>
-    public static bool IsTrustedForElevatedUse(string path)
+    public static bool IsTrustedForElevatedUse(string path) => !Enforced || IsWrittenByAdministrators(path);
+
+    /// <summary>
+    /// Même contrôle que <see cref="IsTrustedForElevatedUse"/>, quel que soit l'état des contrôles : un processus non élevé
+    /// qui lit un fichier écrit par les exécutions SYSTEM (cache de politique du poste) vérifie ainsi qu'il n'a pas été
+    /// préparé par un utilisateur.
+    /// </summary>
+    public static bool IsWrittenByAdministrators(string path)
     {
-        if (!Enforced) return true;
         try
         {
-            var attributes = File.GetAttributes(path);
-            if ((attributes & FileAttributes.ReparsePoint) != 0) return false;
-            return IsTrustedOwner(Security.GetOwner(path, (attributes & FileAttributes.Directory) != 0));
+            foreach (var element in PathFromDataRoot(path))
+            {
+                var attributes = File.GetAttributes(element);
+                if ((attributes & FileAttributes.ReparsePoint) != 0) return false;
+                if (!IsTrustedOwner(Security.GetOwner(element, (attributes & FileAttributes.Directory) != 0))) return false;
+            }
+            return true;
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
         {
             return false;
         }
+    }
+
+    /// <summary>L'élément, puis chacun de ses dossiers parents jusqu'à la racine du dossier de données (comprise) qui le contient.</summary>
+    internal static List<string> PathFromDataRoot(string path) => PathFromRoot(path, DataRootOf(path));
+
+    internal static List<string> PathFromRoot(string path, string? root)
+    {
+        var full = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
+        var chain = new List<string> { full };
+        if (root is null) return chain;
+        for (var dir = Path.GetDirectoryName(full); dir is not null; dir = Path.GetDirectoryName(dir))
+        {
+            chain.Add(dir);
+            if (string.Equals(dir, root, StringComparison.OrdinalIgnoreCase)) break;
+        }
+        return chain;
+    }
+
+    /// <summary>Racine du dossier de données (partagé ou du poste) qui contient ce chemin, null s'il est ailleurs.</summary>
+    private static string? DataRootOf(string path)
+    {
+        var full = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
+        var layout = AppPaths.Layout;
+        string? best = null;
+        foreach (var candidate in new[] { layout.Root, layout.MachineRoot })
+        {
+            var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(candidate));
+            var inside = string.Equals(full, root, StringComparison.OrdinalIgnoreCase) ||
+                         full.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+            if (inside && (best is null || root.Length < best.Length)) best = root; // la plus haute : tout le chemin est contrôlé
+        }
+        return best;
     }
 
     /// <summary>
@@ -192,12 +298,45 @@ public static class DataProtection
         }
     }
 
-    /// <summary>Dossier privé (SYSTEM + Administrateurs) créé avec sa DACL quand les contrôles sont actifs, sinon dossier ordinaire.</summary>
-    public static string EnsurePrivateDirectory(string path)
+    /// <summary>
+    /// Dossier privé (SYSTEM + Administrateurs) créé avec sa DACL quand les contrôles sont actifs, sinon dossier ordinaire.
+    /// Contrôles actifs : un dossier existant qui n'est pas fiable (lien, propriétaire inattendu sur le chemin) est retiré
+    /// sans être suivi puis recréé ; IOException s'il ne peut pas l'être (aucune lecture ni écriture élevée n'y a lieu).
+    /// </summary>
+    public static string EnsurePrivateDirectory(string path) => EnsureTrustedDirectory(path, privateDirectory: true);
+
+    /// <summary>
+    /// Sous-dossier d'un dossier privé (Cache\catalog, Cache\repo-index...) : comme <see cref="EnsurePrivateDirectory"/>,
+    /// avec les droits hérités du dossier parent. Une jonction « Cache\catalog » préparée par un utilisateur n'est jamais
+    /// suivie par les écritures SYSTEM.
+    /// </summary>
+    public static string EnsureTrustedSubdirectory(string parent, string name) =>
+        EnsureTrustedDirectory(Path.Combine(parent, name), privateDirectory: false);
+
+    private static string EnsureTrustedDirectory(string path, bool privateDirectory)
     {
-        if (Directory.Exists(path)) return path;
-        if (Enforced) Security.CreateProtectedDirectory(path, PrivateRules);
-        else Directory.CreateDirectory(path);
+        if (!Enforced)
+        {
+            Directory.CreateDirectory(path);
+            return path;
+        }
+        if ((Directory.Exists(path) || File.Exists(path)) && !IsWrittenByAdministrators(path))
+        {
+            Log.Warn($"{path} n'est pas fiable (lien, ou créé par un autre compte qu'un administrateur) : supprimé sans être suivi, puis recréé.");
+            if (!DeleteTree(path)) throw new IOException($"{path} n'est pas fiable et n'a pas pu être supprimé : abandon.");
+        }
+        if (!Directory.Exists(path))
+        {
+            var parent = Path.GetDirectoryName(Path.GetFullPath(path));
+            if (parent is not null && !Directory.Exists(parent)) Directory.CreateDirectory(parent);
+            if (privateDirectory) Security.CreateProtectedDirectory(path, PrivateRules);
+            else
+            {
+                Directory.CreateDirectory(path);
+                ClaimOwnership(path);
+            }
+        }
+        if (!IsWrittenByAdministrators(path)) throw new IOException($"Dossier {path} non sûr (lien ou propriétaire inattendu sur le chemin) : abandon.");
         return path;
     }
 
@@ -344,14 +483,25 @@ public sealed class ProtectionReport
     public List<string> Deleted { get; } = new();
     public List<string> Quarantined { get; } = new();
     public List<string> LinksRemoved { get; } = new();
+    /// <summary>Dossiers régénérables remplacés par un dossier neuf (descripteurs ouverts avant la protection : orphelins).</summary>
+    public List<string> Renewed { get; } = new();
     public List<string> Errors { get; } = new();
     public string? QuarantineFolder { get; set; }
+    /// <summary>
+    /// Reprise inachevée (dossier régénérable impossible à renouveler, ancien dossier impossible à supprimer : élément encore
+    /// ouvert par un autre processus) : le témoin n'est pas écrit, la reprise complète recommence au prochain démarrage élevé.
+    /// </summary>
+    public bool Incomplete { get; set; }
+    /// <summary>Dossier Mount non vide (image montée par DISM) : seuls ses propres droits ont été contrôlés, rien en dessous.</summary>
+    public bool MountInUse { get; set; }
 
     public string Summary(string root) => !FullPass
         ? $"Dossier de données protégé : {root}."
         : $"Dossier de données protégé : {root} ({Checked} élément(s) contrôlé(s), {Reset} droit(s) rétabli(s), " +
-          $"{Deleted.Count} supprimé(s), {Quarantined.Count} mis en quarantaine, {LinksRemoved.Count} lien(s) retiré(s)" +
-          (Errors.Count > 0 ? $", {Errors.Count} erreur(s)" : "") + ").";
+          $"{Deleted.Count} supprimé(s), {Quarantined.Count} mis en quarantaine, {LinksRemoved.Count} lien(s) retiré(s), " +
+          $"{Renewed.Count} dossier(s) renouvelé(s)" +
+          (Errors.Count > 0 ? $", {Errors.Count} erreur(s)" : "") +
+          (Incomplete ? " ; reprise à terminer au prochain démarrage élevé" : "") + ").";
 }
 
 /// <summary>Application de la disposition décrite dans <see cref="DataProtection"/> (logique testable, opérations injectées).</summary>
@@ -359,14 +509,38 @@ internal sealed class DataRootProtector(IFileSecurity security)
 {
     public const string MarkerFileName = ".protection";
     public const string QuarantineFolderName = "Quarantaine";
-    internal const string MarkerContent = "SpokaPilote : dossier de données protégé (v1)";
+    public const string MountFolderName = "Mount";
+    internal const string MarkerPrefix = "SpokaPilote : dossier de données protégé";
+    internal const string MarkerContent = MarkerPrefix + " (v2)";
+    /// <summary>Ancien dossier régénérable remplacé par un dossier neuf (« Cache.ancien-1a2b3c4d ») : supprimé dès que possible.</summary>
+    internal const string RenewedSuffix = ".ancien-";
 
     /// <summary>Dossiers réservés aux exécutions élevées : aucun accès des utilisateurs.</summary>
-    internal static readonly string[] PrivateFolders = ["Cache", WorkDirectory.FolderName, "Downloads", "Extracted", "Mount", QuarantineFolderName, "Mises-a-jour"];
+    internal static readonly string[] PrivateFolders = ["Cache", WorkDirectory.FolderName, "Downloads", "Extracted", MountFolderName, QuarantineFolderName, "Mises-a-jour"];
     /// <summary>Contenu régénérable : un élément suspect y est supprimé (ailleurs : mis en quarantaine).</summary>
-    internal static readonly string[] RegenerableFolders = ["Cache", WorkDirectory.FolderName, "Downloads", "Extracted", "Mount", "Mises-a-jour"];
+    internal static readonly string[] RegenerableFolders = ["Cache", WorkDirectory.FolderName, "Downloads", "Extracted", MountFolderName, "Mises-a-jour"];
+    /// <summary>
+    /// Dossiers régénérables remplacés par un dossier neuf à chaque reprise complète : un descripteur ouvert par un
+    /// utilisateur avant la protection (qui garde les droits obtenus à l'ouverture) désigne alors l'ancien dossier, supprimé.
+    /// Mount l'est aussi, seulement s'il est vide (jamais avec une image montée).
+    /// </summary>
+    internal static readonly string[] RenewedFolders = ["Cache", WorkDirectory.FolderName, "Downloads", "Extracted", "Mises-a-jour"];
     /// <summary>Dossiers créés d'emblée : jamais créés ensuite par un processus non élevé.</summary>
     internal static readonly string[] StandardFolders = ["Cache", WorkDirectory.FolderName, "Logs", "History", "Backups", "Reports"];
+    /// <summary>Éléments de premier niveau d'un dossier de données SpokaPilote (reconnaissance d'un SPOKAPILOTE_HOME existant).</summary>
+    private static readonly string[] KnownRootEntries =
+    [
+        "settings.json", MarkerFileName, "Logs", "History", "Cache", "Backups", "Reports", WorkDirectory.FolderName, "Downloads", "Extracted",
+        MountFolderName, QuarantineFolderName, "Mises-a-jour", SecretStore.TokenFileName, AppPaths.PolicyCacheFileName,
+        AppPaths.RolloutDecisionsCacheFileName, "deploiement.json", "ui.json", "maintenance-task.xml", "agent-task.xml", "Postes",
+    ];
+
+    internal static bool IsKnownRootEntry(string name) =>
+        KnownRootEntries.Contains(name, StringComparer.OrdinalIgnoreCase) || IsRenewedLeftover(name) ||
+        name.StartsWith("settings.json.", StringComparison.OrdinalIgnoreCase) || name.EndsWith(".tmp", StringComparison.OrdinalIgnoreCase);
+
+    internal static bool IsRenewedLeftover(string name) =>
+        RenewedFolders.Append(MountFolderName).Any(f => name.StartsWith(f + RenewedSuffix, StringComparison.OrdinalIgnoreCase));
 
     private string _root = "";
     private DateTime _now;
@@ -394,13 +568,21 @@ internal sealed class DataRootProtector(IFileSecurity security)
 
         _report.FullPass = true;
         security.EnableOwnershipPrivileges();
-        // 1. Racine d'abord : dès que sa DACL est protégée, l'héritage retire aux utilisateurs l'écriture dans toute
-        //    l'arborescence (la propagation ne suit pas les jonctions). Restent les éléments qu'ils possèdent : étape 2.
+        // 0. Mount avec une image montée : ses propres droits d'abord, SANS propagation, pour que celle des droits de la
+        //    racine (étape 1) s'y arrête et ne réécrive jamais les droits des fichiers de l'image.
+        var mountEmpty = SecureMountFolder();
+        // 1. Racine : dès que sa DACL est protégée, l'héritage retire aux utilisateurs l'écriture dans toute l'arborescence
+        //    (la propagation ne suit pas les jonctions). Restent les éléments qu'ils possèdent (étape 3) et les descripteurs
+        //    qu'ils ont ouverts avant (étape 2).
         if (!DataProtection.IsTrustedOwner(security.GetOwner(_root, true))) security.SetOwner(_root, true, DataProtection.AdministratorsSid);
         security.SetProtectedDacl(_root, true, DataProtection.RootRules);
-        // 2. Chaque élément : liens retirés, éléments d'un autre propriétaire repris puis supprimés / mis en quarantaine.
+        // 2. Dossiers régénérables remplacés par des dossiers neufs : un descripteur ouvert avant la protection (qui garde
+        //    les droits accordés à son ouverture) ne désigne plus que l'ancien dossier, aussitôt supprimé.
+        foreach (var name in RenewedFolders) Renew(name);
+        if (mountEmpty) Renew(MountFolderName);
+        // 3. Chaque élément : liens retirés, éléments d'un autre propriétaire repris puis supprimés / mis en quarantaine.
         Walk(_root, depth: 0, topFolder: null);
-        // 3. Dossiers standard et témoin.
+        // 4. Dossiers standard et témoin (pas de témoin si la reprise est inachevée : elle recommencera).
         foreach (var name in StandardFolders)
         {
             var path = Path.Combine(_root, name);
@@ -410,12 +592,16 @@ internal sealed class DataRootProtector(IFileSecurity security)
         }
         var marker = Path.Combine(_root, MarkerFileName);
         if (File.Exists(marker)) File.Delete(marker);
+        if (_report.Incomplete) return _report;
         File.WriteAllText(marker, MarkerContent);
         if (!DataProtection.IsTrustedOwner(security.GetOwner(marker, false))) security.SetOwner(marker, false, DataProtection.AdministratorsSid);
         return _report;
     }
 
-    /// <summary>Contrôle rapide (une quinzaine de lectures) : racine, témoin, éléments de premier niveau.</summary>
+    /// <summary>
+    /// Contrôle rapide : racine, témoin, éléments de premier niveau, et contenu direct des dossiers renouvelés (Cache,
+    /// Work...) : un lien ou un élément d'un autre propriétaire y déclenche une reprise complète. Rien sous Mount.
+    /// </summary>
     internal bool IsCompliant()
     {
         try
@@ -427,9 +613,14 @@ internal sealed class DataRootProtector(IFileSecurity security)
             foreach (var info in new DirectoryInfo(_root).EnumerateFileSystemInfos())
             {
                 if ((info.Attributes & FileAttributes.ReparsePoint) != 0) return false;
+                if (IsRenewedLeftover(info.Name)) return false; // ancien dossier à supprimer
                 var isDir = info is DirectoryInfo;
                 if (!DataProtection.IsTrustedOwner(security.GetOwner(info.FullName, isDir))) return false;
                 if (!HasExpectedDacl(info.FullName, isDir, info.Name, depth: 0)) return false;
+                if (isDir && RenewedFolders.Contains(info.Name, StringComparer.OrdinalIgnoreCase))
+                    foreach (var child in ((DirectoryInfo)info).EnumerateFileSystemInfos())
+                        if ((child.Attributes & FileAttributes.ReparsePoint) != 0 || !DataProtection.IsTrustedOwner(security.GetOwner(child.FullName, child is DirectoryInfo)))
+                            return false;
             }
             return true;
         }
@@ -437,6 +628,82 @@ internal sealed class DataRootProtector(IFileSecurity security)
         {
             return false;
         }
+    }
+
+    /// <summary>
+    /// Dossier Mount : propriétaire et droits du dossier lui-même seulement. Non vide (image montée, ou montage abandonné) :
+    /// DACL posée sans propagation et rien en dessous n'est jamais modifié, déplacé ni supprimé. Renvoie true s'il est vide
+    /// (il est alors renouvelé comme les autres dossiers régénérables).
+    /// </summary>
+    private bool SecureMountFolder()
+    {
+        var path = Path.Combine(_root, MountFolderName);
+        try
+        {
+            if (!Directory.Exists(path) || (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0) return false; // lien : retiré par Walk
+            if (!Directory.EnumerateFileSystemEntries(path).Any()) return true;
+            _report.MountInUse = true;
+            if (!DataProtection.IsTrustedOwner(security.GetOwner(path, true))) security.SetOwner(path, true, DataProtection.AdministratorsSid);
+            if (!Matches(security.GetDacl(path, true), DataProtection.PrivateRules, isDirectory: true))
+            {
+                security.SetOwnDaclOnly(path, true, DataProtection.PrivateRules);
+                _report.Reset++;
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException or PrivilegeNotHeldException)
+        {
+            _report.Errors.Add($"{MountFolderName} : {ex.Message}");
+        }
+        return false;
+    }
+
+    /// <summary>Renomme un dossier régénérable (les descripteurs ouverts le suivent), puis supprime l'ancien sans suivre les liens.</summary>
+    private void Renew(string name)
+    {
+        var path = Path.Combine(_root, name);
+        try
+        {
+            if (!Directory.Exists(path) || (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0) return; // lien : retiré par Walk
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            _report.Errors.Add($"{name} : {ex.Message}");
+            return;
+        }
+        var old = Path.Combine(_root, name + RenewedSuffix + DataProtection.RandomName(4));
+        try
+        {
+            // Échoue si un fichier du dossier est ouvert (par un utilisateur, ou par une autre exécution en cours).
+            Directory.Move(path, old);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            _report.Incomplete = true;
+            _report.Errors.Add($"{name} : dossier non renouvelé, un élément est encore ouvert par un autre processus ({ex.Message}) ; " +
+                               "son contenu est contrôlé élément par élément et le renouvellement sera retenté au prochain démarrage élevé.");
+            return;
+        }
+        // Le dossier neuf (Cache, Work) est créé à l'étape 4 avec sa DACL privée ; les autres le sont à la demande.
+        _report.Renewed.Add(name);
+        RemoveLeftover(old);
+    }
+
+    /// <summary>Ancien dossier renouvelé : supprimé sans suivre les liens (repris d'abord si nécessaire), sinon réservé aux administrateurs.</summary>
+    private void RemoveLeftover(string path)
+    {
+        if (DataProtection.DeleteTree(path)) return;
+        try
+        {
+            security.SetOwner(path, true, DataProtection.AdministratorsSid);
+            security.SetProtectedDacl(path, true, DataProtection.PrivateRules);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException or PrivilegeNotHeldException)
+        {
+            Log.Debug($"Reprise de {path} impossible : {ex.Message}");
+        }
+        if (DataProtection.DeleteTree(path)) return;
+        _report.Incomplete = true;
+        _report.Errors.Add($"{Relative(path)} : ancien dossier non entièrement supprimé (élément encore ouvert) ; nouvel essai au prochain démarrage élevé.");
     }
 
     private void Walk(string dir, int depth, string? topFolder)
@@ -470,6 +737,17 @@ internal sealed class DataRootProtector(IFileSecurity security)
                     continue;
                 }
 
+                // Images montées par DISM : rien sous Mount n'est jamais contrôlé, repris ni supprimé (le dossier lui-même
+                // est traité par SecureMountFolder / Renew).
+                if (depth == 0 && isDir && name.Equals(MountFolderName, StringComparison.OrdinalIgnoreCase)) continue;
+
+                if (depth == 0 && isDir && IsRenewedLeftover(name))
+                {
+                    RemoveLeftover(path);
+                    if (!Directory.Exists(path)) _report.Deleted.Add(Relative(path));
+                    continue;
+                }
+
                 if (!DataProtection.IsTrustedOwner(security.GetOwner(path, isDir)))
                 {
                     // Reprise au mieux : même si elle échoue, un fichier reste supprimable ou déplaçable (contrôle total
@@ -494,9 +772,7 @@ internal sealed class DataRootProtector(IFileSecurity security)
                     _report.Reset++;
                 }
 
-                // Images montées par DISM : seuls les éléments de premier niveau sont contrôlés.
-                if (isDir && !(top.Equals("Mount", StringComparison.OrdinalIgnoreCase) && depth >= 1))
-                    Walk(path, depth + 1, top);
+                if (isDir) Walk(path, depth + 1, top);
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
             {
@@ -548,7 +824,7 @@ internal sealed class DataRootProtector(IFileSecurity security)
     private static IReadOnlyList<AclRule>? ExpectedProtectedRules(bool isDir, string name, int depth)
     {
         if (depth != 0) return null;
-        if (isDir && PrivateFolders.Contains(name, StringComparer.OrdinalIgnoreCase)) return DataProtection.PrivateRules;
+        if (isDir && (PrivateFolders.Contains(name, StringComparer.OrdinalIgnoreCase) || IsRenewedLeftover(name))) return DataProtection.PrivateRules;
         if (!isDir && name.Equals(SecretStore.TokenFileName, StringComparison.OrdinalIgnoreCase)) return DataProtection.PrivateRules;
         return null;
     }
@@ -565,7 +841,7 @@ internal sealed class DataRootProtector(IFileSecurity security)
     /// <summary>Synchronize est ajouté par Windows à toute règle d'autorisation : ignoré dans la comparaison.</summary>
     private static FileSystemRights Normalize(FileSystemRights rights) => rights & ~FileSystemRights.Synchronize;
 
-    private static bool IsRegenerable(string top) => RegenerableFolders.Contains(top, StringComparer.OrdinalIgnoreCase);
+    private static bool IsRegenerable(string top) => RegenerableFolders.Contains(top, StringComparer.OrdinalIgnoreCase) || IsRenewedLeftover(top);
 
     private string Relative(string path) => Path.GetRelativePath(_root, path);
 }
@@ -654,6 +930,39 @@ internal sealed class WindowsFileSecurity : IFileSecurity
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException) { Log.Debug($"Propriétaire de {path} non modifié : {ex.Message}"); }
         }
     }
+
+    public void SetOwnDaclOnly(string path, bool isDirectory, IReadOnlyList<AclRule> rules)
+    {
+        // SetFileSecurity applique le descripteur au seul élément, sans propager les règles héritables à ce qu'il contient
+        // (contrairement à SetNamedSecurityInfo, utilisé par SetAccessControl).
+        var descriptor = Build(isDirectory, rules).GetSecurityDescriptorBinaryForm();
+        if (!SetFileSecurityW(path, DaclSecurityInformation | ProtectedDaclSecurityInformation, descriptor))
+            throw new IOException($"Droits de {path} non modifiés : {new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error()).Message}");
+    }
+
+    public bool SupportsOwnersAndAcls(string path)
+    {
+        var root = Path.GetPathRoot(Path.GetFullPath(path));
+        if (string.IsNullOrEmpty(root)) return false;
+        if (!root.EndsWith('\\')) root += '\\';
+        if (root.StartsWith(@"\\", StringComparison.Ordinal) || GetDriveTypeW(root) == DriveRemote) return false; // partage réseau
+        return GetVolumeInformationW(root, null, 0, out _, out _, out var flags, null, 0) && (flags & FilePersistentAcls) != 0;
+    }
+
+    private const uint DaclSecurityInformation = 0x4;
+    private const uint ProtectedDaclSecurityInformation = 0x80000000;
+    private const uint FilePersistentAcls = 0x8;
+    private const uint DriveRemote = 4;
+
+    [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    private static extern bool SetFileSecurityW(string fileName, uint securityInformation, byte[] securityDescriptor);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+    private static extern uint GetDriveTypeW(string rootPathName);
+
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    private static extern bool GetVolumeInformationW(string rootPathName, System.Text.StringBuilder? volumeName, int volumeNameSize,
+        out uint serialNumber, out uint maxComponentLength, out uint fileSystemFlags, System.Text.StringBuilder? fileSystemName, int fileSystemNameSize);
 
     private static FileSystemSecurity Build(bool isDirectory, IReadOnlyList<AclRule> rules)
     {

@@ -17,6 +17,12 @@ public sealed class LoadedPolicy
     /// <summary>La politique de l'organisation vient du cache local (source injoignable ou invalide).</summary>
     public bool FromCache { get; init; }
     public DateTime? CachedAt { get; init; }
+    /// <summary>
+    /// Interface non élevée : politique de la console lue dans le cache écrit par les exécutions SYSTEM du poste (ou
+    /// indisponible), faute de jeton. Affichage seulement : la politique est revérifiée avec les droits administrateur au
+    /// moment d'installer.
+    /// </summary>
+    public bool MachineCacheOnly { get; set; }
     public DriverPolicy? Reference { get; init; }
     /// <summary>« intégrée » ou chemin du cache rafraîchi depuis GitHub.</summary>
     public string ReferenceOrigin { get; init; } = "intégrée";
@@ -100,6 +106,16 @@ public sealed class PolicyLoader
     /// <summary>Cache local des dernières décisions de diffusion (console injoignable).</summary>
     public string DecisionCacheFile { get; init; } = AppPaths.RolloutDecisionsCache;
 
+    /// <summary>
+    /// Interface non élevée de la version installée : le jeton de la console est réservé aux administrateurs, la console
+    /// refuserait la demande. Les blocages et retenues sont alors affichés d'après la dernière politique reçue par les
+    /// exécutions SYSTEM du poste (ce fichier, lu seulement, s'il a été écrit par SYSTEM ou un administrateur) ; la
+    /// politique complète est revérifiée avec les droits administrateur au moment d'installer. Null = sans objet.
+    /// </summary>
+    public string? MachineCacheFile { get; init; } = AppPaths.MachinePolicyCache;
+    /// <summary>Décisions de diffusion écrites par les exécutions SYSTEM du poste (voir <see cref="MachineCacheFile"/>).</summary>
+    public string? MachineDecisionCacheFile { get; init; } = AppPaths.MachineRolloutDecisionsCache;
+
     /// <summary>Identité envoyée à la console avec la demande de politique (identifiant machine, nom) ; par défaut, celle du poste.</summary>
     public Func<(string? MachineId, string Name)>? Identity { get; init; }
 
@@ -124,6 +140,28 @@ public sealed class PolicyLoader
         var fromCache = false;
         DateTime? cachedAt = null;
         var source = ResolveSource();
+        if (source is not null && IsConsoleWithoutToken(source))
+        {
+            // Interface non élevée : la console refuserait la demande (jeton lisible des seuls administrateurs).
+            var machine = UseCache ? ReadMachineCache(source) : null;
+            if (machine is not null)
+            {
+                messages.Add($"Interface sans droits administrateur : politique de pilotes {machine.Value.Policy.DisplayName} lue dans le cache du poste " +
+                             $"(reçue par les exécutions administrateur le {machine.Value.SavedAt:dd/MM/yyyy HH:mm}). Blocages et retenues affichés d'après " +
+                             "elle ; la politique à jour est revérifiée, avec les droits administrateur, au moment d'installer.");
+                Log.Info(messages[^1]);
+                var loaded = Build(machine.Value.Policy, source, true, machine.Value.SavedAt, reference, referenceOrigin, messages);
+                loaded.MachineCacheOnly = true;
+                return loaded;
+            }
+            messages.Add("Interface sans droits administrateur : politique de la console indisponible (jeton réservé aux administrateurs, aucune " +
+                         "politique reçue par les exécutions administrateur de ce poste). Des pilotes affichés comme installables peuvent être bloqués " +
+                         "ou retenus par votre organisation : la politique est appliquée, avec les droits administrateur, au moment d'installer.");
+            Log.Info(messages[^1]);
+            var none = Build(null, source, false, null, reference, referenceOrigin, messages);
+            none.MachineCacheOnly = true;
+            return none;
+        }
         if (source is not null)
         {
             string? problem;
@@ -157,8 +195,8 @@ public sealed class PolicyLoader
                 problem = $"source injoignable ({ex.Message})";
             }
 
-            // Repli : dernière politique valide connue.
-            var cached = UseCache ? ReadCache() : null;
+            // Repli : dernière politique valide connue (interface non élevée : à défaut, celle reçue par les exécutions SYSTEM).
+            var cached = UseCache ? ReadCache() ?? ReadMachineCache(source) : null;
             if (cached is not null)
             {
                 organization = cached.Value.Policy;
@@ -212,7 +250,8 @@ public sealed class PolicyLoader
         if (all.Count == 0) return new RolloutDecisions(new Dictionary<string, RolloutDecision>(), fromCache: false);
 
         string problem;
-        if (policy.FromCache) problem = "console injoignable lors du chargement de la politique";
+        if (policy.MachineCacheOnly) problem = "interface sans droits administrateur ; revérifiées au moment d'installer";
+        else if (policy.FromCache) problem = "console injoignable lors du chargement de la politique";
         else
         {
             try
@@ -233,6 +272,9 @@ public sealed class PolicyLoader
             }
         }
         var cached = RolloutDecisions.FromCacheFile(DecisionCacheFile, origin, all.Values) ??
+                     (MachineDecisionCacheFile is { } machine && File.Exists(machine) && DataProtection.IsWrittenByAdministrators(machine)
+                         ? RolloutDecisions.FromCacheFile(machine, origin, all.Values)
+                         : null) ??
                      new RolloutDecisions(new Dictionary<string, RolloutDecision>(), fromCache: true);
         var missing = all.Count - cached.Count;
         var r = policy.Organization.Rollout;
@@ -365,12 +407,46 @@ public sealed class PolicyLoader
         (uri.Scheme == Uri.UriSchemeHttp && (uri.IsLoopback || uri.Host.Equals("localhost", StringComparison.OrdinalIgnoreCase)));
 
     /// <summary>Le jeton de la console n'est envoyé qu'à la console elle-même (même hôte que ServerUrl).</summary>
-    private bool ShouldSendToken(Uri uri)
+    private bool ShouldSendToken(Uri uri) => !string.IsNullOrWhiteSpace(_settings.ServerToken) && IsConsoleUrl(uri);
+
+    private bool IsConsoleUrl(Uri uri)
     {
-        if (string.IsNullOrWhiteSpace(_settings.ServerToken) || string.IsNullOrWhiteSpace(_settings.ServerUrl)) return false;
+        if (string.IsNullOrWhiteSpace(_settings.ServerUrl)) return false;
         return Uri.TryCreate(_settings.ServerUrl.Trim(), UriKind.Absolute, out var server) &&
                server.Host.Equals(uri.Host, StringComparison.OrdinalIgnoreCase) && server.Port == uri.Port &&
                server.Scheme == uri.Scheme;
+    }
+
+    /// <summary>Politique de la console demandée sans jeton par une interface non élevée (voir <see cref="MachineCacheFile"/>).</summary>
+    private bool IsConsoleWithoutToken(string source) =>
+        MachineCacheFile is not null && string.IsNullOrWhiteSpace(_settings.ServerToken) &&
+        Uri.TryCreate(source, UriKind.Absolute, out var uri) && (uri.Scheme == Uri.UriSchemeHttps || uri.Scheme == Uri.UriSchemeHttp) && IsConsoleUrl(uri);
+
+    /// <summary>
+    /// Politique reçue par les exécutions SYSTEM du poste depuis la même source : lue seulement si le fichier (et son
+    /// dossier) ont été écrits par SYSTEM ou un administrateur — jamais un fichier préparé par un utilisateur.
+    /// </summary>
+    private (DriverPolicy Policy, DateTime SavedAt)? ReadMachineCache(string source)
+    {
+        var path = MachineCacheFile;
+        try
+        {
+            if (path is null || !File.Exists(path)) return null;
+            if (!DataProtection.IsWrittenByAdministrators(path))
+            {
+                Log.Warn($"Cache de politique du poste ignoré : {path} n'a pas été écrit par un administrateur.");
+                return null;
+            }
+            var entry = JsonSerializer.Deserialize<CacheEntry>(File.ReadAllText(path), CacheJson);
+            if (entry is null || !string.Equals(entry.Origin, source, StringComparison.OrdinalIgnoreCase)) return null;
+            var parsed = DriverPolicy.Parse(entry.Content);
+            return parsed.IsValid ? (parsed.Policy!, entry.SavedAt) : null;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+        {
+            Log.Debug($"Cache de politique du poste illisible : {ex.Message}");
+            return null;
+        }
     }
 
     // ------------------------------------------------------------------ cache

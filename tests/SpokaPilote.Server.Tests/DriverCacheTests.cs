@@ -237,7 +237,11 @@ public sealed class DriverCacheTests : IDisposable
         Assert.Equal(1, _origin.Count(DellFile));
         Assert.Contains(responses, r => r.Headers.GetValues(DriverCacheEndpoints.CacheHeader).Single() == "wait");
 
-        // Ensuite : servi depuis le disque.
+        // Ensuite : servi depuis le disque. Les postes ont tout reçu, mais la console peut encore être en train de ranger le
+        // fichier dans le cache (vérification de l'empreinte, déplacement) : on l'attend plutôt que de supposer l'ordre.
+        var deadline = DateTime.UtcNow.AddSeconds(30);
+        while (Store.Stats().Files == 0 && DateTime.UtcNow < deadline) await Task.Delay(20);
+        Assert.Equal(1, Store.Stats().Files);
         var again = await client.GetAsync(FileRoute(DellFile));
         Assert.Equal("hit", again.Headers.GetValues(DriverCacheEndpoints.CacheHeader).Single());
         Assert.Equal(data, await again.Content.ReadAsByteArrayAsync());

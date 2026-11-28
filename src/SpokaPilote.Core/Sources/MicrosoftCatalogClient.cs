@@ -81,12 +81,17 @@ public static partial class MicrosoftCatalogClient
 
     internal static async Task<List<CatalogEntry>> SearchOnceAsync(string query, CancellationToken ct)
     {
-        var cacheFile = Path.Combine(AppPaths.Ensure(Path.Combine(AppPaths.Cache, "catalog")), AppPaths.SafeName(query, 120) + ".json");
-        if (File.Exists(cacheFile) && DateTime.UtcNow - File.GetLastWriteTimeUtc(cacheFile) < TimeSpan.FromHours(12))
+        // --- Durcissement du dossier de données (4.0.1) : début -----------------------------------------------------------
+        // Dossier Cache\catalog jamais suivi s'il est un lien (recréé), et résultat en cache lu par une exécution élevée
+        // seulement s'il a été écrit par SYSTEM / un administrateur, sans lien sur le chemin (DataProtection).
+        var cacheFile = Path.Combine(AppPaths.CacheSubdirectory("catalog"), AppPaths.SafeName(query, 120) + ".json");
+        if (File.Exists(cacheFile) && DateTime.UtcNow - File.GetLastWriteTimeUtc(cacheFile) < TimeSpan.FromHours(12) &&
+            DataProtection.IsTrustedForElevatedUse(cacheFile))
         {
             try { return JsonSerializer.Deserialize<List<CatalogEntry>>(await File.ReadAllTextAsync(cacheFile, ct)) ?? new(); }
             catch { /* cache corrompu : on relance la recherche */ }
         }
+        // --- Durcissement du dossier de données (4.0.1) : fin -------------------------------------------------------------
 
         // Console 4.0 : la recherche passe par son cache (une requête vers Microsoft pour tout le parc, requêtes espacées).
         // Simple indication : les liens et empreintes de l'entrée retenue sont ensuite demandés directement à Microsoft
