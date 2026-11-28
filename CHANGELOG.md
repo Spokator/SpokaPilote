@@ -1,5 +1,27 @@
 # Journal des versions
 
+## 4.1.0 — 28/11/2026
+
+Interface plus claire, relue page par page avec les yeux d'un nouvel utilisateur.
+
+- **Le type d'analyse se choisit avant de lancer**, sur l'Accueil : *Analyse rapide (recommandée)* — pilotes manquants
+  et mises à jour recommandées — ou *Analyse complète* — vérifie aussi, dans le Microsoft Update Catalog, s'il existe
+  une version plus récente de chaque pilote de fabricant déjà installé. Le choix est retenu (F5). Après une analyse
+  rapide, l'Accueil dit ce qui a été couvert et propose *Lancer l'analyse complète* en un clic. L'ancienne case cachée
+  dans la page Pilotes disparaît.
+- **Accueil** : lien direct vers les périphériques en erreur, pilotes bloqués ou retenus signalés.
+- **Pilotes** : le filtre *Bloqués* explique la différence entre *bloqué* (politique, liste des pilotes à éviter) et
+  *retenu* (diffusion progressive) ; *Simuler* devient *Vérifier sans installer*.
+- **Périphériques** : *Réparer ce périphérique* ; **Historique** : chaque intervention dit ce qu'elle a fait et si elle
+  peut encore être annulée ; réinstallation d'une sauvegarde confirmée.
+- **Outils** rangés en *Pour ce poste* / *Pour le parc (avancé)* / *Autres outils* ; **Paramètres** rangés par intention,
+  options avancées repliées.
+- **F1** ouvre l'aide de la page affichée (nouveau guide [docs/INTERFACE.md](docs/INTERFACE.md)) ; assistant de premier
+  lancement mis à jour ; interface anglaise complète, y compris le bandeau de configuration mise en quarantaine.
+- Kit de déploiement validé en réel sur Windows 11 Entreprise vierge (machine virtuelle) : installation 4.0.0 avec
+  console, agent et maintenance, mise à jour 4.0.2, désinstallation sans tâche restante ; un compte standard ne peut ni
+  lire le jeton ni écrire dans le dossier de données.
+
 ## 4.0.2 — 28/11/2026
 
 Correctif de la mise à jour 4.0.1, constaté en réel sur un poste mis à jour. **Mise à jour recommandée.**
