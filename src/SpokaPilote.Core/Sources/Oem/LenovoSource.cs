@@ -116,7 +116,7 @@ public sealed class LenovoSource : IDriverSource
         // redirection) ; sinon le paquet est écarté (et le serait de toute façon à l'installation).
         foreach (var command in new[] { extractCommand, cmdline == VendorCommand.InfMarker ? null : cmdline })
         {
-            if (command is not null && VendorCommand.Validate(command) is { } problem)
+            if (command is not null && VendorCommand.Validate(command, fileName) is { } problem)
             {
                 Log.Warn($"Paquet Lenovo écarté ({descriptorUri}) : commande refusée ({problem}) : {command}");
                 return null;
