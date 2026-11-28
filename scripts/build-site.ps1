@@ -15,7 +15,7 @@ $utf8 = New-Object System.Text.UTF8Encoding($false)
 
 # Documents publiés, dans l'ordre d'affichage. Un nouveau .md de docs\ apparaît automatiquement dans « Autres documents ».
 $docGroups = [ordered]@{
-    "Utiliser SpokaPilote"  = @("CONSOLE-CENTRALE", "POLITIQUE", "PACKS-ET-IMAGES", "IMPRIMANTES-ET-PLANIFICATION", "PILOTES-GRAPHIQUES", "MODE-PORTABLE")
+    "Utiliser SpokaPilote"  = @("CONSOLE-CENTRALE", "DEPLOIEMENT-ENTREPRISE", "POLITIQUE", "PACKS-ET-IMAGES", "IMPRIMANTES-ET-PLANIFICATION", "PILOTES-GRAPHIQUES", "MODE-PORTABLE")
     "Publier et distribuer" = @("DISTRIBUTION", "SIGNATURE", "PUBLICATION-STORE")
 }
 
