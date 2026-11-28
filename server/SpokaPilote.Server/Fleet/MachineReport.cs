@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace SpokaPilote.Server.Fleet;
 
 /// <summary>Identité matérielle et logicielle du poste, telle que déclarée dans son rapport.</summary>
@@ -67,12 +69,24 @@ public sealed class CandidateEntry
     /// <summary>Motif de blocage par la politique de pilotes (null = autorisé).</summary>
     public string? BlockedReason { get; set; }
     public bool IsBlocked => !string.IsNullOrWhiteSpace(BlockedReason);
+    /// <summary>Identité stable d'une proposition sans version lisible (rapports 4.0.1, « itemId »), sinon null.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? ItemId { get; set; }
+    /// <summary>
+    /// Constructeur du matériel visé (« PCI\VEN_8086 ») et classe du périphérique (« Display »), déduits des périphériques du
+    /// rapport (tous les postes, 3.x compris) : même pilote d'une source à l'autre. Recalculés à chaque lecture du rapport brut.
+    /// </summary>
+    [JsonIgnore] public string? HardwareVendor { get; set; }
+    [JsonIgnore] public string? DeviceClass { get; set; }
 }
 
 public sealed class OutcomeEntry
 {
     public string Title { get; set; } = "";
     public string? Version { get; set; }
+    /// <summary>Identité stable d'un pilote sans version lisible (rapports 4.0.1), sinon null.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? ItemId { get; set; }
     public string Status { get; set; } = "";
     public string? Message { get; set; }
     public bool RebootRequired { get; set; }

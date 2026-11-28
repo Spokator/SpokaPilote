@@ -37,7 +37,8 @@ public sealed class LoadedPolicy
         {
             if (Organization?.Rollout is not { } r) return "";
             var holds = Organization.Rules.Count(x => x.IsRollout && x.Id!.StartsWith(PolicyRollout.HoldPrefix, StringComparison.Ordinal));
-            var suspended = Organization.Rules.Count(x => x.IsRollout && x.Id!.StartsWith(PolicyRollout.SuspendedPrefix, StringComparison.Ordinal));
+            var suspended = Organization.Rules.Count(x => x.IsRollout && x.Id!.StartsWith(PolicyRollout.SuspendedPrefix, StringComparison.Ordinal) &&
+                                                         !x.Id.StartsWith(PolicyRollout.SuspendedHardwarePrefix, StringComparison.Ordinal));
             var parts = new List<string>();
             if (r.Enabled) parts.Add($"anneau {r.RingLabel}");
             if (r.Decisions && Effective.Decisions is { } d)
@@ -207,7 +208,7 @@ public sealed class PolicyLoader
         var all = new Dictionary<string, DriverCandidate>(StringComparer.Ordinal);
         foreach (var c in candidates)
             foreach (var x in c.Alternatives.Prepend(c))
-                if (!x.IsInformational && DriverVersion.Parse(x.Version) is not null) all.TryAdd(RolloutDecisions.Key(x), x);
+                if (DriverIdentity.IsTrackable(x)) all.TryAdd(RolloutDecisions.Key(x), x);
         if (all.Count == 0) return new RolloutDecisions(new Dictionary<string, RolloutDecision>(), fromCache: false);
 
         string problem;
@@ -242,15 +243,26 @@ public sealed class PolicyLoader
         return cached;
     }
 
+    private sealed record DecideCandidate(string Source, string Title, string? Version, string Kind, string? ItemId, string? HardwareVendor, string? DeviceClass);
+
+    private static readonly JsonSerializerOptions DecideJson = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,
+    };
+
     private async Task<Dictionary<string, RolloutDecision>> RequestDecisionsAsync(string policyUrl, IReadOnlyList<DriverCandidate> list, CancellationToken ct)
     {
         if (!Uri.TryCreate(policyUrl, UriKind.Absolute, out var policyUri) || !ShouldSendToken(policyUri))
             throw new InvalidOperationException("la politique ne vient pas de la console configurée (ServerUrl)");
         var uri = new Uri(_settings.ServerUrl!.Trim().TrimEnd('/') + "/api/rollout/decide");
+        // 4.0.1 : identité d'une proposition sans version lisible (itemId) et matériel visé (hardwareVendor, deviceClass : même
+        // pilote d'une autre source). Une console antérieure ignore ces champs (comportement précédent).
         var body = JsonSerializer.SerializeToUtf8Bytes(new
         {
-            candidates = list.Select(c => new { source = c.Source.ToString(), title = c.Title, version = c.Version, kind = c.Kind.ToString() }),
-        });
+            candidates = list.Select(c => new DecideCandidate(c.Source.ToString(), c.Title, c.Version, c.Kind.ToString(), DriverIdentity.ItemKey(c),
+                c.HardwareVendor, c.HardwareVendor is null ? null : c.DeviceClass)),
+        }, DecideJson);
         using var compressed = new MemoryStream();
         await using (var gzip = new System.IO.Compression.GZipStream(compressed, System.IO.Compression.CompressionLevel.Fastest, leaveOpen: true))
             await gzip.WriteAsync(body, ct).ConfigureAwait(false);
@@ -430,12 +442,15 @@ public sealed class PolicyLoader
     {
         var embedded = LoadEmbeddedReference();
         if (!embedded.IsValid) Log.Warn($"Liste de référence intégrée invalide : {string.Join(" ; ", embedded.Errors)}");
+        foreach (var w in embedded.Warnings) Log.Warn($"Liste de référence intégrée : {w}");
         var best = embedded.IsValid ? embedded.Policy : null;
         var origin = "intégrée";
 
         if (RefreshReferenceList) await RefreshReferenceAsync(ct).ConfigureAwait(false);
 
-        // Copie rafraîchie depuis GitHub : retenue seulement si elle est au moins aussi récente que la liste intégrée.
+        // Copie rafraîchie depuis GitHub (fichier non signé) : retenue seulement si elle est au moins aussi récente que la liste
+        // intégrée, et TOUJOURS complétée par les règles de la liste intégrée (elle peut ajouter des blocages, jamais en retirer).
+        // Ses règles autres que « block » sont ignorées (voir DriverPolicy.RestrictReferenceLayer).
         try
         {
             if (File.Exists(ReferenceCacheFile))
@@ -443,8 +458,9 @@ public sealed class PolicyLoader
                 var cached = DriverPolicy.Parse(await File.ReadAllTextAsync(ReferenceCacheFile, ct).ConfigureAwait(false), PolicyLayer.Reference);
                 if (cached.IsValid && IsNewerOrSame(cached.Policy!, best))
                 {
-                    best = cached.Policy;
-                    origin = $"{ReferenceListUrl} (copie du {File.GetLastWriteTime(ReferenceCacheFile):dd/MM/yyyy})";
+                    foreach (var w in cached.Warnings) Log.Warn($"Liste de référence en ligne : {w}");
+                    best = DriverPolicy.UnionReference(cached.Policy!, embedded.IsValid ? embedded.Policy : null);
+                    origin = $"{ReferenceListUrl} (copie du {File.GetLastWriteTime(ReferenceCacheFile):dd/MM/yyyy}, complétée par la liste intégrée)";
                 }
             }
         }
@@ -487,6 +503,7 @@ public sealed class PolicyLoader
                 Log.Warn($"Liste de référence en ligne invalide, ignorée : {string.Join(" ; ", parsed.Errors.Take(3))}");
                 return;
             }
+            foreach (var w in parsed.Warnings) Log.Warn($"Liste de référence en ligne : {w}");
             File.WriteAllText(ReferenceCacheFile, json);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)

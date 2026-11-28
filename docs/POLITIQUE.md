@@ -126,7 +126,8 @@ Conséquences pratiques :
   pare-feu). `policy check` signale une règle placée après une règle au moins aussi générale qui décide toujours
   avant elle (« elle ne s'appliquera jamais »).
 - Les règles de l'organisation passent avant la liste de référence : un `allow` de l'organisation lève un blocage de
-  la liste de référence (pour écarter une règle de référence précise, préférez `ignoreReferenceRules`).
+  la liste de référence (pour écarter une règle de référence précise, préférez `ignoreReferenceRules`). La liste de
+  référence, elle, n'apporte que des règles `block` : elle ne lève jamais un réglage de l'organisation.
 - Un `allow` explicite lève `minimumDriverAgeDays`, `onlyMissingDrivers`, `allowFirmware` et `allowOptional`
   (ex. correctif de sécurité urgent), mais jamais `allowedSources`.
 - Si un pilote bloqué et un pilote autorisé d'une autre source visent le même périphérique, le pilote **autorisé**
@@ -291,6 +292,14 @@ envoie alors aussi son identifiant (`X-SpokaPilote-Machine-Id`, `X-SpokaPilote-M
   la politique.
 - Si aucune source n'est plus configurée, le cache est ignoré.
 - Délai maximal de lecture : 15 s.
+- **Revérification avant l'installation** (4.0.1) : juste avant d'installer, l'interface (bouton « Installer » ou
+  « Simuler », sur une liste qui peut dater de plusieurs heures) et la ligne de commande (`install`, `update`, tâches
+  planifiées `maintenance`, tâches envoyées par la console à l'agent) rechargent la politique et redemandent les décisions
+  de diffusion pour les seuls pilotes sélectionnés. Un pilote suspendu par le disjoncteur, retenu par un changement
+  d'anneau ou bloqué par une nouvelle règle depuis l'analyse est **écarté**, avec son motif (« 1 pilote(s) écarté(s) :
+  bloqué(s) ou retenu(s) par la politique depuis l'analyse — … ») ; il apparaît bloqué dans le rapport envoyé à la console.
+  Console injoignable à ce moment : dernière politique et dernières décisions connues (même repli qu'à l'analyse). La
+  revérification ne fait que bloquer : elle ne lève jamais un blocage de l'analyse.
 
 ### Suivre l'application sur le parc
 
@@ -335,8 +344,26 @@ dans l'anneau précédent. Suggestion de départ (modifiable) :
   qui la **propose** — même si elle y est bloquée ou retenue. Une version est identifiée par sa source, son titre et son
   numéro de version (« Windows Update · Intel - Display - 31.0.101.5590 · 31.0.101.5590 »). La date est enregistrée à
   la réception du rapport (aucun recalcul sur l'historique) et ne change plus ensuite ; l'horloge du poste n'est pas
-  utilisée (un ancien rapport renvoyé plus tard ne peut pas l'avancer). Les propositions sans numéro de version lisible
-  ne sont pas soumises aux anneaux.
+  utilisée (un ancien rapport renvoyé plus tard ne peut pas l'avancer).
+- **Propositions sans numéro de version lisible** (4.0.1) : titre Windows Update sans version finale, version « n/a » du
+  catalogue Microsoft... Le poste 4.0.1 les identifie par une **identité stable** — l'UpdateID de Windows Update ou du
+  catalogue (le même identifiant pour les deux : `update:<UpdateID>`), l'identifiant du paquet constructeur
+  (`dell:<releaseID>`...), à défaut la date et le fournisseur du pilote — envoyée dans ses rapports et ses demandes de
+  décision. Elles sont alors suivies comme une version (« HP - Printer (sans numéro de version) » dans la console) :
+  première détection, retenue dans les anneaux à délai, suspension depuis la console, échecs comptés par le disjoncteur.
+  Une proposition sans version **jamais vue** est retenue (`unknown`) dans les anneaux qui retiennent les nouveautés.
+  Les postes 3.x et 4.0.0 n'envoient pas cette identité : leurs propositions sans version ne sont pas suivies (comme avant).
+- **Même pilote, autre source** (4.0.1) : chaque version suivie mémorise aussi le **matériel visé** — constructeur de la
+  puce lu dans l'ID matériel du périphérique (`PCI\VEN_8086`, `HDAUDIO\VEN_10EC`, `USB\VID_8087`) et classe Windows du
+  périphérique (`Display`) —, déduit des périphériques du rapport (rapports 3.x compris). Une **suspension** vise alors la
+  même version de ce pilote **quelle que soit la source et le titre** : Intel 31.0.101.5590 suspendu pour le paquet Dell
+  « Intel UHD Graphics Driver » est aussi bloqué sous « Intel Corporation - Display - 31.0.101.5590 » (catalogue),
+  « Intel - Display - 31.0.101.5590 » (Windows Update), chez HP ou Lenovo. Les versions sont comparées numériquement ;
+  pour les puces NVIDIA, la version Windows (`32.0.15.6636`) et le numéro commercial du site NVIDIA (`566.36`) sont
+  reconnus comme la même version. Les retenues restent propres à chaque source (une source qui se met à proposer une
+  version déjà diffusée ailleurs repart de sa propre première détection) — mais sur un poste, si deux sources proposent
+  la même version et que l'une est retenue ou suspendue, l'autre l'est aussi : la fusion ne choisit jamais, à la place
+  d'une version bloquée par les anneaux, la même version venue d'une autre source.
 - Une version est **disponible pour un anneau** à l'instant *première détection + délai* (délai × 24 h, calculé en temps
   universel : ni le fuseau de la console, ni celui du poste, ni le changement d'heure ne le décalent ; les dates sont
   affichées à l'heure locale). Si l'anneau exige une **validation**, il faut en plus, dans l'anneau précédent, au moins
@@ -370,15 +397,16 @@ cours de diffusion) :
 En demandant sa politique, le poste s'identifie et l'annonce (`X-SpokaPilote-Rollout-Decisions: 1`) : la console lui
 sert la politique de l'organisation, les suspensions (règles `anneau-suspendu-N`) et la section `rollout` avec
 `"decisions": true` — quelques Ko quel que soit le parc. Une fois les pilotes trouvés, **avant** d'appliquer la politique,
-le poste envoie la liste de ses propositions (source, titre, version, type ; compressée) à `POST /api/rollout/decide` et
+le poste envoie la liste de ses propositions (source, titre, version, type ; 4.0.1 : identité `itemId` d'une proposition
+sans version, matériel visé `hardwareVendor` / `deviceClass` ; compressée) à `POST /api/rollout/decide` et
 reçoit, dans le même ordre, une décision par proposition :
 
 | Décision | Quand | Sur le poste |
 |---|---|---|
-| `suspended` | version suspendue sur tout le parc (même source, même titre sans tenir compte de la casse, même version numérique) — tous anneaux, tous types, pilotes manquants compris | bloquée (⏳ retenue), motif de la suspension |
+| `suspended` | version suspendue sur tout le parc (même source, même titre sans tenir compte de la casse, même version numérique ; ou même version du même pilote proposée par une autre source — même constructeur du matériel, même classe ; ou, sans version, même identité, ou même source et même titre) — tous anneaux, tous types, pilotes manquants compris | bloquée (⏳ retenue), motif de la suspension |
 | `held` | version **connue** de la console, pas encore autorisée pour l'anneau du poste | retenue, avec la date de disponibilité (heure locale) si elle ne dépend que du délai |
 | `unknown` | version **jamais vue** par la console, si l'anneau retient les nouveautés (délai ou validation) : famille inconnue, version plus récente que la dernière autorisée de sa famille (même source, même plage de version majeure), ou famille sans version autorisée | retenue jusqu'à ce qu'un rapport la signale |
-| `allowed` | tout le reste : version autorisée pour l'anneau, version inconnue inférieure à la dernière autorisée de sa famille, anneau sans délai (pilote), pilote manquant (sauf réglage), version sans numéro lisible, anneaux désactivés | les règles de l'organisation s'appliquent ensuite normalement |
+| `allowed` | tout le reste : version autorisée pour l'anneau, version inconnue inférieure à la dernière autorisée de sa famille, anneau sans délai (pilote), pilote manquant (sauf réglage), proposition sans numéro de version **et sans identité** (poste 4.0.0), anneaux désactivés | les règles de l'organisation s'appliquent ensuite normalement |
 
 Les décisions sont évaluées **avant** les règles de l'organisation (une règle `allow` ne lève pas une retenue ; un blocage
 de l'organisation d'une version `unknown` reste affiché comme tel). Elles suivent exactement les règles de la politique
@@ -395,9 +423,15 @@ Taille et temps mesurés (§ « Mesures » ci-dessous) : 20 à 30 propositions =
 La console ajoute **en tête** des règles de la politique de l'organisation des règles ordinaires du format 1 (identifiants
 `anneau-…`), recalculées pour l'anneau du poste :
 
-1. `anneau-suspendu-N` : `block` d'une version suspendue (tous les anneaux, tous les types de proposition) ;
+1. `anneau-suspendu-N` : `block` d'une version suspendue (tous les anneaux, tous les types de proposition) ; si le
+   matériel visé est connu, `anneau-suspendu-materiel-N` bloque en plus **la même version du même pilote quelle que soit
+   la source** (`hardwareId: ["PCI\\*VEN_8086&*", ...]`, `category: "Display"`, `versions`, sans critère de source ni de
+   titre — critères que les postes 3.x comprennent déjà, comparés aux périphériques visés) ; une proposition **sans
+   numéro de version** suspendue est bloquée par sa source et son titre (toutes les propositions sans version de ce titre) ;
 2. `anneau-retenue-N` : `block` d'une version **en cours de diffusion** pas encore autorisée pour l'anneau, avec un motif
    lisible : « Pilote Intel - Display - 31.0.101.5600 : disponible pour votre anneau « Général » le 08/12/2026 à 09:00 » ;
+   pour une proposition sans numéro de version (signalée par un poste 4.0.1), la règle porte sur sa source et son titre
+   (toujours servie : aucune règle de famille ne peut la couvrir) ;
 3. `anneau-famille-N` : une règle par **famille** de pilotes (titre dont les numéros de version sont remplacés par `*`,
    par ex. « Intel - Display - * », par plage de version majeure) : `pin` à la version la plus récente autorisée pour
    l'anneau, ou `block` si aucune ne l'est encore. Une version **plus récente que toutes celles que la console connaît**
@@ -414,7 +448,8 @@ poste 3.x. La console ne dépasse donc jamais `SPOKAPILOTE_ROLLOUT_MAX_RULES` r�
 `SPOKAPILOTE_ROLLOUT_MAX_KB` (1 Mo), et remplit ce budget par ordre de priorité :
 
 1. les **suspensions** (au-delà d'un quart du budget, une règle par source qui bloque ces numéros de version quel que soit
-   le titre) ;
+   le titre, une règle « même pilote » par constructeur et classe avec la liste de leurs versions, une règle par source avec
+   la liste des titres des propositions sans version suspendues) ;
 2. les règles **indispensables** : règles de famille des familles en cours de diffusion (`pin` à la dernière version
    autorisée, ou `block` si aucune ne l'est), et règle datée des seules versions retenues **inférieures** au plafond de leur
    famille (que le `pin` laisserait passer). Ensemble, elles bloquent **toute** version connue pas encore autorisée ;
@@ -449,8 +484,9 @@ le poste applique alors les retenues de sa politique, comme avant.
 `pin` qu'ils comprennent déjà, et les appliquent à l'identique (prouvé par un test qui lit la politique servie avec
 l'analyseur exact de la 3.1.0). Ils ne s'identifient pas en lisant leur politique : la console leur sert celle de
 l'**anneau le plus prudent** (une version ne leur est autorisée que lorsqu'elle l'est pour tous les anneaux). Mettez les
-postes pilotes à jour en 4.0 pour qu'ils reçoivent leur propre anneau. Limite : un poste 3.x ne retient pas une version
-d'une famille jamais vue par la console (nouveau matériel) avant le premier rapport qui la signale.
+postes pilotes à jour en 4.0 pour qu'ils reçoivent leur propre anneau. Limites : un poste 3.x ne retient pas une version
+d'une famille jamais vue par la console (nouveau matériel) avant le premier rapport qui la signale, ni une proposition
+sans numéro de version jamais vue (seules celles signalées par un poste 4.0.1 sont retenues, par leur titre).
 
 **Hors ligne** : un poste qui ne joint pas la console applique la dernière politique reçue (cache), retenues comprises ;
 les retenues datées n'expirent pas d'elles-mêmes (la console peut avoir suspendu la version entre-temps) : elles sont
@@ -528,6 +564,15 @@ périphérique qui fonctionne mal sans être en erreur, périphérique en erreur
   autorisée (comme avec la règle `pin`). Une analyse qui trouve plus de 1 000 propositions retient les suivantes.
 - Postes 3.x d'un très grand parc : forme compacte ou par source (voir « Document borné ») ; aucun plafond pour les postes
   4.0 en mode décisions.
+- Propositions **sans numéro de version** : les postes 3.x (et la règle servie aux postes 4.0.0) ne voient que leur titre —
+  une retenue ou une suspension y vise toutes les propositions sans version de ce titre et de cette source (plus large que
+  nécessaire, jamais plus permissif). L'identité de repli (date + fournisseur, quand la source ne donne pas d'identifiant)
+  change si le pilote est republié à une autre date : il est alors vu comme nouveau (retenu, pas autorisé).
+- **Même pilote, autre source** : reconnu par le constructeur de la puce (VEN_/VID_ de l'ID matériel), la classe du
+  périphérique et la version ; un pilote dont le périphérique visé n'a pas d'ID de ce type (ACPI\INT33A0...), ou une
+  source qui republie la même version sous un autre numéro, n'est pas reconnu. Un poste 4.0.0 n'envoie pas le matériel
+  visé avec ses demandes de décision : il est protégé par la règle `anneau-suspendu-materiel-N` de sa politique. Deux
+  pilotes différents d'un même constructeur, de même classe et de même numéro de version (rare) sont suspendus ensemble.
 
 ## Liste de référence SpokaPilote
 
@@ -541,6 +586,21 @@ Elle est rafraîchie au plus une fois par jour depuis
 moins aussi récente (`updatedAt`) que la liste intégrée. Ce domaine ne sert qu'à ce fichier de métadonnées : il ne
 fait pas partie des domaines autorisés pour télécharger des pilotes. Sans accès à Internet, la liste intégrée
 s'applique.
+
+**Elle ne peut que rendre la politique plus stricte** (4.0.1). Le fichier téléchargé n'est pas signé : un commit erroné
+ou malveillant ne doit pas pouvoir lever, sur tout le parc, un réglage de l'organisation. Donc :
+
+- seules ses règles **`block`** sont gardées ; une règle `allow` ou `pin` est **ignorée** (avertissement dans
+  `policy check` et dans le journal technique) — un `allow` placé là lèverait sinon `onlyMissingDrivers`,
+  `minimumDriverAgeDays`, `allowOptional`, `allowFirmware` pour tout le parc ;
+- `hide` y est ignoré (le pilote reste affiché comme bloqué), ses `settings` et une éventuelle section `rollout` ne
+  sont jamais lus (seuls les réglages de l'organisation s'appliquent) ;
+- la copie téléchargée est **complétée** par toutes les règles de la liste intégrée au binaire signé : elle peut
+  ajouter des blocages, jamais en retirer ni restreindre une règle existante (une règle de même identifiant aux critères
+  différents s'ajoute au lieu de remplacer). `ignoreReferenceRules` écarte toutes les règles de cet identifiant.
+
+Le pire qu'une copie altérée puisse faire est donc de **bloquer** trop de pilotes (l'organisation la désactive avec
+`useReferenceBlocklist: false` ou écarte une règle avec `ignoreReferenceRules`).
 
 Contenu actuel (vérifié sur les avis officiels) :
 

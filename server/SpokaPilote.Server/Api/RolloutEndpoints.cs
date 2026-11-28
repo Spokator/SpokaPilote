@@ -296,7 +296,7 @@ public static class RolloutEndpoints
                 try { candidates = Fleet.ReportParser.Parse(raw).Candidates; }
                 catch (Fleet.InvalidReportException) { /* rapport illisible : aucune proposition à montrer */ }
             }
-            var queries = candidates.Select(c => new CandidateQuery(c.Source, c.Title, c.Version, c.Kind)).ToList();
+            var queries = candidates.Select(c => new CandidateQuery(c.Source, c.Title, c.Version, c.Kind, c.ItemId, c.HardwareVendor, c.DeviceClass)).ToList();
             var batch = rollout.Decide(m.MachineId, m.Name, queries);
             var request = JsonSerializer.Serialize(new { candidates = queries.Select(q => new { source = RolloutKeys.SourceKey(q.Source), title = q.Title, version = q.Version, kind = RolloutKeys.CandidateKind(q.Kind) ?? q.Kind }) });
             return Results.Ok(new
@@ -352,7 +352,7 @@ public static class RolloutEndpoints
         var headers = request.Headers;
         var machineId = headers[Jobs.JobEndpoints.MachineIdHeader].ToString() is { Length: > 0 } h ? h : req.MachineId;
         var machine = headers["X-SpokaPilote-Machine"].ToString() is { Length: > 0 } n ? n : req.Machine;
-        var batch = rollout.Decide(machineId, machine, list.Select(c => new CandidateQuery(c?.Source, c?.Title, c?.Version, c?.Kind)).ToList());
+        var batch = rollout.Decide(machineId, machine, list.Select(c => new CandidateQuery(c?.Source, c?.Title, c?.Version, c?.Kind, c?.ItemId, c?.HardwareVendor, c?.DeviceClass)).ToList());
 
         var root = batch.Section;
         root["decisions"] = new JsonArray(batch.Decisions.Select(d =>
@@ -404,13 +404,20 @@ public static class RolloutEndpoints
         public List<DecideCandidate?>? Candidates { get; set; }
     }
 
-    /// <summary>Proposition : source (nom de source du poste : WindowsUpdate, Dell...), titre, version, type (MissingDriver, Update, Optional, Firmware).</summary>
+    /// <summary>
+    /// Proposition : source (nom de source du poste : WindowsUpdate, Dell...), titre, version, type (MissingDriver, Update,
+    /// Optional, Firmware) ; postes 4.0.1 : identité d'une proposition sans version lisible (itemId) et matériel visé
+    /// (hardwareVendor « PCI\VEN_8086 », deviceClass « Display ») — une suspension suit le même pilote d'une source à l'autre.
+    /// </summary>
     public sealed class DecideCandidate
     {
         public string? Source { get; set; }
         public string? Title { get; set; }
         public string? Version { get; set; }
         public string? Kind { get; set; }
+        public string? ItemId { get; set; }
+        public string? HardwareVendor { get; set; }
+        public string? DeviceClass { get; set; }
     }
 
     // ------------------------------------------------------------------ utilitaires
@@ -534,6 +541,9 @@ public static class RolloutEndpoints
             family = v.Family,
             kind = v.Kind,
             category = v.Category,
+            itemKey = v.IsVersionless ? v.ItemKey : null,
+            hardwareVendor = v.HardwareVendor,
+            deviceClass = v.DeviceClass,
             firstSeen = v.FirstSeen,
             firstMachine = v.FirstMachine,
             lastSeen = v.LastSeen,

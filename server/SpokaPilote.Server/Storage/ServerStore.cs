@@ -42,7 +42,7 @@ public sealed partial class ServerStore
 {
     public const string PolicyKey = "policy";
     public const string PrinterProfileKey = "printer-profile";
-    internal const int SchemaVersion = 5;
+    internal const int SchemaVersion = 6;
 
     private readonly string _connectionString;
     private readonly int _historyPerMachine;
@@ -447,6 +447,9 @@ public sealed partial class ServerStore
         // Version 5 (console 4.0) : diffusion par anneaux et suspension automatique. Tables ajoutées uniquement (aucune donnée
         // existante n'est réécrite : migration instantanée) ; les versions sont suivies à partir des rapports suivants.
         Execute(c, SchemaV5);
+        // Version 6 (console 4.0.1) : identité des propositions sans numéro de version et matériel visé (même pilote d'une
+        // source à l'autre). Table des versions reconstruite à l'identique (mêmes identifiants), clé unique élargie.
+        if (version < 6) RebuildRolloutVersionsV6(c);
         Execute(c, $"PRAGMA user_version = {SchemaVersion};");
         tx.Commit();
         MigrationDuration = sw.Elapsed;

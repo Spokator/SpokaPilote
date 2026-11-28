@@ -20,6 +20,8 @@ public sealed class PolicyRollout
 {
     public const string RulePrefix = "anneau-";
     public const string SuspendedPrefix = RulePrefix + "suspendu-";
+    /// <summary>Règle complémentaire d'une suspension (console 4.0.1) : même version, même matériel, quelle que soit la source.</summary>
+    public const string SuspendedHardwarePrefix = SuspendedPrefix + "materiel-";
     public const string HoldPrefix = RulePrefix + "retenue-";
     public const string FamilyPrefix = RulePrefix + "famille-";
 

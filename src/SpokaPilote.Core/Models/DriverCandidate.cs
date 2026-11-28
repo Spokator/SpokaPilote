@@ -96,6 +96,12 @@ public sealed class DriverCandidate
     public DateTimeOffset? RolloutAvailableAt { get; set; }
     /// <summary>Anneau du poste (null : non identifié par la console, ou sans anneau).</summary>
     public string? RolloutRing { get; set; }
+    /// <summary>
+    /// Constructeur du matériel visé (« PCI\VEN_8086 ») et classe Windows du périphérique (« Display ») : identité du pilote
+    /// d'une source à l'autre (suspensions). Renseignés par l'application de la politique (<see cref="Policy.DriverIdentity"/>).
+    /// </summary>
+    public string? HardwareVendor { get; set; }
+    public string? DeviceClass { get; set; }
 
     public string KindLabel => Kind switch
     {

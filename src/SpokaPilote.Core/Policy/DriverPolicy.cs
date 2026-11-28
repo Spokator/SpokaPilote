@@ -168,10 +168,73 @@ public sealed class DriverPolicy
             }
         }
 
+        if (Layer == PolicyLayer.Reference) RestrictReferenceLayer(v);
         if (v.Errors.Count == 0) AddShadowWarnings(v);
         _validated = v.Errors.Count == 0;
         return v;
     }
+
+    /// <summary>
+    /// Liste de référence (fichier intégré, ou copie rafraîchie chaque jour depuis GitHub, non signée) : elle ne peut que
+    /// rendre la politique PLUS stricte. Seules ses règles « block » sont gardées ; « allow » et « pin » sont ignorées (une
+    /// règle « allow » placée là lèverait, sur tout le parc, onlyMissingDrivers, minimumDriverAgeDays, allowOptional...),
+    /// « hide » est ignoré (le pilote reste affiché comme bloqué), et ses réglages ou sa section « rollout » ne sont jamais lus.
+    /// </summary>
+    private void RestrictReferenceLayer(PolicyValidation v)
+    {
+        for (var i = Rules.Count - 1; i >= 0; i--)
+        {
+            var rule = Rules[i];
+            if (rule.Action is null || rule.ParsedAction == PolicyAction.Block) continue;
+            v.Warnings.Add(new PolicyIssue(
+                $"règle « {rule.ActionLabel} » ignorée : la liste de référence n'accepte que des règles « block » (elle ne peut pas assouplir la politique).",
+                rule.Number, rule.Id));
+            Rules.RemoveAt(i);
+        }
+        foreach (var rule in Rules.Where(r => r.Hide))
+        {
+            v.Warnings.Add(new PolicyIssue("« hide » ignoré : un pilote bloqué par la liste de référence reste affiché.", rule.Number, rule.Id));
+            rule.Hide = false;
+        }
+        if (!Settings.IsDefault || !Settings.UseReferenceBlocklist || Settings.IgnoreReferenceRules.Count > 0)
+            v.Warnings.Add(new PolicyIssue("« settings » ignoré : seuls les réglages de la politique de l'organisation s'appliquent."));
+        if (Rollout is not null)
+        {
+            v.Warnings.Add(new PolicyIssue("« rollout » ignoré dans la liste de référence."));
+            Rollout = null;
+        }
+        Settings = new PolicySettings();
+        Settings.Validate(new PolicyValidation());
+        _allowedSources = null;
+    }
+
+    /// <summary>
+    /// Liste de référence effective : la copie téléchargée (plus récente) PLUS toutes les règles de la liste intégrée au
+    /// binaire signé. Une copie altérée ou erronée peut donc ajouter des blocages, jamais en retirer ni en restreindre un
+    /// (une règle de même identifiant aux critères différents s'ajoute à celle de la liste intégrée au lieu de la remplacer).
+    /// </summary>
+    public static DriverPolicy UnionReference(DriverPolicy downloaded, DriverPolicy? embedded)
+    {
+        downloaded.EnsureValid();
+        if (embedded is null) return downloaded;
+        embedded.EnsureValid();
+        var seen = new HashSet<string>(downloaded.Rules.Select(RuleSignature), StringComparer.Ordinal);
+        var rules = downloaded.Rules.Where(r => r.ParsedAction == PolicyAction.Block).ToList();
+        rules.AddRange(embedded.Rules.Where(r => r.ParsedAction == PolicyAction.Block && !seen.Contains(RuleSignature(r))));
+        return new DriverPolicy
+        {
+            Schema = CurrentSchema,
+            Name = downloaded.Name,
+            Version = downloaded.Version,
+            UpdatedAt = downloaded.UpdatedAt,
+            Description = downloaded.Description,
+            Rules = rules,
+            Layer = PolicyLayer.Reference,
+            _validated = true,
+        };
+    }
+
+    private static string RuleSignature(PolicyRule r) => JsonSerializer.Serialize(r, JsonOptions);
 
     /// <summary>Signale les règles qui ne s'appliqueront jamais car une règle plus générale placée avant décide toujours.</summary>
     private void AddShadowWarnings(PolicyValidation v)
@@ -222,6 +285,8 @@ public sealed class DriverPolicy
     /// Politique effective : réglages de l'organisation, puis ses règles, puis celles de la liste de référence
     /// (sauf si « useReferenceBlocklist » vaut false ou si l'identifiant figure dans « ignoreReferenceRules »).
     /// L'organisation est donc prioritaire : une règle « allow » de sa part lève un blocage de la liste de référence.
+    /// La liste de référence n'apporte que des règles « block » (jamais masquées) : elle ne peut que rendre la politique plus
+    /// stricte, jamais lever un réglage de l'organisation (voir <see cref="RestrictReferenceLayer"/>).
     /// </summary>
     public static DriverPolicy Combine(DriverPolicy? organization, DriverPolicy? reference)
     {
@@ -231,8 +296,8 @@ public sealed class DriverPolicy
         var rules = new List<PolicyRule>();
         if (organization is not null) rules.AddRange(organization.Rules);
         if (reference is not null && settings.UseReferenceBlocklist)
-            rules.AddRange(reference.Rules.Where(r => r.Id is null ||
-                !settings.IgnoreReferenceRules.Contains(r.Id, StringComparer.OrdinalIgnoreCase)));
+            rules.AddRange(reference.Rules.Where(r => r.ParsedAction == PolicyAction.Block && !r.Hide && (r.Id is null ||
+                !settings.IgnoreReferenceRules.Contains(r.Id, StringComparer.OrdinalIgnoreCase))));
         return new DriverPolicy
         {
             Schema = CurrentSchema,
@@ -286,9 +351,10 @@ public sealed class DriverPolicy
         {
             // Console en mode décisions : retenues et suspensions décidées par la console pour CETTE proposition (les règles
             // de la politique ne portent que les suspensions). Évaluées avant les règles de l'organisation, comme les règles
-            // « anneau-… » : une règle « allow » ne lève pas une retenue.
+            // « anneau-… » : une règle « allow » ne lève pas une retenue. Une proposition sans numéro de version lisible est
+            // décidée elle aussi, d'après son identité stable (DriverIdentity.ItemKey : UpdateID, identifiant du paquet...).
             unknownHold = null;
-            if (!candidate.IsInformational && DriverVersion.Parse(candidate.Version) is not null)
+            if (DriverIdentity.IsTrackable(candidate))
             {
                 var d = Decisions?.For(candidate);
                 switch (d?.Status)
@@ -366,23 +432,23 @@ public sealed class DriverPolicy
     /// Applique la politique aux candidats d'une analyse : renseigne <see cref="DriverCandidate.BlockedReason"/>,
     /// retire de la liste les candidats d'une règle « hide », et écarte les alternatives bloquées.
     /// </summary>
+    /// <para>
+    /// Même pilote proposé par plusieurs sources (même constructeur du matériel, même version, voir
+    /// <see cref="DriverIdentity.SameDriver"/>) : une suspension ou une retenue de la diffusion par anneaux qui vise l'une des
+    /// propositions vise aussi les autres (et leurs alternatives) — la fusion ne peut donc jamais choisir, à la place d'une
+    /// version suspendue, la même version venue d'une autre source.
+    /// </para>
     public List<CandidateDecision> Apply(List<DriverCandidate> candidates, IReadOnlyList<DeviceInfo> devices, DateTime? now = null)
     {
+        DriverIdentity.Annotate(candidates, devices);
         var decisions = new List<CandidateDecision>();
+        var holds = new List<(DriverCandidate Candidate, PolicyDecision Decision)>();
         foreach (var c in candidates.ToList())
         {
             var decision = Evaluate(c, devices, now);
             decisions.Add(new CandidateDecision(c, decision));
-            if (decision.IsBlocked && c.BlockedReason is null)
-            {
-                c.BlockedReason = decision.Reason;
-                if (decision.IsRolloutHold)
-                {
-                    c.HeldByRollout = true;
-                    c.RolloutAvailableAt = decision.AvailableAt;
-                    c.RolloutRing = Rollout?.Ring;
-                }
-            }
+            if (decision.IsRolloutHold) holds.Add((c, decision));
+            if (decision.IsBlocked && c.BlockedReason is null) MarkBlocked(c, decision);
             if (decision.Verdict == PolicyVerdict.Hidden) candidates.Remove(c);
 
             // Alternatives (autres paquets de la même source essayés en repli) : une version bloquée n'est jamais tentée.
@@ -390,10 +456,35 @@ public sealed class DriverPolicy
             {
                 var alt = c.Alternatives[i];
                 if (alt.TargetDeviceIds.Count == 0) alt.TargetDeviceIds.AddRange(c.TargetDeviceIds);
-                if (Evaluate(alt, devices, now).IsBlocked) c.Alternatives.RemoveAt(i);
+                var d = Evaluate(alt, devices, now);
+                if (d.IsRolloutHold) holds.Add((alt, d));
+                if (d.IsBlocked) c.Alternatives.RemoveAt(i);
             }
         }
+
+        if (holds.Count == 0) return decisions;
+        for (var n = 0; n < decisions.Count; n++)
+        {
+            var c = decisions[n].Candidate;
+            if (!decisions[n].Decision.IsBlocked && holds.FirstOrDefault(h => !ReferenceEquals(h.Candidate, c) && DriverIdentity.SameDriver(h.Candidate, c)) is { Candidate: not null } same)
+            {
+                var decision = PolicyDecision.Block($"{same.Decision.Reason} (même pilote, proposé par {same.Candidate.SourceLabel})", setting: "rollout",
+                    availableAt: same.Decision.AvailableAt);
+                decisions[n] = new CandidateDecision(c, decision);
+                if (c.BlockedReason is null) MarkBlocked(c, decision);
+            }
+            c.Alternatives.RemoveAll(alt => holds.Any(h => !ReferenceEquals(h.Candidate, alt) && DriverIdentity.SameDriver(h.Candidate, alt)));
+        }
         return decisions;
+    }
+
+    private void MarkBlocked(DriverCandidate c, PolicyDecision decision)
+    {
+        c.BlockedReason = decision.Reason;
+        if (!decision.IsRolloutHold) return;
+        c.HeldByRollout = true;
+        c.RolloutAvailableAt = decision.AvailableAt;
+        c.RolloutRing = Rollout?.Ring;
     }
 
     /// <summary>

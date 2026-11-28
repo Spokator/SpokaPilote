@@ -112,6 +112,61 @@ public sealed partial class ServerStore
             END;
         """;
 
+    /// <summary>
+    /// Migration 6 (console 4.0.1) : la table des versions gagne l'identité des propositions sans numéro de version
+    /// (<c>item_key</c>, vide pour une version ordinaire, dans la clé unique) et le matériel visé (<c>hardware_vendor</c>,
+    /// <c>device_class</c> : même pilote d'une source à l'autre). SQLite ne sait pas modifier une contrainte UNIQUE : la table
+    /// est reconstruite avec les mêmes identifiants (clés étrangères désactivées pendant la migration : installations,
+    /// compteurs et historique gardent leurs références), la séquence AUTOINCREMENT est conservée.
+    /// </summary>
+    private static void RebuildRolloutVersionsV6(SqliteConnection c)
+    {
+        var sequence = Scalar(c, "SELECT seq FROM sqlite_sequence WHERE name = 'rollout_versions';");
+        Execute(c, """
+            CREATE TABLE rollout_versions_v6 (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                source          TEXT NOT NULL,
+                title           TEXT NOT NULL,
+                version         TEXT NOT NULL,
+                item_key        TEXT NOT NULL DEFAULT '',
+                family          TEXT NOT NULL,
+                kind            TEXT,
+                category        TEXT,
+                hardware_vendor TEXT,
+                device_class    TEXT,
+                first_seen      TEXT NOT NULL,
+                first_machine   TEXT,
+                last_seen       TEXT NOT NULL,
+                suspended       INTEGER NOT NULL DEFAULT 0,
+                suspend_auto    INTEGER NOT NULL DEFAULT 0,
+                suspend_reason  TEXT,
+                suspended_at    TEXT,
+                suspended_by    TEXT,
+                acknowledged_at TEXT,
+                acknowledged_by TEXT,
+                resumed_at      TEXT,
+                resumed_by      TEXT,
+                approved_at     TEXT,
+                approved_by     TEXT,
+                UNIQUE (source, title, version, item_key)
+            );
+            INSERT INTO rollout_versions_v6(id, source, title, version, family, kind, category, first_seen, first_machine, last_seen, suspended,
+                suspend_auto, suspend_reason, suspended_at, suspended_by, acknowledged_at, acknowledged_by, resumed_at, resumed_by, approved_at, approved_by)
+            SELECT id, source, title, version, family, kind, category, first_seen, first_machine, last_seen, suspended,
+                suspend_auto, suspend_reason, suspended_at, suspended_by, acknowledged_at, acknowledged_by, resumed_at, resumed_by, approved_at, approved_by
+            FROM rollout_versions ORDER BY id;
+            DROP TABLE rollout_versions;
+            ALTER TABLE rollout_versions_v6 RENAME TO rollout_versions;
+            CREATE INDEX IF NOT EXISTS ix_rollout_versions_title ON rollout_versions(title, version);
+            CREATE INDEX IF NOT EXISTS ix_rollout_versions_item ON rollout_versions(item_key) WHERE item_key <> '';
+            """);
+        if (sequence is not null)
+            Execute(c, """
+                UPDATE sqlite_sequence SET seq = MAX(seq, $s) WHERE name = 'rollout_versions';
+                INSERT INTO sqlite_sequence(name, seq) SELECT 'rollout_versions', $s WHERE NOT EXISTS (SELECT 1 FROM sqlite_sequence WHERE name = 'rollout_versions');
+                """, ("$s", sequence));
+    }
+
     // ------------------------------------------------------------------ configuration (anneaux et réglages, en mémoire)
 
     private sealed record RolloutConfig(RolloutSettings Settings, IReadOnlyList<RingRecord> Rings);
@@ -356,38 +411,50 @@ public sealed partial class ServerStore
         var received = Iso(receivedAt);
         var day = received[..10];
         var newVersions = 0;
+        var identityChanged = false;
         var byTitle = new Dictionary<(string Title, string Version), long>();
         foreach (var cand in report.Candidates.Take(MaxTrackedCandidates))
         {
-            if (!RolloutKeys.IsTrackable(cand.Title, cand.Version)) continue;
+            if (!RolloutKeys.IsTrackable(cand.Title, cand.Version, cand.ItemId)) continue;
             var title = cand.Title.Trim();
-            var version = cand.Version!.Trim();
+            // Sans version lisible (4.0.1) : version vide, identité stable de la proposition dans item_key.
+            var item = RolloutKeys.ParseVersion(cand.Version) is null ? RolloutKeys.ItemKey(cand.ItemId)! : "";
+            var version = item.Length > 0 ? "" : cand.Version!.Trim();
             var source = RolloutKeys.SourceKey(cand.Source);
-            var row = Row(c, "SELECT id, last_seen FROM rollout_versions WHERE source = $s AND title = $t AND version = $v;",
-                ("$s", source), ("$t", title), ("$v", version));
+            var vendor = cand.HardwareVendor;
+            var row = Row(c, "SELECT id, last_seen, hardware_vendor FROM rollout_versions WHERE source = $s AND title = $t AND version = $v AND item_key = $i;",
+                ("$s", source), ("$t", title), ("$v", version), ("$i", item));
             long id;
             if (row is null)
             {
                 id = Convert.ToInt64(Scalar(c, """
-                    INSERT INTO rollout_versions(source, title, version, family, kind, category, first_seen, first_machine, last_seen)
-                    VALUES($s, $t, $v, $f, $k, $cat, $at, $m, $at) RETURNING id;
-                    """, ("$s", source), ("$t", title), ("$v", version), ("$f", RolloutKeys.FamilyPattern(title)),
-                    ("$k", RolloutKeys.CandidateKind(cand.Kind) ?? cand.Kind), ("$cat", cand.Category), ("$at", received), ("$m", report.Name)),
+                    INSERT INTO rollout_versions(source, title, version, item_key, family, kind, category, hardware_vendor, device_class, first_seen, first_machine, last_seen)
+                    VALUES($s, $t, $v, $i, $f, $k, $cat, $hv, $dc, $at, $m, $at) RETURNING id;
+                    """, ("$s", source), ("$t", title), ("$v", version), ("$i", item), ("$f", RolloutKeys.FamilyPattern(title)),
+                    ("$k", RolloutKeys.CandidateKind(cand.Kind) ?? cand.Kind), ("$cat", cand.Category), ("$hv", vendor), ("$dc", vendor is null ? null : cand.DeviceClass),
+                    ("$at", received), ("$m", report.Name)),
                     CultureInfo.InvariantCulture);
                 newVersions++;
             }
             else
             {
                 id = (long)row[0]!;
-                // Dernière détection : au plus une écriture par version et par jour.
-                if (string.CompareOrdinal((string)row[1]!, day) < 0)
+                // Dernière détection : au plus une écriture par version et par jour. Matériel visé appris d'un rapport ultérieur
+                // (version vue d'abord sur un poste où le périphérique n'était pas identifié) : une écriture, une fois.
+                if (row[2] is null && vendor is not null)
+                {
+                    Execute(c, "UPDATE rollout_versions SET hardware_vendor = $hv, device_class = $dc, last_seen = MAX(last_seen, $at) WHERE id = $id;",
+                        ("$id", id), ("$hv", vendor), ("$dc", cand.DeviceClass), ("$at", received));
+                    identityChanged = true; // l'identité d'une suspension peut s'élargir : état à recalculer
+                }
+                else if (string.CompareOrdinal((string)row[1]!, day) < 0)
                     Execute(c, "UPDATE rollout_versions SET last_seen = $at WHERE id = $id;", ("$id", id), ("$at", received));
             }
-            byTitle.TryAdd((title.ToUpperInvariant(), version.ToUpperInvariant()), id);
+            byTitle.TryAdd((title.ToUpperInvariant(), item.Length > 0 ? "#" + item : version.ToUpperInvariant()), id);
         }
 
         var config = Config();
-        var statsChanged = false;
+        var statsChanged = identityChanged;
         var failed = new List<long>();
         long? ring = null;
         var ringResolved = false;
@@ -404,7 +471,7 @@ public sealed partial class ServerStore
             {
                 var success = o.Status == "Installed";
                 if (!success && o.Status != "Failed") continue; // déjà à jour, simulation, bloqué : pas une tentative
-                var versionId = FindVersion(c, byTitle, o.Title, o.Version);
+                var versionId = FindVersion(c, byTitle, o.Title, o.Version, o.ItemId);
                 if (versionId is null) continue;
                 if (RecordOutcome(c, versionId.Value, RingId(), machineRef, at, success, regression: false,
                         success ? null : Truncate(o.Message, 500)))
@@ -445,15 +512,19 @@ public sealed partial class ServerStore
     }
 
 
-    private static long? FindVersion(SqliteConnection c, Dictionary<(string, string), long> byTitle, string? title, string? version)
+    private static long? FindVersion(SqliteConnection c, Dictionary<(string, string), long> byTitle, string? title, string? version, string? itemId)
     {
-        if (string.IsNullOrWhiteSpace(title) || string.IsNullOrWhiteSpace(version)) return null;
-        if (byTitle.TryGetValue((title.Trim().ToUpperInvariant(), version.Trim().ToUpperInvariant()), out var id)) return id;
+        if (string.IsNullOrWhiteSpace(title)) return null;
+        // Pilote sans version lisible (4.0.1) : retrouvé par son identité stable.
+        var item = RolloutKeys.ParseVersion(version) is null ? RolloutKeys.ItemKey(itemId) : null;
+        if (item is null && string.IsNullOrWhiteSpace(version)) return null;
+        if (byTitle.TryGetValue((title.Trim().ToUpperInvariant(), item is null ? version!.Trim().ToUpperInvariant() : "#" + item), out var id)) return id;
         // Résultat sans proposition correspondante dans le rapport : version connue sous ce titre (une seule source).
         using var cmd = c.CreateCommand();
-        cmd.CommandText = "SELECT id FROM rollout_versions WHERE title = $t AND version = $v LIMIT 2;";
+        cmd.CommandText = "SELECT id FROM rollout_versions WHERE title = $t AND version = $v AND item_key = $i LIMIT 2;";
         cmd.Parameters.AddWithValue("$t", title.Trim());
-        cmd.Parameters.AddWithValue("$v", version.Trim());
+        cmd.Parameters.AddWithValue("$v", item is null ? version!.Trim() : "");
+        cmd.Parameters.AddWithValue("$i", item ?? "");
         using var r = cmd.ExecuteReader();
         if (!r.Read()) return null;
         var first = r.GetInt64(0);
@@ -505,7 +576,8 @@ public sealed partial class ServerStore
 
     private const string VersionColumns = """
         id, source, title, version, family, kind, category, first_seen, first_machine, last_seen, suspended, suspend_auto, suspend_reason,
-        suspended_at, suspended_by, acknowledged_at, acknowledged_by, resumed_at, resumed_by, approved_at, approved_by
+        suspended_at, suspended_by, acknowledged_at, acknowledged_by, resumed_at, resumed_by, approved_at, approved_by,
+        item_key, hardware_vendor, device_class
         """;
 
     private static RolloutVersion ReadVersion(SqliteDataReader r)
@@ -518,6 +590,7 @@ public sealed partial class ServerStore
             Kind = S(5), Category = S(6), FirstSeen = ParseIso(r.GetString(7)), FirstMachine = S(8), LastSeen = ParseIso(r.GetString(9)),
             Suspended = r.GetInt64(10) != 0, SuspendAuto = r.GetInt64(11) != 0, SuspendReason = S(12), SuspendedAt = D(13), SuspendedBy = S(14),
             AcknowledgedAt = D(15), AcknowledgedBy = S(16), ResumedAt = D(17), ResumedBy = S(18), ApprovedAt = D(19), ApprovedBy = S(20),
+            ItemKey = S(21) ?? "", HardwareVendor = S(22), DeviceClass = S(23),
         };
     }
 

@@ -37,6 +37,12 @@ public sealed class ScanResult
         ProblemDevices.Where(d => !Candidates.Any(c => c.TargetDeviceIds.Contains(d.InstanceId, StringComparer.OrdinalIgnoreCase)));
 }
 
+/// <summary>Revérification de la politique avant installation : politique rechargée, propositions devenues bloquées ou retenues.</summary>
+public sealed record PolicyRecheck(LoadedPolicy Policy, List<CandidateDecision> NewlyBlocked)
+{
+    public bool Changed => NewlyBlocked.Count > 0;
+}
+
 /// <summary>
 /// Orchestrateur : inventaire → interrogation de toutes les sources de confiance en parallèle → fusion.
 /// Priorité en cas de doublon : dépôt interne &gt; constructeur du PC ou fabricant de la carte graphique
@@ -188,9 +194,35 @@ public sealed class DriverScanEngine
         LoadedPolicy policy, IEnumerable<DriverCandidate> candidates, IReadOnlyList<DeviceInfo> devices, CancellationToken ct, DateTime? now = null)
     {
         var list = candidates.ToList();
+        // Matériel visé (constructeur, classe) : envoyé avec les propositions pour qu'une suspension suive le même pilote d'une source à l'autre.
+        DriverIdentity.Annotate(list, devices);
         if (policy.Organization?.Rollout is { Decisions: true })
             policy.Effective.Decisions = await loader.DecideAsync(policy, list, ct).ConfigureAwait(false);
         return ApplyPolicy(list, devices, policy.Effective, now);
+    }
+
+    /// <summary>
+    /// Revérifie la politique JUSTE AVANT d'installer des propositions issues d'une analyse plus ancienne (interface : liste
+    /// affichée depuis des minutes ou des heures ; ligne de commande après confirmation) : une version suspendue par le
+    /// disjoncteur, retenue par un changement d'anneau ou bloquée par une nouvelle politique entre l'analyse et le clic n'est
+    /// pas installée. Politique rechargée (console injoignable : dernière politique et dernières décisions connues, comme à
+    /// l'analyse) et décisions redemandées pour ces seules propositions. La revérification ne fait que BLOQUER : une
+    /// proposition déjà bloquée le reste. Renseigne <see cref="DriverCandidate.BlockedReason"/> (et la retenue des anneaux) des
+    /// propositions devenues bloquées, écarte leurs alternatives bloquées, et les renvoie. Ne lève pas d'exception (hors annulation).
+    /// </summary>
+    public static async Task<PolicyRecheck> RecheckPolicyAsync(PolicyLoader loader, IReadOnlyList<DriverCandidate> selected,
+        IReadOnlyList<DeviceInfo> devices, CancellationToken ct, DateTime? now = null)
+    {
+        var list = selected.Where(c => c.BlockedReason is null).ToList();
+        var policy = await loader.LoadAsync(ct).ConfigureAwait(false);
+        if (list.Count == 0) return new PolicyRecheck(policy, new List<CandidateDecision>());
+        DriverIdentity.Annotate(list, devices);
+        if (policy.Organization?.Rollout is { Decisions: true })
+            policy.Effective.Decisions = await loader.DecideAsync(policy, list, ct).ConfigureAwait(false);
+        var blocked = policy.Effective.Apply(list.ToList(), devices, now).Where(d => d.Decision.IsBlocked).ToList();
+        foreach (var d in blocked)
+            Log.Info($"Revérification avant installation : {d.Candidate.Title} {d.Candidate.Version} ({d.Candidate.SourceLabel}) n'est plus installable — {d.Candidate.BlockedReason}");
+        return new PolicyRecheck(policy, blocked);
     }
 
     /// <summary>

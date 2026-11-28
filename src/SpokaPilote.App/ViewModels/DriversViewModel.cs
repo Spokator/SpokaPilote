@@ -9,6 +9,7 @@ using SpokaPilote.Core.Engine;
 using SpokaPilote.Core.Infrastructure;
 using SpokaPilote.Core.Install;
 using SpokaPilote.Core.Models;
+using SpokaPilote.Core.Policy;
 
 namespace SpokaPilote.App.ViewModels;
 
@@ -168,8 +169,22 @@ public sealed class DriversViewModel : ObservableObject
         Shell.Home.ClearMessage();
         foreach (var c in selected) { c.Status = Loc.T("En attente"); c.StatusDetail = ""; }
         IReadOnlyList<InstallOutcome>? outcomes = null;
+        var withdrawn = new List<CandidateItem>();
         var ok = await Shell.RunBusyAsync(dryRun ? Loc.T("Simulation...") : Loc.T("Installation..."), async ct =>
         {
+            // La liste affichée peut dater de plusieurs heures : politique et décisions de diffusion revérifiées juste avant
+            // d'installer (console injoignable : dernières connues). Un pilote suspendu ou retenu entre-temps est écarté.
+            Shell.Status = Loc.T("Vérification de la politique de pilotes...");
+            var recheck = await DriverScanEngine.RecheckPolicyAsync(new PolicyLoader(Shell.Settings), selected.Select(s => s.Candidate).ToList(), scan.Devices, ct);
+            foreach (var d in recheck.NewlyBlocked)
+                if (selected.FirstOrDefault(s => s.Candidate == d.Candidate) is { } item)
+                {
+                    item.MarkBlockedSinceScan();
+                    withdrawn.Add(item);
+                    selected.Remove(item);
+                }
+            if (selected.Count == 0) return;
+
             var installer = new DriverInstaller(Shell.Settings, scan.System);
             outcomes = await installer.InstallAsync(selected.Select(s => s.Candidate).ToList(), scan.Devices,
                 new InstallOptions { DryRun = dryRun, CreateRestorePoint = Shell.CreateRestorePoint, BackupDrivers = Shell.BackupDrivers },
@@ -200,6 +215,18 @@ public sealed class DriversViewModel : ObservableObject
             catch { /* historique facultatif */ }
         }, BusyKind.Install);
 
+        // Pilotes écartés juste avant l'installation (suspendus, retenus ou bloqués depuis l'analyse) : nommés à l'utilisateur.
+        var withdrawnText = withdrawn.Count == 0 ? "" : "\n" + Loc.F("{0} pilote(s) écarté(s) : bloqué(s) ou retenu(s) par la politique depuis l'analyse — {1}.",
+            withdrawn.Count, string.Join(" ; ", withdrawn.Select(w => $"{w.Title} {w.Version}".Trim() + " : " + (w.StatusDetail is { Length: > 0 } d ? d : w.Candidate.BlockedReason))));
+        if (ok && outcomes is null && withdrawn.Count > 0)
+        {
+            var nothing = Loc.T("Rien n'a été installé.") + withdrawnText;
+            Shell.Status = nothing;
+            Shell.Home.ShowMessage("warning", nothing);
+            Shell.Home.Refresh();
+            OnPropertyChanged(string.Empty);
+            return;
+        }
         if (outcomes is null)
         {
             Shell.Home.ShowMessage(Shell.LastFailure is null ? "info" : "error", Shell.LastFailure is null
@@ -228,6 +255,11 @@ public sealed class DriversViewModel : ObservableObject
         {
             kind = succeeded == 0 ? "error" : "warning";
             message = Loc.F("Installation terminée : {0} réussi(s), {1} échec(s). Les pilotes en échec restent cochés ; la raison est indiquée dans la page Pilotes.", succeeded, failed);
+        }
+        if (withdrawn.Count > 0)
+        {
+            message += withdrawnText;
+            if (kind == "success") kind = "warning";
         }
         Shell.Status = message;
         Shell.Home.ShowMessage(kind, message);
