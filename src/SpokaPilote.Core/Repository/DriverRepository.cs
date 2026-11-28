@@ -36,7 +36,7 @@ public sealed class DriverRepository
         get
         {
             var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(RootPath.ToLowerInvariant())))[..16];
-            return System.IO.Path.Combine(AppPaths.Ensure(System.IO.Path.Combine(AppPaths.Cache, "repo-index")), hash + ".json");
+            return System.IO.Path.Combine(AppPaths.CacheSubdirectory("repo-index"), hash + ".json");
         }
     }
 
@@ -52,7 +52,8 @@ public sealed class DriverRepository
         var previous = new Dictionary<string, IndexedInf>(StringComparer.OrdinalIgnoreCase);
         try
         {
-            if (File.Exists(IndexFile))
+            // Exécution élevée : index écrit par SYSTEM / un administrateur seulement (sinon reconstruit).
+            if (File.Exists(IndexFile) && DataProtection.IsTrustedForElevatedUse(IndexFile))
             {
                 var cached = JsonSerializer.Deserialize<List<IndexedInf>>(await File.ReadAllTextAsync(IndexFile, ct));
                 if (cached is not null) foreach (var c in cached) previous[c.Path] = c;

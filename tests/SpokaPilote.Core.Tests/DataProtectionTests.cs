@@ -49,6 +49,18 @@ internal sealed class FakeFileSecurity : IFileSecurity
         _state[Key(path)] = (DataProtection.AdministratorsSid, new DaclState(true, rules.ToList(), false));
     }
     public void EnableOwnershipPrivileges() { }
+    /// <summary>Chemins dont la DACL a été posée sans propagation (dossier Mount occupé).</summary>
+    public List<string> OwnDaclOnlyWrites { get; } = new();
+    public void SetOwnDaclOnly(string path, bool isDirectory, IReadOnlyList<AclRule> rules)
+    {
+        OwnDaclOnlyWrites.Add(Key(path));
+        _state[Key(path)] = (Get(path).Owner, new DaclState(true, rules.ToList(), false));
+    }
+    /// <summary>Faux type de volume (FAT32 / partage réseau quand false).</summary>
+    public bool AclVolume { get; set; } = true;
+    public bool SupportsOwnersAndAcls(string path) => AclVolume;
+    /// <summary>Chemins touchés (propriétaire ou DACL) : rien sous Mount ne doit y figurer.</summary>
+    public IEnumerable<string> KnownPaths => _state.Keys;
 }
 
 public sealed class DataRootProtectorTests : IDisposable
@@ -122,7 +134,7 @@ public sealed class DataRootProtectorTests : IDisposable
         // Jonction retirée, cible intacte.
         Assert.False(Directory.Exists(Path.Combine(_root, "Downloads", "lien")));
         Assert.True(File.Exists(Path.Combine(_outside, "cible.txt")));
-        Assert.Contains(report.LinksRemoved, l => l.EndsWith("lien", StringComparison.Ordinal));
+        Assert.Contains("Downloads", report.Renewed); // dossier régénérable renouvelé : le lien est parti avec l'ancien
         // Dossiers privés : sans accès des utilisateurs.
         foreach (var name in new[] { "Cache", "Work", "Quarantaine" })
             Assert.True(DataRootProtector.Matches(_security.DaclOf(Path.Combine(_root, name)), DataProtection.PrivateRules, isDirectory: true), name);
@@ -186,6 +198,129 @@ public sealed class DataRootProtectorTests : IDisposable
         Assert.True(DataProtection.LooksLikeDataRoot(_root, DataLocationMode.Override)); // n'existe pas encore
         Make("settings.json");
         Assert.True(DataProtection.LooksLikeDataRoot(_root, DataLocationMode.Override));
+    }
+
+    [Fact]
+    public void User_folder_that_merely_contains_logs_or_reports_is_not_a_data_root()
+    {
+        // Dossier de l'utilisateur avec des noms courants : jamais repris ni mis en quarantaine.
+        Directory.CreateDirectory(Path.Combine(_outside, "Logs"));
+        Directory.CreateDirectory(Path.Combine(_outside, "Reports"));
+        Assert.False(DataProtection.LooksLikeDataRoot(_outside, DataLocationMode.Override)); // pas de settings.json
+        File.WriteAllText(Path.Combine(_outside, "settings.json"), "{}");
+        File.WriteAllText(Path.Combine(_outside, "compta.xlsx"), "x");
+        Assert.False(DataProtection.LooksLikeDataRoot(_outside, DataLocationMode.Override)); // élément inconnu
+        File.Delete(Path.Combine(_outside, "compta.xlsx"));
+        Assert.True(DataProtection.LooksLikeDataRoot(_outside, DataLocationMode.Override)); // uniquement des éléments SpokaPilote
+        // Dossier déjà protégé (témoin) : reconnu même avec un élément ajouté depuis (mis en quarantaine).
+        File.WriteAllText(Path.Combine(_outside, "intrus.exe"), "MZ");
+        File.WriteAllText(Path.Combine(_outside, DataRootProtector.MarkerFileName), DataRootProtector.MarkerContent);
+        Assert.True(DataProtection.LooksLikeDataRoot(_outside, DataLocationMode.Override));
+    }
+
+    [Fact]
+    public void Full_pass_renews_cache_and_work_so_handles_opened_before_point_to_a_deleted_folder()
+    {
+        Make(@"Cache\dell-CatalogPC.xml", "<ok/>", DataProtection.SystemSid);
+        Make(@"Work\install-1a2b\setup.exe", "MZ", DataProtection.SystemSid);
+        var cacheBefore = new DirectoryInfo(Path.Combine(_root, "Cache"));
+
+        var report = new DataRootProtector(_security).Ensure(_root, DateTime.Now);
+
+        Assert.True(report.FullPass);
+        Assert.False(report.Incomplete);
+        Assert.Contains("Cache", report.Renewed);
+        Assert.Contains("Work", report.Renewed);
+        // Dossiers neufs, vides, privés ; anciens supprimés (aucun « Cache.ancien-* » restant).
+        Assert.Empty(Directory.EnumerateFileSystemEntries(Path.Combine(_root, "Cache")));
+        Assert.Empty(Directory.EnumerateFileSystemEntries(Path.Combine(_root, "Work")));
+        Assert.DoesNotContain(Directory.EnumerateDirectories(_root), d => DataRootProtector.IsRenewedLeftover(Path.GetFileName(d)));
+        Assert.True(DataRootProtector.Matches(_security.DaclOf(Path.Combine(_root, "Cache")), DataProtection.PrivateRules, isDirectory: true));
+        Assert.True(File.Exists(Path.Combine(_root, DataRootProtector.MarkerFileName)));
+        cacheBefore.Refresh();
+        Assert.True(cacheBefore.Exists); // même chemin, nouveau dossier
+    }
+
+    [Fact]
+    public void Folder_with_an_open_file_is_not_renewed_and_the_full_pass_is_retried_at_next_start()
+    {
+        var held = Make(@"Cache\verrou.bin", "x", DataProtection.SystemSid);
+        var protector = new DataRootProtector(_security);
+        using (new FileStream(held, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+        {
+            var first = protector.Ensure(_root, DateTime.Now);
+            Assert.True(first.FullPass);
+            Assert.True(first.Incomplete);
+            Assert.DoesNotContain("Cache", first.Renewed);
+            Assert.Contains(first.Errors, e => e.StartsWith("Cache", StringComparison.Ordinal));
+            Assert.False(File.Exists(Path.Combine(_root, DataRootProtector.MarkerFileName))); // pas de témoin : on recommencera
+            Assert.True(protector.Ensure(_root, DateTime.Now).FullPass);
+        }
+        var later = protector.Ensure(_root, DateTime.Now);
+        Assert.True(later.FullPass);
+        Assert.False(later.Incomplete);
+        Assert.Contains("Cache", later.Renewed);
+        Assert.False(File.Exists(held));
+        _security.DefaultOwner = DataProtection.SystemSid;
+        Assert.False(protector.Ensure(_root, DateTime.Now).FullPass);
+    }
+
+    [Fact]
+    public void Planted_link_inside_cache_triggers_a_full_pass_even_when_the_first_level_is_compliant()
+    {
+        var protector = new DataRootProtector(_security);
+        protector.Ensure(_root, DateTime.Now);
+        _security.DefaultOwner = DataProtection.SystemSid;
+        Assert.False(protector.Ensure(_root, DateTime.Now).FullPass);
+
+        Directory.CreateDirectory(_outside);
+        File.WriteAllText(Path.Combine(_outside, "cible.txt"), "ne pas toucher");
+        Junction(Path.Combine(_root, "Cache", "catalog"), _outside); // descripteur sur Cache ouvert avant la protection
+        var report = protector.Ensure(_root, DateTime.Now);
+        Assert.True(report.FullPass);
+        Assert.False(Directory.Exists(Path.Combine(_root, "Cache", "catalog")));
+        Assert.True(File.Exists(Path.Combine(_outside, "cible.txt")));
+    }
+
+    [Fact]
+    public void Mounted_image_is_never_touched_only_the_mount_folder_acl()
+    {
+        // Image montée par DISM pendant une reprise complète : fichiers d'autres propriétaires (TrustedInstaller, comptes
+        // de l'image), dossier de montage en lien : rien n'est supprimé, repris ni réinitialisé sous Mount.
+        var image = Path.Combine(_root, "Mount", "20261128-100000-1");
+        var system32 = Make(@"Mount\20261128-100000-1\Windows\System32\ntoskrnl.exe", "MZ", FakeFileSecurity.Attacker);
+        _security.Own(image, FakeFileSecurity.Attacker);
+        Directory.CreateDirectory(_outside);
+        Junction(Path.Combine(_root, "Mount", "20261128-100000-2"), _outside);
+        OwnDir("Mount", FakeFileSecurity.Attacker);
+
+        var report = new DataRootProtector(_security).Ensure(_root, DateTime.Now);
+
+        Assert.True(report.MountInUse);
+        Assert.True(File.Exists(system32));
+        Assert.True(Directory.Exists(Path.Combine(_root, "Mount", "20261128-100000-2")));
+        Assert.Equal(FakeFileSecurity.Attacker, _security.OwnerOf(system32));
+        Assert.Equal(FakeFileSecurity.Attacker, _security.OwnerOf(image));
+        Assert.False(_security.DaclOf(image).IsProtected);
+        Assert.DoesNotContain(report.LinksRemoved, l => l.StartsWith("Mount", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(report.Deleted, d => d.StartsWith("Mount", StringComparison.OrdinalIgnoreCase));
+        // Le dossier Mount lui-même : repris, DACL privée posée sans propagation.
+        var mount = Path.GetFullPath(Path.Combine(_root, "Mount"));
+        Assert.Equal(DataProtection.AdministratorsSid, _security.OwnerOf(mount));
+        Assert.Contains(mount, _security.OwnDaclOnlyWrites);
+        Assert.True(DataRootProtector.Matches(_security.DaclOf(mount), DataProtection.PrivateRules, isDirectory: true));
+        Assert.DoesNotContain(_security.KnownPaths, p => p.StartsWith(mount + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) && p != Path.GetFullPath(image) && p != Path.GetFullPath(system32));
+    }
+
+    [Fact]
+    public void Empty_mount_folder_is_renewed_like_the_other_regenerable_folders()
+    {
+        OwnDir("Mount", FakeFileSecurity.Attacker);
+        var report = new DataRootProtector(_security).Ensure(_root, DateTime.Now);
+        Assert.False(report.MountInUse);
+        Assert.Contains("Mount", report.Renewed);
+        Assert.False(Directory.Exists(Path.Combine(_root, "Mount"))); // recréé à la demande (AppPaths.Mount), privé
+        Assert.Empty(_security.OwnDaclOnlyWrites);
     }
 }
 
@@ -274,6 +409,102 @@ public sealed class ElevatedUseChecksTests : IDisposable
         {
             System.IO.File.Delete(entry);
         }
+    }
+
+    /// <summary>Dossier de données de test = _dir (SPOKAPILOTE_HOME), le temps d'un test.</summary>
+    private IDisposable UseDataRoot(string root)
+    {
+        var previous = AppPaths.Layout;
+        AppPaths.Layout = new AppLayout(DataLocationMode.Override, root, root, null, Path.Combine(root, "ui.json"));
+        DataProtection.ResetLocationCache();
+        return new Restore(() => { AppPaths.Layout = previous; DataProtection.ResetLocationCache(); });
+    }
+
+    private sealed class Restore(Action action) : IDisposable
+    {
+        public void Dispose() => action();
+    }
+
+    private void OwnTree(string path, SecurityIdentifier owner)
+    {
+        for (var p = Path.GetFullPath(path); p.Length >= _dir.Length; p = Path.GetDirectoryName(p)!) _security.Own(p, owner);
+    }
+
+    [Fact]
+    public void Every_folder_on_the_path_from_the_data_root_must_be_trusted_and_not_a_link()
+    {
+        using var layout = UseDataRoot(_dir);
+        var catalog = Directory.CreateDirectory(Path.Combine(_dir, "Cache", "catalog")).FullName;
+        var file = Path.Combine(catalog, "q.json");
+        System.IO.File.WriteAllText(file, "[]");
+        OwnTree(file, DataProtection.SystemSid);
+        using (DataProtection.OverrideEnforcedForTest(true))
+        {
+            Assert.True(DataProtection.IsTrustedForElevatedUse(file));
+            // Dossier intermédiaire créé par un utilisateur (descripteur ouvert avant la protection) : fichier refusé, même
+            // s'il appartient lui-même à SYSTEM.
+            _security.Own(catalog, FakeFileSecurity.Attacker);
+            Assert.False(DataProtection.IsTrustedForElevatedUse(file));
+            _security.Own(catalog, DataProtection.SystemSid);
+            _security.Own(_dir, FakeFileSecurity.Attacker); // racine elle-même
+            Assert.False(DataProtection.IsTrustedForElevatedUse(file));
+        }
+    }
+
+    [Fact]
+    public void Junction_anywhere_on_the_path_is_refused_and_replaced_without_being_followed()
+    {
+        using var layout = UseDataRoot(_dir);
+        var outside = Directory.CreateDirectory(Path.Combine(Path.GetTempPath(), "SpokaPilote.Tests", "cible-" + Guid.NewGuid().ToString("N"))).FullName;
+        try
+        {
+            var target = Path.Combine(outside, "q.json");
+            System.IO.File.WriteAllText(target, "[]");
+            _security.Own(target, DataProtection.SystemSid);
+            var cache = Directory.CreateDirectory(Path.Combine(_dir, "Cache")).FullName;
+            OwnTree(cache, DataProtection.AdministratorsSid);
+            var link = Path.Combine(cache, "catalog");
+            using (var p = Process.Start(new ProcessStartInfo("cmd.exe", $"/d /c mklink /J \"{link}\" \"{outside}\"") { CreateNoWindow = true, UseShellExecute = false })!)
+                p.WaitForExit();
+            _security.Own(link, DataProtection.AdministratorsSid); // un lien ne se juge pas à son propriétaire
+
+            using (DataProtection.OverrideEnforcedForTest(true))
+            {
+                Assert.False(DataProtection.IsTrustedForElevatedUse(Path.Combine(link, "q.json")));
+                _security.DefaultOwner = DataProtection.SystemSid; // dossiers recréés par le processus élevé
+                var safe = DataProtection.EnsureTrustedSubdirectory(cache, "catalog");
+                Assert.Equal(link, safe);
+                Assert.Equal(0, (int)(new DirectoryInfo(safe).Attributes & FileAttributes.ReparsePoint));
+                Assert.Empty(Directory.EnumerateFileSystemEntries(safe));
+                Assert.True(System.IO.File.Exists(target)); // cible du lien intacte
+            }
+        }
+        finally
+        {
+            DataProtection.DeleteTree(outside);
+        }
+    }
+
+    [Fact]
+    public void Home_on_a_volume_without_acls_is_an_unprotected_location_like_a_portable_key()
+    {
+        using var layout = UseDataRoot(_dir);
+        Assert.False(DataProtection.UnprotectedLocation);
+        Assert.True(SecretStore.UsesTokenFile);
+
+        _security.AclVolume = false; // FAT32 / exFAT / partage réseau
+        DataProtection.ResetLocationCache();
+        Assert.True(DataProtection.UnprotectedLocation);
+        Assert.False(SecretStore.UsesTokenFile); // jeton dans settings.json, comme sur une clé portable
+        // Aucun droit modifié, rien de mis en quarantaine, même sur un dossier qui contient des données d'un utilisateur.
+        System.IO.File.WriteAllText(Path.Combine(_dir, "settings.json"), "{}");
+        Directory.CreateDirectory(Path.Combine(_dir, "Reports"));
+        var userFile = Path.Combine(_dir, "Reports", "rapport.html");
+        System.IO.File.WriteAllText(userFile, "x");
+        _security.Own(userFile, FakeFileSecurity.Attacker);
+        Assert.Null(DataProtection.Protect(_dir, forceFullPass: true));
+        Assert.True(System.IO.File.Exists(userFile));
+        Assert.Equal(0, _security.ProtectedDaclWrites);
     }
 
     [Fact]
@@ -426,6 +657,28 @@ public sealed class RealAclTests : IDisposable
     private readonly string _root = Path.Combine(Path.GetTempPath(), "SpokaPilote.Tests", "acl-" + Guid.NewGuid().ToString("N"), "SpokaPilote");
 
     public void Dispose() => DataProtection.DeleteTree(Path.GetDirectoryName(_root)!);
+
+    [Fact]
+    public void Mount_acl_is_set_without_rewriting_the_acls_of_the_mounted_image()
+    {
+        var security = WindowsFileSecurity.Instance;
+        Assert.True(security.SupportsOwnersAndAcls(Path.GetTempPath())); // NTFS local
+        Assert.False(security.SupportsOwnersAndAcls(@"\\serveur\partage\SpokaPilote"));
+        var mount = Directory.CreateDirectory(Path.Combine(_root, "Mount")).FullName;
+        var file = Path.Combine(Directory.CreateDirectory(Path.Combine(mount, "img", "Windows")).FullName, "fichier.sys");
+        File.WriteAllText(file, "x");
+        string Sddl() => new FileInfo(file).GetAccessControl().GetSecurityDescriptorSddlForm(AccessControlSections.Access);
+        var before = Sddl();
+        using var me = WindowsIdentity.GetCurrent();
+        IReadOnlyList<AclRule> rules = [new(DataProtection.SystemSid, FileSystemRights.FullControl, true), new(me.User!, FileSystemRights.FullControl, true)];
+
+        security.SetOwnDaclOnly(mount, true, rules);
+        Assert.True(DataRootProtector.Matches(security.GetDacl(mount, true), rules, isDirectory: true));
+        Assert.Equal(before, Sddl()); // aucune propagation sous Mount
+
+        security.SetProtectedDacl(mount, true, rules); // SetAccessControl : propagation (ce que Mount évite)
+        Assert.NotEqual(before, Sddl());
+    }
 
     [ElevatedFact]
     public void Real_acls_match_the_documented_layout()

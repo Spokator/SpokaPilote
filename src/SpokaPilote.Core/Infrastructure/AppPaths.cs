@@ -89,6 +89,11 @@ public static class AppPaths
 
     /// <summary>Catalogues et index en cache (dossier privé quand le processus est élevé).</summary>
     public static string Cache => DataProtection.EnsurePrivateDirectory(Path.Combine(WritableRoot, "Cache"));
+    /// <summary>
+    /// Sous-dossier du cache (« catalog », « repo-index ») : processus élevé, jamais un lien ni un dossier d'un autre
+    /// propriétaire (retiré sans être suivi puis recréé), voir <see cref="DataProtection.EnsureTrustedSubdirectory"/>.
+    /// </summary>
+    public static string CacheSubdirectory(string name) => DataProtection.EnsureTrustedSubdirectory(Cache, name);
     /// <summary>Dossiers de travail propres à chaque exécution (<see cref="WorkDirectory"/>) : dossier privé quand le processus est élevé.</summary>
     public static string Work => DataProtection.EnsurePrivateDirectory(Path.Combine(WritableRoot, WorkDirectory.FolderName));
     public static string Reports => Ensure(Path.Combine(WritableRoot, "Reports"));
