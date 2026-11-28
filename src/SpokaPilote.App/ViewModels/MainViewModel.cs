@@ -248,7 +248,7 @@ public sealed class MainViewModel : ObservableObject
             var file = await Core.Online.UpdateChecker.DownloadAsync(AvailableUpdate,
                 new Progress<double>(p => { ProgressIndeterminate = false; Progress = p; }), ct);
             Status = Loc.T("Installation de la mise à jour...");
-            Core.Online.UpdateChecker.LaunchInstaller(file, relaunch: true);
+            Core.Online.UpdateChecker.LaunchInstaller(AvailableUpdate, file, relaunch: true);
             Application.Current.Shutdown();
         });
     }

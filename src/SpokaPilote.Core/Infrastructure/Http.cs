@@ -41,9 +41,11 @@ public static class Http
 
     /// <summary>
     /// Télécharge un fichier de catalogue/métadonnées en cache disque, rafraîchi après <paramref name="maxAge"/>. Avec une
-    /// console 4.0 (cache actif), le catalogue est d'abord demandé à la console : la date du fichier local est alors celle à
-    /// laquelle la console l'a obtenu de la source, pour que l'âge maximal compte depuis la source. Un catalogue absent de
-    /// la source (404) lève HttpRequestException comme en accès direct.
+    /// console 4.0 (cache actif), un catalogue .cab signé (Dell, HP) est d'abord demandé à la console et n'est gardé que
+    /// s'il porte la signature de l'éditeur attendu ; la date du fichier local est alors celle à laquelle la console l'a
+    /// obtenu de la source, pour que l'âge maximal compte depuis la source. Tout autre catalogue (XML Lenovo, pages) est
+    /// toujours lu directement à la source (<see cref="Online.ConsoleCache.TryCatalogFileAsync"/>). Un catalogue absent
+    /// de la source (404) lève HttpRequestException comme en accès direct.
     /// </summary>
     public static async Task<string> GetCachedFileAsync(string url, string cacheName, TimeSpan maxAge, CancellationToken ct = default)
     {

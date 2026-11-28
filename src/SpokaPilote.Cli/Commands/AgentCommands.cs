@@ -281,12 +281,22 @@ internal static partial class Program
                 if (update is null) return (new AgentJobResult(true, ExitOk, $"SpokaPilote est à jour ({current.ToString(3)})."), null);
                 if (job.DryRun)
                     return (new AgentJobResult(true, ExitOk, $"Simulation : la version {update.Version.ToString(3)} serait installée (actuelle : {current.ToString(3)})."), null);
-                var file = await UpdateChecker.DownloadAsync(update, null, ct);
-                WriteLine("Installeur téléchargé et vérifié (taille + SHA-256).", ConsoleColor.Green);
+                // Empreinte SHA-256 publiée par GitHub obligatoire (sinon UpdateIntegrityException : rien n'est lancé),
+                // signature contrôlée si l'installeur est signé, revérifiées juste avant le lancement en SYSTEM.
+                string file;
+                try
+                {
+                    file = await UpdateChecker.DownloadAsync(update, null, ct);
+                }
+                catch (UpdateIntegrityException ex)
+                {
+                    return (new AgentJobResult(false, ExitError, ex.Message), null);
+                }
+                WriteLine("Installeur téléchargé et vérifié (taille + SHA-256 publiés par GitHub, signature si présente).", ConsoleColor.Green);
                 return (new AgentJobResult(true, ExitOk, $"Version {update.Version.ToString(3)} téléchargée et vérifiée : installation silencieuse lancée."),
                     () =>
                     {
-                        UpdateChecker.LaunchInstaller(file, relaunch: false);
+                        UpdateChecker.LaunchInstaller(update, file, relaunch: false);
                         return Task.CompletedTask;
                     });
             }

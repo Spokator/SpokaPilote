@@ -310,21 +310,26 @@ public sealed class DriverInstaller
         var downloadDir = Path.GetDirectoryName(file)!;
 
         // %FILE% = installeur téléchargé, %PACKAGEPATH% = dossier d'extraction, %LOGPATH% = journaux de SpokaPilote.
-        string Expand(string command) => command
-            .Replace("%FILE%", file, StringComparison.OrdinalIgnoreCase)
-            .Replace("%PACKAGEPATH%", packagePath, StringComparison.OrdinalIgnoreCase)
-            .Replace("%LOGPATH%", AppPaths.Logs, StringComparison.OrdinalIgnoreCase);
+        // Les commandes viennent des catalogues : forme contrôlée (VendorCommand) AVANT toute exécution, programme lancé
+        // directement (jamais « cmd /c <ligne du catalogue> »).
+        var silentTemplate = c.SilentCommand ?? $"\"{VendorCommand.FilePlaceholder}\"";
+        foreach (var template in new[] { c.ExtractCommand, c.SilentCommand == VendorCommand.InfMarker ? null : silentTemplate })
+        {
+            if (!string.IsNullOrWhiteSpace(template) && VendorCommand.Validate(template) is { } problem)
+                throw new SecurityException($"Commande d'installation refusée ({problem}) : {template}");
+        }
 
         if (!string.IsNullOrWhiteSpace(c.ExtractCommand))
         {
             progress.Report("Extraction du paquet...");
-            var extract = await RunShellAsync(Expand(c.ExtractCommand), downloadDir, ct).ConfigureAwait(false);
+            var extract = await RunVendorAsync(VendorCommand.Resolve(c.ExtractCommand, file, packagePath, downloadDir, packageAllowed: false), downloadDir, ct)
+                .ConfigureAwait(false);
             if (!Directory.Exists(packagePath) || (extract.ExitCode != 0 && !Directory.EnumerateFileSystemEntries(packagePath).Any()))
                 return new InstallOutcome(c, InstallStatus.Failed, $"Extraction échouée (code {extract.ExitCode}).");
         }
 
         progress.Report("Installation silencieuse...");
-        if (c.SilentCommand == "@INF")
+        if (c.SilentCommand == VendorCommand.InfMarker)
         {
             var r = await PnpUtil.AddDriversRecursiveAsync(packagePath, install: true, ct).ConfigureAwait(false);
             return PnpUtil.IsSuccess(r.ExitCode)
@@ -333,7 +338,8 @@ public sealed class DriverInstaller
         }
 
         var workDir = string.IsNullOrWhiteSpace(c.ExtractCommand) ? downloadDir : packagePath;
-        var result = await RunShellAsync(Expand(c.SilentCommand ?? $"\"{file}\""), workDir, ct).ConfigureAwait(false);
+        var result = await RunVendorAsync(VendorCommand.Resolve(silentTemplate, file, packagePath, workDir, packageAllowed: true), workDir, ct)
+            .ConfigureAwait(false);
         if (result.TimedOut) return new InstallOutcome(c, InstallStatus.Failed, "Délai d'installation dépassé.");
         if (c.NotApplicableExitCodes.Contains(result.ExitCode))
             return new InstallOutcome(c, InstallStatus.NotApplicable, $"Déjà à jour ou non applicable (code {result.ExitCode}).");
@@ -343,8 +349,11 @@ public sealed class DriverInstaller
         return new InstallOutcome(c, InstallStatus.Failed, $"L'installeur a renvoyé le code {result.ExitCode}.");
     }
 
-    private static Task<ProcessResult> RunShellAsync(string command, string workingDirectory, CancellationToken ct) =>
-        ProcessRunner.RunAsync(ProcessRunner.SystemTool("cmd.exe"), $"/d /s /c \"{command}\"", workingDirectory, TimeSpan.FromMinutes(45), ct);
+    private static Task<ProcessResult> RunVendorAsync(VendorInvocation invocation, string workingDirectory, CancellationToken ct)
+    {
+        Log.Info($"Exécution : \"{invocation.FileName}\" {invocation.Arguments}");
+        return ProcessRunner.RunAsync(invocation.FileName, invocation.Arguments, workingDirectory, TimeSpan.FromMinutes(45), ct);
+    }
 
     private static string FormatDownload(DownloadProgress p) =>
         p.Total is > 0

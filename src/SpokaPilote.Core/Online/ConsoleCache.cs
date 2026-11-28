@@ -26,9 +26,14 @@ public sealed record ConsoleCacheStatus(bool Enabled, bool Catalogs, long SizeBy
 /// <list type="bullet">
 /// <item>seules les adresses que le poste accepte lui-même (domaines officiels, <see cref="TrustPolicy"/>) lui sont demandées ;</item>
 /// <item>un fichier reçu de la console n'est utilisé que si le poste peut le vérifier seul AVANT tout usage : empreinte
-///   publiée par la source, ou à défaut signature Authenticode valide d'un éditeur approuvé (voir <see cref="Downloader"/>) ;
-///   ensuite, les contrôles habituels s'appliquent sans changement (signature, éditeur, ID matériel de l'INF) ;</item>
-/// <item>un catalogue .cab reçu de la console doit porter une signature valide d'un éditeur approuvé ;</item>
+///   publiée par la source, ou à défaut signature Authenticode valide de l'éditeur attendu pour ce domaine (voir
+///   <see cref="Downloader"/>) ; ensuite, les contrôles habituels s'appliquent sans changement (signature, éditeur, ID
+///   matériel de l'INF) ;</item>
+/// <item>métadonnées : seuls les catalogues .cab signés (Authenticode) par l'éditeur attendu de leur domaine (Dell, HP)
+///   sont relayés ; tout ce qui n'est pas authentifiable par sa signature (XML Lenovo, réponses NVIDIA, liens et
+///   empreintes du Microsoft Update Catalog) est lu directement à la source, car ces métadonnées désignent les
+///   installeurs, leurs empreintes et leurs lignes de commande. Seule exception : la page de RECHERCHE du Microsoft
+///   Update Catalog, simple indication (l'entrée retenue est ensuite résolue directement chez Microsoft) ;</item>
 /// <item>console injoignable, en erreur, trop lente, ancienne (3.x) ou copie refusée : téléchargement direct depuis la
 ///   source officielle (journalisé), jamais d'échec d'installation à cause du cache.</item>
 /// </list>
@@ -286,8 +291,7 @@ public sealed class ConsoleCache
                 resumable = etag is not null && response.Headers.AcceptRanges.Contains("bytes");
                 var cache = response.Headers.TryGetValues("X-SpokaPilote-Cache", out var v) ? v.FirstOrDefault() : null;
 
-                await using (var output = new FileStream(destination, received > 0 ? FileMode.Append : FileMode.Create, FileAccess.Write, FileShare.None,
-                                 1 << 16, FileOptions.Asynchronous))
+                await using (var output = OpenLocal(destination, received > 0 ? FileMode.Append : FileMode.Create))
                 await using (var input = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false))
                 {
                     var buffer = new byte[1 << 16];
@@ -298,7 +302,7 @@ public sealed class ConsoleCache
                         stall.CancelAfter(StallTimeout);
                         var n = await input.ReadAsync(buffer, stall.Token).ConfigureAwait(false);
                         if (n == 0) break;
-                        await output.WriteAsync(buffer.AsMemory(0, n), ct).ConfigureAwait(false);
+                        await WriteLocalAsync(output, buffer.AsMemory(0, n), ct).ConfigureAwait(false);
                         received += n;
                         if (DateTime.UtcNow - lastReport > TimeSpan.FromMilliseconds(250))
                         {
@@ -316,6 +320,14 @@ public sealed class ConsoleCache
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
                 throw;
+            }
+            catch (LocalFileException ex)
+            {
+                // Problème du poste (fichier temporaire verrouillé, accès refusé, disque plein) : la console n'y est pour
+                // rien, elle reste sollicitée pour les fichiers suivants ; celui-ci est téléchargé directement.
+                TryDelete(destination);
+                Fallback(official, $"fichier local inaccessible ({ex.Message})");
+                return false;
             }
             catch (Exception ex) when (ex is HttpRequestException or IOException or OperationCanceledException)
             {
@@ -384,42 +396,48 @@ public sealed class ConsoleCache
     // ------------------------------------------------------------------ catalogues
 
     /// <summary>
-    /// Catalogue officiel (.cab, .xml) par la console, écrit dans <paramref name="destination"/>. Un .cab doit porter une
-    /// signature Authenticode valide d'un éditeur approuvé, sinon il est refusé. null = utiliser le téléchargement direct.
+    /// La console peut-elle relayer ce catalogue ? Seulement un .cab d'un domaine officiel dont l'éditeur attendu est connu
+    /// (Dell, HP...) : sa signature Authenticode l'authentifie, d'où qu'il vienne. Jamais un XML, un JSON ou une page
+    /// (catalogue et descripteurs Lenovo, service NVIDIA, Microsoft Update Catalog) : rien ne les authentifie, or ils
+    /// désignent les installeurs à lancer, leurs empreintes et leurs lignes de commande.
+    /// </summary>
+    internal static bool CanRelayCatalog(Uri official) =>
+        OfficialHosts.IsOfficialMetadata(official) &&
+        !official.Host.EndsWith("catalog.update.microsoft.com", StringComparison.OrdinalIgnoreCase) &&
+        official.AbsolutePath.EndsWith(".cab", StringComparison.OrdinalIgnoreCase) &&
+        TrustPolicy.ExpectedPublishers(official) is not null;
+
+    /// <summary>
+    /// Catalogue officiel .cab par la console, écrit dans <paramref name="destination"/>. Il doit porter une signature
+    /// Authenticode valide de l'éditeur attendu pour son domaine (Dell pour downloads.dell.com, HP pour hpia.hpcloud.hp.com),
+    /// sinon il est refusé. null = utiliser le téléchargement direct (toujours le cas pour un catalogue non signable).
     /// </summary>
     public async Task<ConsoleCatalogResult?> TryCatalogFileAsync(Uri official, string destination, CancellationToken ct = default)
     {
-        if (!OfficialHosts.IsOfficialMetadata(official) || official.Host.EndsWith("catalog.update.microsoft.com", StringComparison.OrdinalIgnoreCase)) return null;
+        if (!CanRelayCatalog(official)) return null;
         var result = await FetchCatalogAsync($"api/cache/catalog?url={Uri.EscapeDataString(official.AbsoluteUri)}", official, destination, ct).ConfigureAwait(false);
         if (result is not { Status: ConsoleCatalogStatus.Ok }) return result;
-        if (official.AbsolutePath.EndsWith(".cab", StringComparison.OrdinalIgnoreCase))
+        var sig = SignatureVerifier.Verify(destination);
+        if (!sig.IsValid || !TrustPolicy.IsExpectedPublisher(official, sig.Signer))
         {
-            var sig = SignatureVerifier.Verify(destination);
-            if (!sig.IsValid || !new TrustPolicy(new Settings()).IsTrustedPublisher(sig.Signer))
-            {
-                TryDelete(destination);
-                ReportRejected(official, sig.IsValid ? $"catalogue signé par un éditeur non approuvé ({sig.Signer})" : $"catalogue non signé ou altéré ({sig.Detail})");
-                return null;
-            }
+            TryDelete(destination);
+            ReportRejected(official, sig.IsValid
+                ? $"catalogue signé par {sig.Signer}, éditeur attendu : {string.Join(" / ", TrustPolicy.ExpectedPublishers(official)!)}"
+                : $"catalogue non signé ou altéré ({sig.Detail})");
+            return null;
         }
         return result;
     }
 
-    /// <summary>Métadonnée texte (réponse du service NVIDIA...) par la console ; null = utiliser l'accès direct.</summary>
-    public Task<ConsoleCatalogResult?> TryCatalogTextAsync(Uri official, CancellationToken ct = default) =>
-        !OfficialHosts.IsOfficialMetadata(official) || official.Host.EndsWith("catalog.update.microsoft.com", StringComparison.OrdinalIgnoreCase)
-            ? Task.FromResult<ConsoleCatalogResult?>(null)
-            : FetchCatalogAsync($"api/cache/catalog?url={Uri.EscapeDataString(official.AbsoluteUri)}", official, null, ct);
-
-    /// <summary>Page de recherche du Microsoft Update Catalog par la console (gardée quelques heures, requêtes espacées).</summary>
+    /// <summary>
+    /// Page de RECHERCHE du Microsoft Update Catalog par la console (gardée quelques heures, requêtes espacées) : la
+    /// limitation « Too many search requests » frappe les recherches de tout un parc derrière une même adresse IP. Ce
+    /// n'est qu'une indication : les liens de téléchargement et les empreintes de l'entrée retenue sont toujours demandés
+    /// directement à Microsoft (<see cref="Sources.MicrosoftCatalogClient.GetDownloadUrlsAsync"/>).
+    /// </summary>
     public Task<ConsoleCatalogResult?> TryCatalogSearchAsync(string query, CancellationToken ct = default) =>
         FetchCatalogAsync($"api/cache/catalog/mscatalog-search?q={Uri.EscapeDataString(query)}",
             new Uri($"https://{OfficialHosts.MicrosoftCatalogHost}/Search.aspx"), null, ct);
-
-    /// <summary>Liens de téléchargement d'une entrée du Microsoft Update Catalog par la console.</summary>
-    public Task<ConsoleCatalogResult?> TryCatalogDownloadDialogAsync(string updateId, CancellationToken ct = default) =>
-        FetchCatalogAsync($"api/cache/catalog/mscatalog-download?updateId={Uri.EscapeDataString(updateId)}",
-            new Uri($"https://{OfficialHosts.MicrosoftCatalogHost}/DownloadDialog.aspx"), null, ct);
 
     private async Task<ConsoleCatalogResult?> FetchCatalogAsync(string path, Uri official, string? destination, CancellationToken ct)
     {
@@ -449,9 +467,19 @@ public sealed class ConsoleCache
             }
             if (destination is not null)
             {
-                await using (var output = File.Create(destination))
-                    await response.Content.CopyToAsync(output, cts.Token).ConfigureAwait(false);
-                if (response.Content.Headers.ContentLength is { } len && new FileInfo(destination).Length != len)
+                long written = 0;
+                await using (var output = OpenLocal(destination, FileMode.Create))
+                await using (var input = await response.Content.ReadAsStreamAsync(cts.Token).ConfigureAwait(false))
+                {
+                    var buffer = new byte[1 << 16];
+                    int n;
+                    while ((n = await input.ReadAsync(buffer, cts.Token).ConfigureAwait(false)) > 0)
+                    {
+                        await WriteLocalAsync(output, buffer.AsMemory(0, n), cts.Token).ConfigureAwait(false);
+                        written += n;
+                    }
+                }
+                if (response.Content.Headers.ContentLength is { } len && written != len)
                     throw new IOException("catalogue incomplet");
                 return new ConsoleCatalogResult(ConsoleCatalogStatus.Ok, FetchedAt: fetchedAt);
             }
@@ -460,6 +488,13 @@ public sealed class ConsoleCache
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
             throw;
+        }
+        catch (LocalFileException ex)
+        {
+            // Problème du poste, pas de la console : accès direct pour ce catalogue, la console reste sollicitée.
+            if (destination is not null) TryDelete(destination);
+            Log.Info($"Cache de la console non utilisé pour un catalogue ({official.Host}) : fichier local inaccessible ({ex.Message}) ; accès direct.");
+            return null;
         }
         catch (Exception ex) when (ex is HttpRequestException or IOException or OperationCanceledException)
         {
@@ -483,6 +518,33 @@ public sealed class ConsoleCache
             if (r.ETag is not null) request.Headers.IfRange = new RangeConditionHeaderValue(new EntityTagHeaderValue(r.ETag));
         }
         return await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>Erreur d'accès à un fichier du POSTE (et non de la console) : verrouillé, accès refusé, disque plein.</summary>
+    private sealed class LocalFileException(Exception inner) : Exception(inner.Message, inner);
+
+    private static FileStream OpenLocal(string path, FileMode mode)
+    {
+        try
+        {
+            return new FileStream(path, mode, FileAccess.Write, FileShare.None, 1 << 16, FileOptions.Asynchronous);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            throw new LocalFileException(ex);
+        }
+    }
+
+    private static async ValueTask WriteLocalAsync(FileStream output, ReadOnlyMemory<byte> data, CancellationToken ct)
+    {
+        try
+        {
+            await output.WriteAsync(data, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            throw new LocalFileException(ex);
+        }
     }
 
     private static void TryDelete(string path)

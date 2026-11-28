@@ -174,7 +174,9 @@ public static class OemDriverPacks
                 case OemVendor.Lenovo:
                 {
                     progress?.Report("Catalogue des packs Lenovo (catalogv2)...");
-                    var xml = await Http.GetCachedFileAsync(LenovoCatalogUrl, "lenovo-catalogv2.xml", TimeSpan.FromHours(24), ct).ConfigureAwait(false);
+                    // XML non signé : toujours lu directement chez Lenovo (jamais relayé par la console, voir
+                    // ConsoleCache.CanRelayCatalog) ; nom de cache propre à la lecture directe.
+                    var xml = await Http.GetCachedFileAsync(LenovoCatalogUrl, "lenovo-direct-catalogv2.xml", TimeSpan.FromHours(24), ct).ConfigureAwait(false);
                     packs = await Task.Run(() => ParseLenovo(xml), ct).ConfigureAwait(false);
                     break;
                 }

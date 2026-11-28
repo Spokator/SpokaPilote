@@ -103,8 +103,72 @@ public class CatalogAndTrustTests
     [InlineData("CN=\"Lenovo (Beijing) Limited\", O=\"Lenovo (Beijing) Limited\", C=CN", true)]
     [InlineData("CN=Random Driver Updater Ltd, O=Random Driver Updater Ltd", false)]
     [InlineData(null, false)]
+    // Sujets réels relevés sur des paquets officiels (catalogues Dell/HP 2026, descripteurs Lenovo, pilotes, .NET).
+    [InlineData("CN=Dell Technologies Inc., OU=DUP Client Creation Service, O=Dell Technologies Inc., L=Round Rock, S=Texas, C=US", true)]
+    [InlineData("CN=Lenovo, OU=G09, O=Lenovo, L=Morrisville, S=North Carolina, C=US", true)]
+    [InlineData("CN=Intel Corporation, O=Intel Corporation, L=Santa Clara, S=California, C=US", true)]
+    [InlineData("CN=NVIDIA Corporation, OU=2008B9F, O=NVIDIA Corporation, L=Santa Clara, S=California, C=US", true)]
+    [InlineData("CN=Realtek Semiconductor Corp., O=Realtek Semiconductor Corp., L=Hsinchu, C=TW", true)]
+    [InlineData("CN=\"Advanced Micro Devices, Inc.\", O=\"Advanced Micro Devices, Inc.\", L=Santa Clara, S=California, C=US", true)]
+    [InlineData("CN=Microsoft Windows, O=Microsoft Corporation, L=Redmond, S=Washington, C=US", true)]
+    [InlineData("CN=.NET, O=Microsoft Corporation, L=Redmond, S=Washington, C=US", true)]
+    [InlineData("CN=\"Brother Industries, Ltd.\", O=\"Brother Industries, Ltd.\", L=Nagoya, S=Aichi, C=JP", true)]
+    [InlineData("CN=\"Ricoh Company, Ltd.\", O=\"Ricoh Company, Ltd.\", L=Ohta-ku, S=Tokyo, C=JP", true)]
+    [InlineData("CN=KYOCERA Document Solutions Inc., O=KYOCERA Document Solutions Inc., L=Osaka, C=JP", true)]
+    [InlineData("CN=\"Logitech Europe S.A.\", O=\"Logitech Europe S.A.\", L=Lausanne, C=CH", true)]
+    [InlineData("CN=Hewlett-Packard Company, O=Hewlett-Packard Company, L=Palo Alto, S=California, C=US", true)]
+    [InlineData("CN=hp inc, O=HP INC, C=US", true)]                                         // casse, ponctuation
+    // Préfixes, homonymes et contrefaçons : refusés (l'ancienne comparaison « commence par » les acceptait).
+    [InlineData("CN=Canonical Ltd., O=Canonical Ltd., L=London, C=GB", false)]
+    [InlineData("CN=Dell Inc Malware Unit, O=Dell Inc Malware Unit, C=US", false)]
+    [InlineData("CN=Intel Corporation Fake, O=Intel Corporation Fake, C=US", false)]
+    [InlineData("CN=HP Incorporated Tools, O=HP Incorporated Tools", false)]
+    [InlineData("CN=Lenovo, O=Evil Corp, C=US", false)]                                     // CN trompeur : seul O compte
+    [InlineData("CN=Microsoft Windows Hardware Compatibility Publisher, O=Contoso, C=US", false)]
+    [InlineData("CN=NVIDIA Corporation, O=Evil, O=NVIDIA Corporation", false)]              // O ambigu
+    [InlineData("CN=Sharpie Tools, O=Sharpie Tools", false)]
+    [InlineData("CN=Νvidia Corporation, O=Νvidia Corporation", false)]           // N grec
+    [InlineData("", false)]
     public void Trusted_publishers(string? subject, bool expected)
         => Assert.Equal(expected, new TrustPolicy(new Settings()).IsTrustedPublisher(subject));
+
+    [Fact]
+    public void Extra_trusted_publishers_match_exactly_and_ignore_blank_entries()
+    {
+        var policy = new TrustPolicy(new Settings { ExtraTrustedPublishers = { "", "   ", "Contoso Pilotes SAS", "Fabrikam" } });
+        Assert.False(policy.IsTrustedPublisher("CN=Random Driver Updater Ltd, O=Random Driver Updater Ltd")); // entrée vide ≠ tout le monde
+        Assert.True(policy.IsTrustedPublisher("CN=Contoso Pilotes, O=Contoso Pilotes SAS, C=FR"));
+        Assert.True(policy.IsTrustedPublisher("CN=Fabrikam, O=\"Fabrikam, Inc.\", C=US"));                  // forme juridique
+        Assert.False(policy.IsTrustedPublisher("CN=Fabrikam Evil, O=Fabrikamevil Ltd"));
+        Assert.True(policy.IsTrustedPublisher("CN=Fabrikam, C=US"));                                       // sans O= : CN
+        Assert.False(new TrustPolicy(new Settings { ExtraTrustedHosts = { "", "*." } }).IsTrustedHost(new Uri("https://evil.example/x.exe")));
+    }
+
+    [Theory]
+    [InlineData("HP Inc.", "hp")]
+    [InlineData("Ricoh Company, Ltd.", "ricoh")]
+    [InlineData("Logitech Europe S.A.", "logitech europe")]
+    [InlineData("Lenovo (Beijing) Limited", "lenovo (beijing)")]
+    [InlineData("Canonical Ltd.", "canonical")]
+    [InlineData("  Dell   Technologies Inc. ", "dell technologies")]
+    [InlineData("Inc", "inc")]
+    public void Publisher_names_are_normalized(string name, string expected) => Assert.Equal(expected, TrustPolicy.NormalizePublisher(name));
+
+    [Fact]
+    public void Each_official_host_expects_its_own_vendor()
+    {
+        var nvidia = "CN=NVIDIA Corporation, OU=2008B9F, O=NVIDIA Corporation, L=Santa Clara, S=California, C=US";
+        var dell = "CN=Dell Technologies Inc., OU=DUP Client Creation Service, O=Dell Technologies Inc., L=Round Rock, S=Texas, C=US";
+        Assert.True(TrustPolicy.IsExpectedPublisher(new Uri("https://us.download.nvidia.com/Windows/x.exe"), nvidia));
+        Assert.False(TrustPolicy.IsExpectedPublisher(new Uri("https://us.download.nvidia.com/Windows/x.exe"), dell));
+        Assert.True(TrustPolicy.IsExpectedPublisher(new Uri("https://downloads.dell.com/catalog/CatalogPC.cab"), dell));
+        Assert.True(TrustPolicy.IsExpectedPublisher(new Uri("https://hpia.hpcloud.hp.com/ref/8723/8723_64_11.0.23h2.cab"), "CN=HP Inc., O=HP Inc., L=Palo Alto, S=California, C=US"));
+        Assert.True(TrustPolicy.IsExpectedPublisher(new Uri("https://au.download.windowsupdate.com/x.cab"), "CN=Microsoft Corporation, O=Microsoft Corporation, C=US"));
+        Assert.False(TrustPolicy.IsExpectedPublisher(new Uri("https://pilotes.exemple.fr/x.exe"), nvidia));
+        // Chaque domaine officiel a un éditeur attendu.
+        foreach (var host in OfficialHosts.Download)
+            Assert.NotNull(TrustPolicy.ExpectedPublishers(new Uri($"https://{host.Replace("*.", "a.")}/x")));
+    }
 
     [Fact]
     public void Normalizes_scheme_less_and_http_urls_to_https()

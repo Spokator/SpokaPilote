@@ -135,6 +135,13 @@ public sealed class HpSource : IDriverSource
                 Kind = isFirmware && !isDriver ? CandidateKind.Firmware : CandidateKind.Update,
             };
             if (string.IsNullOrWhiteSpace(candidate.SilentCommand)) continue;
+            // Ligne de commande exécutée en SYSTEM : même contrôle de forme que pour Lenovo (référence HP signée, mais
+            // défense en profondeur) ; un SoftPaq à la commande inattendue est écarté.
+            if (VendorCommand.Validate(candidate.SilentCommand) is { } problem)
+            {
+                Log.Warn($"SoftPaq HP écarté ({id}) : commande refusée ({problem}) : {candidate.SilentCommand}");
+                continue;
+            }
 
             if (deviceIdsBySoftpaq.TryGetValue(id, out var hwIds))
             {
