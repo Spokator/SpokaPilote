@@ -25,15 +25,18 @@ public sealed record ConsoleCacheStatus(bool Enabled, bool Catalogs, long SizeBy
 /// « par la console » ou « direct ». La console n'est qu'un TRANSPORT :
 /// <list type="bullet">
 /// <item>seules les adresses que le poste accepte lui-même (domaines officiels, <see cref="TrustPolicy"/>) lui sont demandées ;</item>
-/// <item>un fichier reçu de la console n'est utilisé que si le poste peut le vérifier seul AVANT tout usage : empreinte
-///   publiée par la source, ou à défaut signature Authenticode valide de l'éditeur attendu pour ce domaine (voir
-///   <see cref="Downloader"/>) ; ensuite, les contrôles habituels s'appliquent sans changement (signature, éditeur, ID
-///   matériel de l'INF) ;</item>
+/// <item>un fichier n'est demandé à la console que si la source en publie une empreinte que le poste a obtenue sans
+///   elle, et la copie reçue n'est utilisée que si elle a cette empreinte, vérifiée AVANT tout usage (voir
+///   <see cref="Downloader"/>) ; une signature valide ne suffit jamais (une console compromise pourrait servir un autre
+///   fichier signé du même éditeur) ; ensuite, les contrôles habituels s'appliquent sans changement (signature, éditeur,
+///   ID matériel de l'INF) ;</item>
 /// <item>métadonnées : seuls les catalogues .cab signés (Authenticode) par l'éditeur attendu de leur domaine (Dell, HP)
-///   sont relayés ; tout ce qui n'est pas authentifiable par sa signature (XML Lenovo, réponses NVIDIA, liens et
-///   empreintes du Microsoft Update Catalog) est lu directement à la source, car ces métadonnées désignent les
-///   installeurs, leurs empreintes et leurs lignes de commande. Seule exception : la page de RECHERCHE du Microsoft
-///   Update Catalog, simple indication (l'entrée retenue est ensuite résolue directement chez Microsoft) ;</item>
+///   sont relayés, et pas un ancien catalogue resservi (<see cref="CatalogFreshness"/>) ; tout ce qui n'est pas
+///   authentifiable par sa signature (XML Lenovo, réponses NVIDIA, liens et empreintes du Microsoft Update Catalog) est
+///   lu directement à la source, car ces métadonnées désignent les installeurs, leurs empreintes et leurs lignes de
+///   commande. Seule exception : la page de RECHERCHE du Microsoft Update Catalog, simple indication (l'entrée retenue
+///   est ensuite confirmée directement chez Microsoft — fiche, liens, empreinte — et l'INF du paquet doit porter la
+///   version et l'éditeur annoncés) ;</item>
 /// <item>console injoignable, en erreur, trop lente, ancienne (3.x) ou copie refusée : téléchargement direct depuis la
 ///   source officielle (journalisé), jamais d'échec d'installation à cause du cache.</item>
 /// </list>
@@ -407,17 +410,36 @@ public sealed class ConsoleCache
         official.AbsolutePath.EndsWith(".cab", StringComparison.OrdinalIgnoreCase) &&
         TrustPolicy.ExpectedPublishers(official) is not null;
 
+    private CatalogFreshness? _freshness;
+
+    /// <summary>Dates de signature des catalogues acceptés (rejeu d'un ancien catalogue signé) ; remplaçable par les tests.</summary>
+    internal CatalogFreshness Freshness
+    {
+        get => _freshness ??= new CatalogFreshness(clock: _clock);
+        set => _freshness = value;
+    }
+
     /// <summary>
     /// Catalogue officiel .cab par la console, écrit dans <paramref name="destination"/>. Il doit porter une signature
     /// Authenticode valide de l'éditeur attendu pour son domaine (Dell pour downloads.dell.com, HP pour hpia.hpcloud.hp.com),
-    /// sinon il est refusé. null = utiliser le téléchargement direct (toujours le cas pour un catalogue non signable).
+    /// et ne pas être un ANCIEN catalogue resservi (<see cref="CatalogFreshness"/> : pas plus ancien que le dernier accepté,
+    /// signé il y a moins de 30 jours ou confirmé récemment par la source), sinon il est refusé. null = utiliser le
+    /// téléchargement direct (toujours le cas pour un catalogue non signable, et quand la console répond que la source ne
+    /// l'a pas : seule la source elle-même peut l'affirmer).
     /// </summary>
     public async Task<ConsoleCatalogResult?> TryCatalogFileAsync(Uri official, string destination, CancellationToken ct = default)
     {
         if (!CanRelayCatalog(official)) return null;
         var result = await FetchCatalogAsync($"api/cache/catalog?url={Uri.EscapeDataString(official.AbsoluteUri)}", official, destination, ct).ConfigureAwait(false);
+        if (result is { Status: ConsoleCatalogStatus.NotFoundAtSource })
+        {
+            // Une console compromise pourrait ainsi « faire disparaître » un catalogue : la source est interrogée directement.
+            Log.Info($"Cache de la console : {Path.GetFileName(official.AbsolutePath)} absent de la source selon la console ; vérification directe auprès de {official.Host}.");
+            return null;
+        }
         if (result is not { Status: ConsoleCatalogStatus.Ok }) return result;
-        var sig = SignatureVerifier.Verify(destination);
+        // Signature : seule garantie de ce catalogue relayé ; un certificat révoqué (clé volée) est refusé.
+        var sig = SignatureVerifier.Verify(destination, checkRevocation: true);
         if (!sig.IsValid || !TrustPolicy.IsExpectedPublisher(official, sig.Signer))
         {
             TryDelete(destination);
@@ -426,7 +448,24 @@ public sealed class ConsoleCache
                 : $"catalogue non signé ou altéré ({sig.Detail})");
             return null;
         }
+        var signedAt = SignatureVerifier.GetSigningTime(destination);
+        if (Freshness.CheckConsoleCopy(official, signedAt) is { } stale)
+        {
+            TryDelete(destination);
+            // Cas ordinaire pour un catalogue rarement republié (journal d'information), suspect sinon (avertissement).
+            if (signedAt is { } s && Freshness.IsOlderThanAccepted(official, s)) ReportRejected(official, stale);
+            else Log.Info($"Cache de la console non utilisé pour {Path.GetFileName(official.AbsolutePath)} : {stale} ; téléchargement direct depuis {official.Host}.");
+            return null;
+        }
+        Freshness.RecordConsoleCopy(official, signedAt!.Value);
         return result;
+    }
+
+    /// <summary>Catalogue relayable obtenu directement de la source : sa date de signature fait foi (voir <see cref="CatalogFreshness"/>).</summary>
+    public void RecordDirectCatalog(Uri official, string path)
+    {
+        if (!CanRelayCatalog(official)) return;
+        Freshness.RecordDirect(official, SignatureVerifier.GetSigningTime(path));
     }
 
     /// <summary>

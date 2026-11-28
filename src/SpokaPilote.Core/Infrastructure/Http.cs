@@ -42,17 +42,22 @@ public static class Http
     /// <summary>
     /// Télécharge un fichier de catalogue/métadonnées en cache disque, rafraîchi après <paramref name="maxAge"/>. Avec une
     /// console 4.0 (cache actif), un catalogue .cab signé (Dell, HP) est d'abord demandé à la console et n'est gardé que
-    /// s'il porte la signature de l'éditeur attendu ; la date du fichier local est alors celle à laquelle la console l'a
-    /// obtenu de la source, pour que l'âge maximal compte depuis la source. Tout autre catalogue (XML Lenovo, pages) est
-    /// toujours lu directement à la source (<see cref="Online.ConsoleCache.TryCatalogFileAsync"/>). Un catalogue absent
-    /// de la source (404) lève HttpRequestException comme en accès direct.
+    /// s'il porte la signature de l'éditeur attendu et n'est pas un ancien catalogue resservi (<see cref="Online.CatalogFreshness"/>) ;
+    /// la date du fichier local est alors celle à laquelle la console l'a obtenu de la source, pour que l'âge maximal
+    /// compte depuis la source. Tout autre catalogue (XML Lenovo, pages) est toujours lu directement à la source
+    /// (<see cref="Online.ConsoleCache.TryCatalogFileAsync"/>). Un catalogue que la console dit absent de la source est
+    /// demandé à la source elle-même ; un catalogue réellement absent (404 de la source) lève HttpRequestException.
     /// </summary>
     public static async Task<string> GetCachedFileAsync(string url, string cacheName, TimeSpan maxAge, CancellationToken ct = default)
     {
         var path = Path.Combine(AppPaths.Cache, cacheName);
         if (IsFresh(path, maxAge, DateTime.UtcNow)) return path;
 
-        if (Online.ConsoleCache.Current is { Catalogs: true } console && Uri.TryCreate(url, UriKind.Absolute, out var official))
+        Online.ConsoleCache? console = null;
+        Uri? official = null;
+        if (Online.ConsoleCache.Current is { Catalogs: true } current && Uri.TryCreate(url, UriKind.Absolute, out var parsed))
+            (console, official) = (current, parsed);
+        if (console is not null && official is not null)
         {
             var viaConsole = path + ".console";
             var result = await console.TryCatalogFileAsync(official, viaConsole, ct).ConfigureAwait(false);
@@ -62,8 +67,7 @@ public static class Http
                 if (result.FetchedAt is { } fetched && fetched.UtcDateTime <= DateTime.UtcNow) File.SetLastWriteTimeUtc(path, fetched.UtcDateTime);
                 return path;
             }
-            if (result is { Status: Online.ConsoleCatalogStatus.NotFoundAtSource })
-                throw new HttpRequestException($"{official.Host} : {Path.GetFileName(official.AbsolutePath)} introuvable (404).", null, HttpStatusCode.NotFound);
+            // Tout autre cas (refus, copie périmée, « absent de la source » selon la console) : la source elle-même.
         }
 
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -80,6 +84,8 @@ public static class Http
             }
             DataProtection.ClaimOwnership(tmp);
             File.Move(tmp, path, overwrite: true);
+            // Version servie par la source elle-même : référence contre le rejeu d'un ancien catalogue par la console.
+            if (console is not null && official is not null) console.RecordDirectCatalog(official, path);
         }
         finally
         {

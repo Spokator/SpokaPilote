@@ -105,49 +105,39 @@ public sealed class ConsoleCacheTests
         Assert.Single(direct.Requests);
     }
 
-    [Fact]
-    public async Task Unsigned_console_copy_without_published_hash_is_rejected_by_its_signature()
+    [Theory]
+    [InlineData("https://download.lenovo.com/pccbbs/mobiles/n32ul16w.exe")]                // paquet Lenovo sans SHA-256 (CRC court)
+    [InlineData("https://download.microsoft.com/download/x/SurfacePro9_Win11.msi")]        // fichier Microsoft sans empreinte publiée
+    [InlineData("https://downloads.dell.com/FOLDER1/setup.exe")]
+    public async Task File_without_an_independently_obtained_hash_never_goes_through_the_console(string url)
     {
-        // Pas d'empreinte publiée : la copie de la console doit porter une signature Authenticode valide d'un éditeur approuvé.
+        // Une console compromise servirait, à la place du fichier demandé, n'importe quel AUTRE fichier validement signé
+        // du même éditeur (ancienne version vulnérable d'un installeur Lenovo : BYOVD). Sans empreinte : direct.
         var official = Bytes(20_000, 3);
-        var console = Console(_ => File(Bytes(20_000, 4)));
+        var signedByMicrosoft = await System.IO.File.ReadAllBytesAsync(typeof(object).Assembly.Location);
+        var console = Console(_ => File(signedByMicrosoft));
         var direct = new Stub(_ => new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(official) });
-        var downloader = MakeDownloader(Cache(console), direct);
-        var path = await downloader.DownloadAsync(DellUrl(Unique(".exe")));
+        var path = await MakeDownloader(Cache(console), direct).DownloadAsync(url, Unique(Path.GetExtension(url)));
         Assert.Equal(official, await System.IO.File.ReadAllBytesAsync(path));
-        Assert.Equal(1, console.Count("/api/cache/file"));
+        Assert.Equal(0, console.Count("/api/cache/file"));
         Assert.Single(direct.Requests);
+    }
 
+    [Fact]
+    public async Task Console_copy_is_accepted_only_with_the_published_hash_never_by_its_signature()
+    {
         var tmp = Path.Combine(AppPaths.Cache, Unique(".exe"));
         await System.IO.File.WriteAllBytesAsync(tmp, Bytes(100));
-        var source = new Uri(DellUrl("x.exe"));
-        Assert.Contains("signature", await downloader.VerifyConsoleCopyAsync(tmp, source, null, null, null, default));
-        Assert.Contains("empreinte", await downloader.VerifyConsoleCopyAsync(tmp, source, new string('A', 64), null, null, default));
-    }
+        Assert.Contains("empreinte", await Downloader.VerifyConsoleCopyAsync(tmp, null, null, null, default));
+        Assert.Contains("empreinte", await Downloader.VerifyConsoleCopyAsync(tmp, new string('A', 64), null, null, default));
+        Assert.Null(await Downloader.VerifyConsoleCopyAsync(tmp, Sha256(Bytes(100)), null, null, default));
 
-    /// <summary>Fichier réellement signé « O=Microsoft Corporation » (bibliothèque du runtime .NET), copié sous un autre nom.</summary>
-    private static string MicrosoftSignedCopy(string extension)
-    {
-        var copy = Path.Combine(AppPaths.Cache, Unique(extension));
-        System.IO.File.Copy(typeof(object).Assembly.Location, copy);
-        return copy;
-    }
-
-    [Fact]
-    public async Task Console_copy_without_hash_must_be_signed_by_the_vendor_of_its_source()
-    {
-        // Signature valide d'un éditeur approuvé (Microsoft), mais pour un fichier de NVIDIA : refusé. Une console
-        // compromise ne peut pas substituer à un paquet d'un constructeur n'importe quel fichier signé par un autre.
-        var downloader = MakeDownloader(null, new Stub(_ => throw new InvalidOperationException()));
-        var signed = MicrosoftSignedCopy(".exe");
+        // Fichier réellement et validement signé « O=Microsoft Corporation », pour une adresse Microsoft : refusé sans
+        // empreinte (la 4.0.0 l'acceptait sur sa seule signature).
+        var signed = Path.Combine(AppPaths.Cache, Unique(".exe"));
+        System.IO.File.Copy(typeof(object).Assembly.Location, signed);
         Assert.True(SignatureVerifier.Verify(signed).IsValid);
-        var nvidia = await downloader.VerifyConsoleCopyAsync(signed, new Uri("https://us.download.nvidia.com/Windows/581.57/581.57-desktop.exe"), null, null, null, default);
-        Assert.Contains("NVIDIA Corporation", nvidia);
-        Assert.Contains("signé par", await downloader.VerifyConsoleCopyAsync(signed, new Uri(DellUrl("x.exe")), null, null, null, default));
-        // Domaine sans éditeur attendu connu (domaine ajouté dans les réglages) : jamais sans empreinte.
-        Assert.NotNull(await downloader.VerifyConsoleCopyAsync(signed, new Uri("https://pilotes.exemple.fr/x.exe"), null, null, null, default));
-        // Même fichier pour une adresse Microsoft : accepté (révocation contrôlée, invérifiable tolérée).
-        Assert.Null(await downloader.VerifyConsoleCopyAsync(signed, new Uri("https://download.microsoft.com/download/x/x.exe"), null, null, null, default));
+        Assert.NotNull(await Downloader.VerifyConsoleCopyAsync(signed, null, null, null, default));
     }
 
     [Fact]
@@ -167,10 +157,12 @@ public sealed class ConsoleCacheTests
         var console = Console(_ => throw new InvalidOperationException("la console ne doit pas être sollicitée"));
         var direct = new Stub(_ => new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(Bytes(10)) });
         await MakeDownloader(Cache(console), direct).DownloadAsync(DellUrl(Unique(".zip")));
+        await MakeDownloader(Cache(console), direct).DownloadAsync(DellUrl(Unique(".exe")));
         Assert.Empty(console.Requests);
-        Assert.True(Install.Downloader.CanVerifyIndependently("pack.zip", null, null, "abc"));
-        Assert.True(Install.Downloader.CanVerifyIndependently("setup.EXE", null, null, null));
-        Assert.False(Install.Downloader.CanVerifyIndependently("pack.zip", null, null, null));
+        Assert.True(Install.Downloader.CanVerifyIndependently(null, null, "abc"));
+        Assert.True(Install.Downloader.CanVerifyIndependently(null, "abc", null));
+        Assert.False(Install.Downloader.CanVerifyIndependently(null, null, null));
+        Assert.False(Install.Downloader.CanVerifyIndependently("", " ", null));
     }
 
     [Fact]
@@ -245,8 +237,8 @@ public sealed class ConsoleCacheTests
         var console = new Stub(_ => Error(HttpStatusCode.NotFound)); // « Route d'API inconnue »
         var cache = Cache(console);
         var direct = new Stub(_ => new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(Bytes(10)) });
-        await MakeDownloader(cache, direct).DownloadAsync(DellUrl(Unique(".exe")));
-        await MakeDownloader(cache, direct).DownloadAsync(DellUrl(Unique(".exe")));
+        await MakeDownloader(cache, direct).DownloadAsync(DellUrl(Unique(".exe")), sha256: Sha256(Bytes(10)));
+        await MakeDownloader(cache, direct).DownloadAsync(DellUrl(Unique(".exe")), sha256: Sha256(Bytes(10)));
         Assert.Equal(1, console.Count("/api/cache/status"));
         Assert.Equal(0, console.Count("/api/cache/file"));
         Assert.Contains("4.0", cache.UnavailableReason);
@@ -258,7 +250,8 @@ public sealed class ConsoleCacheTests
     {
         var console = new Stub(req => req.RequestUri!.AbsolutePath.EndsWith("/status", StringComparison.Ordinal) ? Status(enabled: false) : File(Bytes(1)));
         var direct = new Stub(_ => new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(Bytes(10)) });
-        await MakeDownloader(Cache(console), direct).DownloadAsync(DellUrl(Unique(".exe")));
+        await MakeDownloader(Cache(console), direct).DownloadAsync(DellUrl(Unique(".exe")), sha256: Sha256(Bytes(10)));
+        Assert.Equal(1, console.Count("/api/cache/status"));
         Assert.Equal(0, console.Count("/api/cache/file"));
     }
 
@@ -326,9 +319,13 @@ public sealed class ConsoleCacheTests
         var fetched = DateTimeOffset.UtcNow.AddHours(-2);
         var console = Console(_ => CatalogBytes(signed, fetched));
         var name = Unique(".cab");
-        using (ConsoleCache.UseForTest(Cache(console)))
+        var url = $"https://download.microsoft.com/download/catalog/{name}";
+        var cache = Cache(console);
+        // Même version servie directement par la source il y a peu (le fichier de test peut avoir été signé il y a plus de 30 jours).
+        cache.Freshness = new CatalogFreshness(FreshnessFile());
+        cache.Freshness.RecordDirect(new Uri(url), SignatureVerifier.GetSigningTime(typeof(object).Assembly.Location));
+        using (ConsoleCache.UseForTest(cache))
         {
-            var url = $"https://download.microsoft.com/download/catalog/{name}";
             var path = await Http.GetCachedFileAsync(url, name, TimeSpan.FromHours(24));
             Assert.Equal(signed, await System.IO.File.ReadAllBytesAsync(path));
             Assert.InRange(System.IO.File.GetLastWriteTimeUtc(path), fetched.UtcDateTime.AddSeconds(-2), fetched.UtcDateTime.AddSeconds(2));
@@ -404,20 +401,127 @@ public sealed class ConsoleCacheTests
     }
 
     [Fact]
-    public async Task Catalog_missing_at_the_source_raises_a_404_like_a_direct_download()
+    public async Task Catalog_said_missing_by_the_console_is_asked_at_the_source()
     {
+        // « Absent de la source » n'est qu'une affirmation de la console : une console compromise ferait ainsi disparaître
+        // la référence HP d'une plateforme. null = l'appelant (Http.GetCachedFileAsync) la demande directement à HP.
         var console = Console(_ =>
         {
             var r = Error(HttpStatusCode.NotFound, "hit");
             r.Headers.TryAddWithoutValidation("X-SpokaPilote-Origin-Status", "404");
             return r;
         });
-        using (ConsoleCache.UseForTest(Cache(console)))
+        var target = Path.Combine(AppPaths.Cache, Unique(".cab"));
+        Assert.Null(await Cache(console).TryCatalogFileAsync(new Uri("https://hpia.hpcloud.hp.com/ref/8A7F/8A7F_64_11.0.26h1.cab"), target));
+        Assert.Equal(1, console.Count("/api/cache/catalog"));
+    }
+
+    // ------------------------------------------------------------------ rejeu d'un ancien catalogue signé
+
+    private sealed class FixedClock(DateTimeOffset now) : TimeProvider
+    {
+        public DateTimeOffset Now { get; set; } = now;
+        public override DateTimeOffset GetUtcNow() => Now;
+    }
+
+    private static string FreshnessFile() => Path.Combine(AppPaths.Cache, "freshness-" + Unique(".json"));
+
+    /// <summary>Catalogue .cab validement signé par Microsoft (bibliothèque du runtime), et sa date de signature réelle.</summary>
+    private static (byte[] Bytes, DateTimeOffset SignedAt) SignedCatalog()
+    {
+        var path = typeof(object).Assembly.Location;
+        var signedAt = SignatureVerifier.GetSigningTime(path);
+        Assert.NotNull(signedAt);
+        return (System.IO.File.ReadAllBytes(path), signedAt.Value);
+    }
+
+    private static async Task<bool> RelayedAsync(ConsoleCache cache, Uri official)
+    {
+        var target = Path.Combine(AppPaths.Cache, Unique(".cab"));
+        var result = await cache.TryCatalogFileAsync(official, target);
+        Assert.Equal(result is not null, System.IO.File.Exists(target)); // refusé : rien n'est gardé
+        return result is { Status: ConsoleCatalogStatus.Ok };
+    }
+
+    [Fact]
+    public void Signing_time_is_read_from_the_authenticode_timestamp()
+    {
+        var (_, signedAt) = SignedCatalog();
+        Assert.InRange(signedAt, new DateTimeOffset(2020, 1, 1, 0, 0, 0, TimeSpan.Zero), DateTimeOffset.UtcNow.AddDays(1));
+        var unsigned = Path.Combine(AppPaths.Cache, Unique(".cab"));
+        System.IO.File.WriteAllBytes(unsigned, Bytes(1000));
+        Assert.Null(SignatureVerifier.GetSigningTime(unsigned));
+        Assert.Null(SignatureVerifier.GetSigningTime(Path.Combine(AppPaths.Cache, Unique(".cab")))); // absent
+    }
+
+    [Fact]
+    public async Task Recently_signed_catalog_is_relayed_and_becomes_the_reference()
+    {
+        var (bytes, signedAt) = SignedCatalog();
+        var official = new Uri($"https://download.microsoft.com/download/catalog/{Unique(".cab")}");
+        var clock = new FixedClock(signedAt.AddDays(3));
+        var cache = new ConsoleCache(ConsoleUri, "jeton-agent", ConsoleCacheMode.Auto, catalogs: true, Console(_ => CatalogBytes(bytes, clock.Now)), clock)
         {
-            var ex = await Assert.ThrowsAsync<HttpRequestException>(() =>
-                Http.GetCachedFileAsync("https://hpia.hpcloud.hp.com/ref/8A7F/8A7F_64_11.0.26h1.cab", Unique(".cab"), TimeSpan.FromHours(24)));
-            Assert.Equal(HttpStatusCode.NotFound, ex.StatusCode);
-        }
+            Freshness = new CatalogFreshness(FreshnessFile(), clock),
+        };
+        Assert.True(await RelayedAsync(cache, official));
+        Assert.True(cache.Freshness.IsOlderThanAccepted(official, signedAt.AddSeconds(-1)));
+        Assert.False(cache.Freshness.IsOlderThanAccepted(official, signedAt));
+    }
+
+    [Fact]
+    public async Task Catalog_older_than_the_last_accepted_one_is_refused_as_a_replay()
+    {
+        // La source a déjà servi au poste un catalogue signé APRÈS celui que la console resservirait : rejeu refusé,
+        // même récent et validement signé.
+        var (bytes, signedAt) = SignedCatalog();
+        var official = new Uri($"https://download.microsoft.com/download/catalog/{Unique(".cab")}");
+        var clock = new FixedClock(signedAt.AddDays(2));
+        var state = FreshnessFile();
+        var cache = new ConsoleCache(ConsoleUri, "jeton-agent", ConsoleCacheMode.Auto, catalogs: true, Console(_ => CatalogBytes(bytes, clock.Now)), clock)
+        {
+            Freshness = new CatalogFreshness(state, clock),
+        };
+        cache.Freshness.RecordDirect(official, signedAt.AddDays(1));
+        Assert.False(await RelayedAsync(cache, official));
+        Assert.Contains("plus ancien que le dernier accepté", cache.Freshness.CheckConsoleCopy(official, signedAt));
+        // État conservé d'une exécution à l'autre (même fichier), quelle que soit la casse de l'adresse.
+        Assert.NotNull(new CatalogFreshness(state, clock).CheckConsoleCopy(new Uri(official.AbsoluteUri.ToUpperInvariant().Replace("HTTPS:", "https:")), signedAt));
+    }
+
+    [Fact]
+    public async Task Catalog_older_than_the_maximum_age_needs_a_recent_confirmation_by_the_source()
+    {
+        var (bytes, signedAt) = SignedCatalog();
+        var official = new Uri($"https://download.microsoft.com/download/catalog/{Unique(".cab")}");
+        var clock = new FixedClock(signedAt + CatalogFreshness.MaxAge + TimeSpan.FromDays(10));
+        var console = Console(_ => CatalogBytes(bytes, clock.Now)); // la console prétend l'avoir obtenu à l'instant
+        var cache = new ConsoleCache(ConsoleUri, "jeton-agent", ConsoleCacheMode.Auto, catalogs: true, console, clock)
+        {
+            Freshness = new CatalogFreshness(FreshnessFile(), clock),
+        };
+        // Jamais confirmé par la source : direct.
+        Assert.False(await RelayedAsync(cache, official));
+        Assert.Contains("30 jours", cache.Freshness.CheckConsoleCopy(official, signedAt));
+
+        // La source sert directement cette même version (catalogue rarement republié, comme CatalogPC.cab) : la console
+        // peut la relayer pendant 30 jours à compter de cette confirmation...
+        cache.Freshness.RecordDirect(official, signedAt);
+        Assert.True(await RelayedAsync(cache, official));
+        clock.Now += CatalogFreshness.MaxAge - TimeSpan.FromDays(1);
+        Assert.True(await RelayedAsync(cache, official));
+        // ... puis il faut une nouvelle confirmation directe.
+        clock.Now += TimeSpan.FromDays(2);
+        Assert.False(await RelayedAsync(cache, official));
+    }
+
+    [Fact]
+    public void Catalog_without_signing_time_is_never_relayed()
+    {
+        var freshness = new CatalogFreshness(FreshnessFile());
+        Assert.Contains("date de signature", freshness.CheckConsoleCopy(new Uri("https://downloads.dell.com/catalog/CatalogPC.cab"), null));
+        freshness.RecordDirect(new Uri("https://downloads.dell.com/catalog/CatalogPC.cab"), null); // sans date : rien n'est retenu
+        Assert.NotNull(freshness.CheckConsoleCopy(new Uri("https://downloads.dell.com/catalog/CatalogPC.cab"), null));
     }
 
     [Fact]

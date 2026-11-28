@@ -12,14 +12,12 @@ public sealed record DownloadProgress(string FileName, long Received, long? Tota
 /// élevé) : jamais dans un dossier partagé où un utilisateur aurait pu déposer d'avance un « .part » ou un fichier
 /// « déjà en cache », puis le remplacer entre la vérification et l'exécution.
 /// Avec une console centrale 4.0 dont le cache est actif, le fichier est d'abord demandé à la console
-/// (<see cref="ConsoleCache"/>) ; la copie reçue n'est gardée que si le poste peut la vérifier seul (empreinte publiée, ou
-/// signature Authenticode valide d'un éditeur approuvé), sinon c'est le téléchargement direct.
+/// (<see cref="ConsoleCache"/>) seulement si la source en publie une empreinte obtenue sans la console ; la copie reçue
+/// n'est gardée que si elle a cette empreinte. Sans empreinte (paquet Lenovo sans SHA-256, fichier de Microsoft sans
+/// empreinte publiée...) : toujours le téléchargement direct.
 /// </summary>
 public sealed class Downloader : IDisposable
 {
-    /// <summary>Types de fichiers vérifiables par leur seule signature Authenticode quand la source ne publie aucune empreinte.</summary>
-    internal static readonly string[] SignedFileExtensions = [".exe", ".msi", ".msp", ".cab", ".msu"];
-
     private readonly TrustPolicy _trust;
     private readonly ConsoleCache? _cache;
     private readonly bool _useCurrentCache;
@@ -81,7 +79,7 @@ public sealed class Downloader : IDisposable
 
         var tmp = target + ".part";
         if (File.Exists(tmp)) File.Delete(tmp);
-        if ((_useCurrentCache ? ConsoleCache.Current : _cache) is { } cache && CanVerifyIndependently(fileName, sha256, sha1, md5) &&
+        if ((_useCurrentCache ? ConsoleCache.Current : _cache) is { } cache && CanVerifyIndependently(sha256, sha1, md5) &&
             await TryConsoleAsync(cache, uri, fileName, tmp, sha256, sha1, md5, progress, ct).ConfigureAwait(false))
         {
             File.Move(tmp, target, overwrite: true);
@@ -128,12 +126,14 @@ public sealed class Downloader : IDisposable
     }
 
     /// <summary>
-    /// Une copie venue de la console ne sert que si le poste peut la vérifier sans faire confiance à la console :
-    /// empreinte publiée par la source, ou fichier signé (Authenticode). Sinon (ex. .zip sans empreinte) : direct.
+    /// Une copie venue de la console ne sert que si le poste peut la vérifier sans faire confiance à la console : une
+    /// empreinte publiée par la source et obtenue sans la console (catalogue signé Dell/HP, lien du Microsoft Update
+    /// Catalog, service NVIDIA, catalogue Lenovo lu à la source). Une signature valide ne suffit PAS : une console
+    /// compromise pourrait servir, à la place du fichier demandé, n'importe quel AUTRE fichier signé du même éditeur
+    /// (ancienne version vulnérable d'un installeur Lenovo, par exemple). Sans empreinte : téléchargement direct.
     /// </summary>
-    internal static bool CanVerifyIndependently(string fileName, string? sha256, string? sha1, string? md5) =>
-        sha256 is not null || sha1 is not null || md5 is not null ||
-        SignedFileExtensions.Contains(Path.GetExtension(fileName), StringComparer.OrdinalIgnoreCase);
+    internal static bool CanVerifyIndependently(string? sha256, string? sha1, string? md5) =>
+        !string.IsNullOrWhiteSpace(sha256) || !string.IsNullOrWhiteSpace(sha1) || !string.IsNullOrWhiteSpace(md5);
 
     private async Task<bool> TryConsoleAsync(ConsoleCache cache, Uri uri, string fileName, string tmp, string? sha256, string? sha1, string? md5,
         IProgress<DownloadProgress>? progress, CancellationToken ct)
@@ -141,7 +141,7 @@ public sealed class Downloader : IDisposable
         if (!await cache.TryDownloadFileAsync(uri, tmp, sha256, sha1, md5,
                 (received, total) => progress?.Report(new DownloadProgress(fileName, received, total)), ct).ConfigureAwait(false))
             return false;
-        var rejection = await VerifyConsoleCopyAsync(tmp, uri, sha256, sha1, md5, ct).ConfigureAwait(false);
+        var rejection = await VerifyConsoleCopyAsync(tmp, sha256, sha1, md5, ct).ConfigureAwait(false);
         if (rejection is null) return true;
         try { File.Delete(tmp); } catch (IOException) { /* remplacé par le téléchargement direct */ }
         cache.ReportRejected(uri, rejection);
@@ -149,23 +149,18 @@ public sealed class Downloader : IDisposable
     }
 
     /// <summary>
-    /// Vérification d'une copie reçue de la console, AVANT tout usage : empreinte publiée par la source, ou à défaut
-    /// signature Authenticode valide (certificat non révoqué, révocation invérifiable tolérée) de l'éditeur ATTENDU pour ce
-    /// domaine (NVIDIA pour us.download.nvidia.com...), pas seulement d'un éditeur approuvé. Renvoie le motif du refus, ou
-    /// null si la copie est acceptée. Les contrôles habituels de l'installation (signature, éditeur, ID matériel de l'INF)
-    /// s'appliquent ensuite comme pour un téléchargement direct.
+    /// Vérification d'une copie reçue de la console, AVANT tout usage : elle doit avoir l'empreinte publiée par la source
+    /// (obtenue sans la console). Renvoie le motif du refus, ou null si la copie est acceptée. Sans empreinte, la copie est
+    /// toujours refusée, même validement signée par l'éditeur attendu (voir <see cref="CanVerifyIndependently"/>). Les
+    /// contrôles habituels de l'installation (signature, éditeur, ID matériel de l'INF) s'appliquent ensuite comme pour un
+    /// téléchargement direct.
     /// </summary>
-    internal async Task<string?> VerifyConsoleCopyAsync(string path, Uri official, string? sha256, string? sha1, string? md5, CancellationToken ct)
+    internal static async Task<string?> VerifyConsoleCopyAsync(string path, string? sha256, string? sha1, string? md5, CancellationToken ct)
     {
-        var hashes = await VerifyHashesAsync(path, sha256, sha1, md5, ct).ConfigureAwait(false);
-        if (hashes is true) return null;
-        if (hashes is false) return "empreinte différente de celle publiée par la source officielle";
-        var sig = SignatureVerifier.Verify(path, checkRevocation: true);
-        if (!sig.IsValid) return $"signature invalide ({sig.Detail})";
-        if (TrustPolicy.ExpectedPublishers(official) is not { } expected) return $"aucun éditeur attendu connu pour {official.Host}";
-        if (!TrustPolicy.IsExpectedPublisher(official, sig.Signer) || !_trust.IsTrustedPublisher(sig.Signer))
-            return $"signé par {sig.Signer}, alors que {official.Host} publie des fichiers de {string.Join(" / ", expected)}";
-        return null;
+        if (!CanVerifyIndependently(sha256, sha1, md5)) return "aucune empreinte publiée par la source : la console ne peut pas servir ce fichier";
+        return await VerifyHashesAsync(path, sha256, sha1, md5, ct).ConfigureAwait(false) is true
+            ? null
+            : "empreinte différente de celle publiée par la source officielle";
     }
 
     /// <summary>true = au moins une empreinte fournie et toutes concordent ; false = discordance ; null = aucune empreinte connue.</summary>
