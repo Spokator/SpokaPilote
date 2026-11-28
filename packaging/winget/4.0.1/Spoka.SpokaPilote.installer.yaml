@@ -1,0 +1,37 @@
+# Généré par scripts/winget-manifest.ps1 — ne pas modifier à la main.
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.10.0.schema.json
+
+PackageIdentifier: Spoka.SpokaPilote
+PackageVersion: 4.0.1
+MinimumOSVersion: 10.0.17763.0
+InstallerType: inno
+Scope: machine
+InstallModes:
+- interactive
+- silent
+- silentWithProgress
+InstallerSwitches:
+  Silent: /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-
+  SilentWithProgress: /SILENT /SUPPRESSMSGBOXES /NORESTART /SP-
+UpgradeBehavior: install
+ElevationRequirement: elevatesSelf
+Commands:
+- spokapilote
+ProductCode: '{C4E1A7B2-5D3F-4A8E-9B6C-2F7D1E0A3B94}_is1'
+ReleaseDate: 2026-11-28
+AppsAndFeaturesEntries:
+- DisplayName: SpokaPilote
+  Publisher: Spoka
+  DisplayVersion: 4.0.1
+  ProductCode: '{C4E1A7B2-5D3F-4A8E-9B6C-2F7D1E0A3B94}_is1'
+InstallationMetadata:
+  DefaultInstallLocation: '%ProgramFiles%\SpokaPilote'
+Installers:
+- Architecture: x64
+  InstallerUrl: https://github.com/Spokator/SpokaPilote/releases/download/v4.0.1/SpokaPilote-Setup-4.0.1.exe
+  InstallerSha256: 31848BD25617D92FD66BE35E5B8545CA099A747F63269221E94B01DF260DA5DA
+- Architecture: arm64
+  InstallerUrl: https://github.com/Spokator/SpokaPilote/releases/download/v4.0.1/SpokaPilote-Installer-4.0.1-arm64.exe
+  InstallerSha256: 0CC330B2C646C1E6C8C0AFFBDD029C49EC15EEB249C4E65E04B08E6551883E84
+ManifestType: installer
+ManifestVersion: 1.10.0

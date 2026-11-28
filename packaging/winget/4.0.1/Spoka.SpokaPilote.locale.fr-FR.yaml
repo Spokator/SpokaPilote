@@ -1,0 +1,83 @@
+# Généré par scripts/winget-manifest.ps1 — ne pas modifier à la main.
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.10.0.schema.json
+
+PackageIdentifier: Spoka.SpokaPilote
+PackageVersion: 4.0.1
+PackageLocale: fr-FR
+Publisher: Spoka
+PublisherUrl: https://github.com/Spokator
+PublisherSupportUrl: https://github.com/Spokator/SpokaPilote/issues
+Author: Spokator
+PackageName: SpokaPilote
+PackageUrl: https://spokator.github.io/SpokaPilote/
+License: MIT
+LicenseUrl: https://github.com/Spokator/SpokaPilote/blob/main/LICENSE
+Copyright: Copyright (c) 2026 Spokator
+ShortDescription: Les bons pilotes pour tout le poste et les imprimantes d'entreprise, depuis les sources officielles uniquement.
+Description: |-
+  SpokaPilote inventorie le poste, identifie chaque composant par son identifiant matériel exact et va chercher le pilote
+  chez Microsoft (Windows Update, Microsoft Update Catalog), chez le constructeur du PC (Dell, HP, Lenovo) ou chez NVIDIA.
+  Chaque pilote est vérifié (domaine officiel en HTTPS, empreinte, signature numérique, compatibilité réelle) avant
+  installation, avec point de restauration, sauvegarde et annulation en un clic. SpokaPilote configure aussi les
+  imprimantes et copieurs réseau et remonte l'état du parc dans une console centrale auto-hébergée.
+  Interface graphique et commande « spokapilote » pour les scripts de déploiement.
+Moniker: spokapilote
+Tags:
+- pilotes
+- drivers
+- imprimantes
+- printers
+- windows-update
+- parc-informatique
+- deploiement
+- administration
+ReleaseNotes: |-
+  Version de sécurité et de robustesse, issue d'une revue indépendante avant déploiement à grande échelle. **Mise à jour
+  recommandée pour tous les postes et la console.**
+
+  **Sécurité**
+  - **Cache de la console : transport seulement, sans exception.** Les métadonnées non signées (catalogues XML Lenovo,
+    réponses NVIDIA) et la boîte de téléchargement du Microsoft Update Catalog ne passent plus jamais par la console :
+    une console compromise ne peut plus choisir ce qu'un poste exécute. Seuls les catalogues `.cab` signés (Dell, HP)
+    et les fichiers dont le poste connaît l'empreinte officielle restent relayés. La console 4.0.1 refuse aussi ces
+    relais aux postes 4.0.0, qui passent alors directement par la source officielle.
+  - **Lignes de commande des constructeurs vérifiées** (Lenovo, HP) et lancées sans interpréteur de commandes : seul le
+    paquet téléchargé et vérifié peut être exécuté, aucun enchaînement de commandes n'est accepté.
+  - **Éditeurs approuvés : correspondance exacte**, forme juridique comprise (plus de « Canon » qui accepterait
+    « Canonical », ni « NVIDIA GmbH » pour « NVIDIA Corporation ») ; contrôle de révocation. **À vérifier** : une entrée
+    de `ExtraTrustedPublishers` doit maintenant reprendre le nom exact du certificat (« Fabrikam, Inc. »).
+  - **Aucune copie de la console sans empreinte indépendante** : un fichier dont la source ne publie pas d'empreinte est
+    toujours téléchargé directement ; les catalogues `.cab` relayés plus anciens que le dernier accepté sont refusés ;
+    une entrée du Microsoft Update Catalog est confirmée directement chez Microsoft et la version du pilote extrait doit
+    correspondre à celle annoncée.
+  - Paquets constructeurs dont l'installeur n'est pas un `.exe` / `.cmd` / `.bat` écartés dès l'analyse (au lieu
+    d'échouer à chaque maintenance) ; arguments limités aux caractères ASCII.
+  - **Dossier de données protégé** : `%ProgramData%\SpokaPilote` n'est modifiable que par les administrateurs ;
+    téléchargements et extractions dans un dossier de travail privé, recréé à chaque exécution ; fichiers déposés par un
+    autre compte refusés ou mis en quarantaine. Le **jeton d'enrôlement** est sorti de `settings.json` et chiffré
+    (illisible par un utilisateur standard), masqué partout ; `spokapilote config set ServerToken -` le lit sur l'entrée
+    standard (jamais en ligne de commande), et la désinstallation l'efface.
+  - **Mise à jour automatique** : empreinte publiée obligatoire, adresse GitHub exacte, fichier revérifié juste avant
+    son lancement.
+
+  **Robustesse sur de grands parcs**
+  - **Sauvegardes de pilotes limitées** (3 par défaut, 10 Go au plus) et réutilisées quand rien n'a changé ; dossiers de
+    téléchargement nettoyés : plus de disque qui se remplit au fil des maintenances.
+  - **Annulation sûre** : seuls les paquets réellement ajoutés par SpokaPilote et inchangés depuis sont retirés, sans
+    forcer ; « annuler la dernière intervention » refusée au-delà de 30 jours.
+  - **Anneaux sans angle mort** : les pilotes sans numéro de version sont suivis et suspendables ; une suspension
+    s'applique au même pilote venu d'une autre source ; la liste de référence téléchargée ne peut que bloquer ; politique
+    et décisions revérifiées juste avant l'installation.
+  - Mode portable : caches de politique séparés par poste.
+  - Réglages `settings.json` lus sans tenir compte de la casse des noms.
+  - Désinstallation : les tâches planifiées SpokaPilote sont retirées.
+
+  **Déploiement en masse**
+  - Kit `deploy/` (installation vérifiée par SHA-256, détection, désinstallation, configuration commune) et guide
+    [docs/DEPLOIEMENT-ENTREPRISE.md](docs/DEPLOIEMENT-ENTREPRISE.md) : Intune, Configuration Manager, GPO, RMM.
+ReleaseNotesUrl: https://github.com/Spokator/SpokaPilote/releases/tag/v4.0.1
+Documentations:
+- DocumentLabel: Documentation
+  DocumentUrl: https://spokator.github.io/SpokaPilote/documentation.html
+ManifestType: defaultLocale
+ManifestVersion: 1.10.0
