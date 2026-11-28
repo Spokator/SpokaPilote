@@ -448,6 +448,19 @@ rien. Ne journalisez pas la sortie de `spokapilote config` d'un poste en 4.0.0 :
   dans son journal à chaque démarrage élevé : ne les utilisez pas sur un poste de production. Un dossier existant
   n'est protégé (repris, mis en quarantaine) que s'il est vide, déjà protégé, ou ne contient que des éléments de
   SpokaPilote dont `settings.json`.
+- **Qui est de confiance (4.0.2)** : les exécutions élevées ne lisent un fichier du dossier que s'il appartient à
+  SYSTEM, aux Administrateurs, à TrustedInstaller ou à un **compte membre du groupe local Administrateurs** (membre
+  direct, administrateur élevé courant, ou membre par un groupe de domaine imbriqué quand le domaine répond). Jamais à
+  Utilisateurs, Tout le monde, Utilisateurs authentifiés, INTERACTIF, CREATOR OWNER ni à un compte non administrateur.
+  La 4.0.1 mettait à tort en quarantaine les fichiers des comptes administrateurs (UAC sans invite, stratégie
+  « créateur de l'objet », fichier copié par un technicien), dont `settings.json` : le poste perdait sa console.
+- **Restaurer une configuration mise en quarantaine** : la 4.0.2 la restaure d'elle-même au premier démarrage élevé
+  (installation de la mise à jour comprise) quand aucun `settings.json` n'existe et que le fichier ne contient aucun
+  réglage qui étend la confiance (éditeurs ou domaines supplémentaires, dépôts, source de politique, catalogue
+  d'imprimantes). Sinon le poste l'affiche (journal en ERREUR, CLI, bandeau de l'interface) et un administrateur la
+  vérifie puis lance `spokapilote config restore` — ou, sur tout un parc dont la configuration vient de vous :
+  `spokapilote config restore --yes` en SYSTEM (Intune, RMM, script de démarrage), ou simplement un nouveau passage du
+  kit. `spokapilote config restore --discard` l'écarte. La quarantaine est purgée après 90 jours.
 - **Le kit** n'écrit `settings.json` qu'en administrateur ou en SYSTEM. Il modifie un fichier existant **en place**
   (les droits posés par l'application sont conservés) ou le crée avec les droits hérités du dossier. Un
   `settings.json` dont le propriétaire n'est ni SYSTEM, ni les Administrateurs, ni le compte qui exécute le script
