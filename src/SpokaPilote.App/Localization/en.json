@@ -536,5 +536,15 @@
   "L'adresse de la console doit commencer par https:// (connexion chiffrée).": "The console address must start with https:// (encrypted connection).",
   "Vérification de la politique de pilotes...": "Checking the driver policy...",
   "Rien n'a été installé.": "Nothing was installed.",
-  "{0} pilote(s) écarté(s) : bloqué(s) ou retenu(s) par la politique depuis l'analyse — {1}.": "{0} driver(s) skipped: blocked or held by the policy since the scan — {1}."
+  "{0} pilote(s) écarté(s) : bloqué(s) ou retenu(s) par la politique depuis l'analyse — {1}.": "{0} driver(s) skipped: blocked or held by the policy since the scan — {1}.",
+  "Configuration mise en quarantaine": "Configuration quarantined",
+  "Configuration mise en quarantaine.": "Configuration quarantined.",
+  "Vérifier et restaurer": "Review and restore",
+  "La restauration de la configuration": "Restoring the configuration",
+  "Configuration non restaurable : {0}": "The configuration cannot be restored: {0}",
+  "Jeton de la console (masqué) : il remplacera le jeton enregistré.": "Console token (hidden): it will replace the saved token.",
+  "Attention : réglages qui étendent la confiance des tâches SYSTEM ({0}) : vérifiez qu'ils viennent bien de votre organisation.": "Warning: settings that extend what SYSTEM tasks trust ({0}): make sure they really come from your organisation.",
+  "Restaurer ce fichier mis en quarantaine ?\n\n{0}\n\n{1}": "Restore this quarantined file?\n\n{0}\n\n{1}",
+  "Restauration impossible : {0}": "Restore failed: {0}",
+  "Configuration restaurée. Redémarrez SpokaPilote pour l'appliquer.": "Configuration restored. Restart SpokaPilote to apply it."
 }

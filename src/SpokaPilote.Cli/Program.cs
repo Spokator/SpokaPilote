@@ -44,6 +44,8 @@ internal static partial class Program
         // Exécution élevée (tâche SYSTEM, agent, console administrateur) : dossier de données protégé avant tout usage
         // (contrôle rapide ; reprise complète au premier démarrage d'une version 4.0.1 ou si les droits ont été modifiés).
         if (a.Command is not ("secure-data" or "proteger-donnees" or "version" or "--version")) DataProtection.OnStartup();
+        // Configuration mise en quarantaine : signalée au début de chaque commande (sortie d'erreur : un --json reste exploitable).
+        if (a.Command is not ("version" or "--version") && !(a.Command == "config" && a.Positional(0) is "restore" or "restaurer")) PrintQuarantineNotices();
 
         try
         {
@@ -662,8 +664,9 @@ internal static partial class Program
 
     private static int Config(Args a)
     {
-        var settings = Settings.Load();
         var sub = a.Positional(0) ?? "show";
+        if (sub is "restore" or "restaurer") return ConfigRestore(a);
+        var settings = Settings.Load();
         switch (sub)
         {
             case "add-repo":
@@ -704,6 +707,85 @@ internal static partial class Program
         WriteLine($"Fichier : {AppPaths.SettingsFile}", ConsoleColor.Gray);
         // Jeton jamais affiché (journal de déploiement, capture d'écran, historique de la console).
         Console.WriteLine(settings.ToDisplayJson().ToJsonString(new System.Text.Json.JsonSerializerOptions { WriteIndented = true, Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping }));
+        return ExitOk;
+    }
+
+    /// <summary>Bandeau « configuration mise en quarantaine » (sortie d'erreur), affiché par chaque commande.</summary>
+    private static void PrintQuarantineNotices()
+    {
+        var notices = ConfigQuarantine.Notices();
+        if (notices.Count == 0) return;
+        lock (ConsoleLock)
+        {
+            var previous = Console.ForegroundColor;
+            Console.ForegroundColor = ConsoleColor.Red;
+            foreach (var notice in notices) Console.Error.WriteLine($"⚠ {notice}");
+            Console.ForegroundColor = previous;
+        }
+    }
+
+    /// <summary>
+    /// « spokapilote config restore [&lt;chemin&gt;] [--yes] [--discard] » : affiche la configuration mise en quarantaine
+    /// (jeton masqué), la restaure après confirmation (jeton en clair déplacé vers server-token.dat) et efface le marqueur.
+    /// Sans chemin : la configuration en attente la plus récente, sinon le settings.json le plus récent de la quarantaine.
+    /// --discard : écarte les configurations en attente (le bandeau disparaît, les fichiers restent dans la quarantaine).
+    /// Console administrateur.
+    /// </summary>
+    private static int ConfigRestore(Args a)
+    {
+        if (AppPaths.Layout.Mode == DataLocationMode.Portable)
+        {
+            WriteLine("Mode portable : aucune quarantaine sur la clé.", ConsoleColor.Yellow);
+            return ExitOk;
+        }
+        if (!Elevation.IsAdministrator())
+        {
+            WriteLine("La restauration de la configuration se fait depuis une console administrateur (la quarantaine n'est lisible que des administrateurs).", ConsoleColor.Red);
+            return ExitError;
+        }
+        foreach (var entry in ConfigQuarantine.Pending()) WriteLine($"⚠ {entry.Notice}", ConsoleColor.Yellow);
+        if (a.Flag("discard"))
+        {
+            if (!a.Flag("yes") && !Confirm("Écarter ces configurations (elles restent dans la quarantaine jusqu'à sa purge) ?")) return ExitOk;
+            var count = ConfigQuarantine.DiscardPending();
+            WriteLine(count == 0 ? "Aucune configuration en attente." : $"{count} configuration(s) écartée(s).", ConsoleColor.Green);
+            return ExitOk;
+        }
+        QuarantineCandidate candidate;
+        try
+        {
+            candidate = ConfigQuarantine.Prepare(a.Positional(1));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException or InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            WriteLine(ex is FileNotFoundException ? ex.Message : $"Fichier non restaurable : {ex.Message}", ex is FileNotFoundException ? ConsoleColor.Gray : ConsoleColor.Red);
+            return ex is FileNotFoundException ? ExitOk : ExitError;
+        }
+        WriteLine($"Fichier : {candidate.FullPath}", ConsoleColor.White);
+        if (candidate.Display is { } display)
+        {
+            Console.WriteLine(display.ToJsonString(new System.Text.Json.JsonSerializerOptions { WriteIndented = true, Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping }));
+            if (candidate.TrustExtendingSettings.Count > 0)
+                WriteLine($"Attention : réglages qui étendent la confiance des tâches SYSTEM ({string.Join(", ", candidate.TrustExtendingSettings)}) : " +
+                          "vérifiez qu'ils viennent bien de votre organisation.", ConsoleColor.Yellow);
+            if (File.Exists(AppPaths.SettingsFile))
+                WriteLine($"La configuration actuelle sera remplacée (copie gardée : {AppPaths.SettingsFile}{ConfigQuarantine.PreviousSettingsSuffix}).", ConsoleColor.Yellow);
+        }
+        else
+        {
+            WriteLine("Jeton de la console (masqué) : remplacera le jeton enregistré.", ConsoleColor.Gray);
+        }
+        if (!a.Flag("yes") && !Confirm("Restaurer ce fichier ?")) return ExitOk;
+        try
+        {
+            ConfigQuarantine.Restore(candidate);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
+        {
+            WriteLine($"Restauration impossible : {ex.Message}", ConsoleColor.Red);
+            return ExitError;
+        }
+        WriteLine("Configuration restaurée" + (candidate.ContainsToken ? $" ; jeton enregistré chiffré dans {SecretStore.TokenFile}." : "."), ConsoleColor.Green);
         return ExitOk;
     }
 
@@ -1006,6 +1088,10 @@ internal static partial class Program
             CONFIGURATION
               spokapilote config [show | set <clé> <valeur> | add-repo <chemin> | remove-repo <chemin>]
                                    « show » indique aussi l'emplacement des données (installé ou mode portable)
+              spokapilote config restore [<chemin>] [--yes] [--discard]
+                                   configuration mise en quarantaine (fichier créé par un compte non administrateur) :
+                                   affichée (jeton masqué) puis restaurée, jeton déplacé vers server-token.dat ;
+                                   --discard l'écarte (console administrateur)
               spokapilote config set UseConsoleCache auto|on|off   cache de pilotes de la console centrale (4.0) ;
                                    « server status » en donne l'état (taille, taux de réussite)
               spokapilote config set ServerToken -          jeton d'enrôlement lu sur l'entrée standard (ou saisi sans

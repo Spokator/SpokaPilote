@@ -382,7 +382,7 @@ spokapilote config set RollbackLastMaxAgeDays 14
 
 ---
 
-## 6. Dossier de données et droits (4.0.1)
+## 6. Dossier de données et droits (4.0.1, 4.0.2)
 
 Les tâches planifiées et l'agent s'exécutent en **SYSTEM** : ce qu'ils lisent et exécutent dans
 `%ProgramData%\SpokaPilote` doit être hors de portée des utilisateurs du poste (postes partagés, RDS). Jusqu'à la
@@ -401,9 +401,16 @@ rapide ; reprise complète si les droits ont été modifiés) :
   Cache\  Work\  Mount\  Quarantaine\                     SYSTEM et Administrateurs seulement
 ```
 
-- **Éléments suspects** : tout ce qui n'appartient ni à SYSTEM, ni aux Administrateurs, ni à TrustedInstaller est repris
-  puis supprimé (cache, téléchargements) ou déplacé dans `Quarantaine\<date>` (configuration, historique, sauvegardes,
-  journaux) — jamais utilisé. Les jonctions et liens symboliques sont retirés sans être suivis. Avant tout usage, une
+- **Propriétaires reconnus (4.0.2)** : SYSTEM, le groupe Administrateurs, TrustedInstaller, et **tout compte membre du
+  groupe local Administrateurs** — membre direct (`PC-PIERRE\Pierre`), administrateur qui exécute SpokaPilote élevé,
+  ou membre par un groupe de domaine imbriqué (« Admins du domaine » ; vérifié auprès du domaine, non reconnu s'il est
+  injoignable). Utile sur un poste où l'UAC ne demande rien, avec la stratégie « propriétaire par défaut = créateur de
+  l'objet », ou pour un fichier copié par le compte d'un technicien. Jamais reconnus : Utilisateurs, Utilisateurs
+  authentifiés, Tout le monde, INTERACTIF, CREATOR OWNER, Invité, Utilisateurs du domaine, ni un compte qui n'est pas
+  administrateur. Un élément d'un compte administrateur est conservé et son propriétaire ramené aux Administrateurs.
+- **Éléments suspects** : tout ce qui n'appartient pas à un propriétaire reconnu est repris puis supprimé (cache,
+  téléchargements) ou déplacé dans `Quarantaine\<date>` (configuration, historique, sauvegardes, journaux) — jamais
+  utilisé. La quarantaine est purgée après 90 jours. Les jonctions et liens symboliques sont retirés sans être suivis. Avant tout usage, une
   exécution élevée refuse un `settings.json`, une entrée d'historique, une sauvegarde ou un fichier en cache qui
   n'appartient pas aux administrateurs — ou dont **un des dossiers**, depuis `%ProgramData%\SpokaPilote`, est un lien
   ou appartient à un autre compte (jonction `Cache\catalog` créée plus tard) —, et un fichier en cache daté dans le
@@ -437,10 +444,25 @@ rapide ; reprise complète si les droits ont été modifiés) :
   la dernière politique reçue par les exécutions SYSTEM du poste (`policy-cache.json`, `rollout-decisions.json`, lus
   seulement s'ils ont été écrits par un administrateur), et le signale : la politique à jour est revérifiée, avec les
   droits administrateur, au moment d'installer. Modifier les paramètres demande l'élévation.
-- **Fichiers déposés à la main** : déposez `settings.json` depuis un compte administrateur **élevé**, un script SYSTEM
-  (Intune, GPO) ou `spokapilote config set`. Si la stratégie « Objets système : propriétaire par défaut des objets
-  créés par les membres du groupe Administrateurs » est réglée sur « Créateur de l'objet », donnez le fichier aux
-  administrateurs : `icacls settings.json /setowner *S-1-5-32-544`.
+- **Fichiers déposés à la main** : déposez `settings.json` depuis un compte administrateur, un script SYSTEM (Intune,
+  GPO) ou `spokapilote config set`. Un fichier copié par le compte d'un administrateur est reconnu (4.0.2) ; pour un
+  compte du domaine imbriqué sur un poste souvent hors ligne, donnez-le aux administrateurs :
+  `icacls settings.json /setowner *S-1-5-32-544`.
+- **Configuration mise en quarantaine (4.0.2)** : un `settings.json` (ou `server-token.dat`) écarté n'est jamais perdu
+  en silence : ERREUR dans le journal, marqueur `quarantine.json` (sans secret), avertissement au début de **chaque
+  commande** de la CLI et bandeau dans l'interface (Accueil, Paramètres) : « Configuration mise en quarantaine le …
+  (fichier créé par un compte non administrateur : …) : vérifiez-la puis `spokapilote config restore` ».
+  `spokapilote config restore [<chemin>]` (console administrateur) affiche le fichier (jeton masqué, réglages qui
+  étendent la confiance signalés), le restaure après confirmation (`--yes` pour un script ; l'ancien fichier est gardé
+  en `settings.json.avant-restauration`), déplace un jeton en clair vers `server-token.dat` et efface le marqueur ;
+  `--discard` écarte la configuration (le bandeau disparaît). Au démarrage élevé, sans `settings.json`, une configuration
+  en quarantaine est restaurée **automatiquement** si son propriétaire d'origine est désormais un administrateur reconnu.
+- **Postes passés par la 4.0.1** : elle a mis en quarantaine les fichiers des comptes administrateurs et ramené leur
+  propriétaire aux Administrateurs avant de les déplacer (le propriétaire d'origine est perdu). Au premier démarrage
+  élevé de la 4.0.2, sans `settings.json`, le plus récent `Quarantaine\<date>\settings.json` est restauré
+  automatiquement (jeton migré) **s'il ne contient aucun réglage qui étend la confiance** (`ExtraTrustedPublishers`,
+  `ExtraTrustedHosts`, `RepositoryPaths`, `PolicySource`, `PrinterCatalogUrl`) ; sinon il est signalé comme ci-dessus et
+  attend `spokapilote config restore`. Les journaux et rapports mis en quarantaine y restent jusqu'à la purge.
 - `spokapilote secure-data --force` refait la reprise complète et en affiche le détail.
 
 ---

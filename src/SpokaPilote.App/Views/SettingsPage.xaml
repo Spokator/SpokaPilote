@@ -29,6 +29,19 @@
         <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
             <StackPanel Margin="36,8,36,28" MaxWidth="900">
 
+                <Border Style="{StaticResource InfoBarWarning}" Margin="0,0,0,12" Visibility="{Binding Shell.HasQuarantineNotice, Converter={StaticResource BoolToVisibility}}"
+                        AutomationProperties.Name="Configuration mise en quarantaine">
+                    <DockPanel>
+                        <app:Glyph Style="{StaticResource WarningIcon}" />
+                        <Button DockPanel.Dock="Right" Margin="16,0,0,0" VerticalAlignment="Center" Content="Vérifier et restaurer"
+                                Command="{Binding Shell.RestoreQuarantineCommand}" />
+                        <TextBlock VerticalAlignment="Center" TextWrapping="Wrap">
+                            <Run FontWeight="SemiBold">Configuration mise en quarantaine.</Run>
+                            <Run Text="{Binding Shell.QuarantineNotice, Mode=OneWay}" />
+                        </TextBlock>
+                    </DockPanel>
+                </Border>
+
                 <Border Style="{StaticResource Card}">
                     <StackPanel>
                         <TextBlock Style="{StaticResource CardTitle}" Text="Langue" Margin="0,0,0,10" />

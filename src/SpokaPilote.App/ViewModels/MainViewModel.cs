@@ -46,6 +46,7 @@ public sealed class MainViewModel : ObservableObject
         ScanCommand = new RelayCommand(ScanAsync, () => !IsBusy);
         CancelCommand = new RelayCommand(() => _cts?.Cancel(), () => IsBusy);
         RelaunchAsAdminCommand = new RelayCommand(RelaunchAsAdmin, () => !IsAdmin);
+        RestoreQuarantineCommand = new RelayCommand(RestoreQuarantine, () => !IsBusy);
         OpenUrlCommand = new RelayCommand(p => { if (p is string url) OpenPath(url); return Task.CompletedTask; });
         NavigateCommand = new RelayCommand(p => { if (p is string key) Navigate(key); return Task.CompletedTask; });
         InstallUpdateCommand = new RelayCommand(InstallUpdateAsync, () => !IsBusy && AvailableUpdate is not null && !IsPortable);
@@ -337,6 +338,58 @@ public sealed class MainViewModel : ObservableObject
         {
             // L'utilisateur a refusé l'élévation UAC.
         }
+    }
+
+    // ------------------------------------------------------------------ configuration mise en quarantaine
+
+    private IReadOnlyList<string> _quarantineNotices = ConfigQuarantine.Notices();
+    /// <summary>settings.json ou jeton mis en quarantaine (fichier créé par un compte non administrateur) : bandeau de l'accueil et des paramètres.</summary>
+    public string QuarantineNotice => string.Join(Environment.NewLine, _quarantineNotices);
+    public bool HasQuarantineNotice => _quarantineNotices.Count > 0;
+    public RelayCommand RestoreQuarantineCommand { get; }
+
+    /// <summary>Affiche la configuration mise en quarantaine (jeton masqué) et la restaure après confirmation (administrateur).</summary>
+    private void RestoreQuarantine()
+    {
+        if (!IsAdmin)
+        {
+            AskRelaunch(Loc.T("La restauration de la configuration"));
+            return;
+        }
+        QuarantineCandidate candidate;
+        try
+        {
+            candidate = ConfigQuarantine.Prepare();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException or InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            MessageBox.Show(Loc.F("Configuration non restaurable : {0}", ex.Message), "SpokaPilote", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+        var content = candidate.Display?.ToJsonString(new System.Text.Json.JsonSerializerOptions
+        {
+            WriteIndented = true, Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+        }) ?? Loc.T("Jeton de la console (masqué) : il remplacera le jeton enregistré.");
+        var warning = candidate.TrustExtendingSettings.Count > 0
+            ? "\n\n" + Loc.F("Attention : réglages qui étendent la confiance des tâches SYSTEM ({0}) : vérifiez qu'ils viennent bien de votre organisation.",
+                string.Join(", ", candidate.TrustExtendingSettings))
+            : "";
+        if (MessageBox.Show(Loc.F("Restaurer ce fichier mis en quarantaine ?\n\n{0}\n\n{1}", candidate.FullPath, content) + warning, "SpokaPilote",
+                MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No) != MessageBoxResult.Yes)
+            return;
+        try
+        {
+            ConfigQuarantine.Restore(candidate);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
+        {
+            MessageBox.Show(Loc.F("Restauration impossible : {0}", ex.Message), "SpokaPilote", MessageBoxButton.OK, MessageBoxImage.Error);
+            return;
+        }
+        _quarantineNotices = ConfigQuarantine.Notices();
+        OnPropertyChanged(nameof(QuarantineNotice));
+        OnPropertyChanged(nameof(HasQuarantineNotice));
+        MessageBox.Show(Loc.T("Configuration restaurée. Redémarrez SpokaPilote pour l'appliquer."), "SpokaPilote", MessageBoxButton.OK, MessageBoxImage.Information);
     }
 
     // ------------------------------------------------------------------ opération en cours
