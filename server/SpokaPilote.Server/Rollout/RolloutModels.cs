@@ -105,8 +105,18 @@ public sealed class RolloutVersion
     public DateTimeOffset? ApprovedAt { get; init; }
     public string? ApprovedBy { get; init; }
 
+    /// <summary>
+    /// Proposition sans numéro de version lisible (4.0.1) : identité stable envoyée par le poste (« update:&lt;UpdateID&gt; »,
+    /// « dell:&lt;releaseID&gt; »...) ; <see cref="Version"/> est alors vide. Chaîne vide pour une version ordinaire.
+    /// </summary>
+    public string ItemKey { get; init; } = "";
+    /// <summary>Constructeur du matériel visé (« PCI\VEN_8086 ») et classe du périphérique (« Display ») : même pilote d'une source à l'autre.</summary>
+    public string? HardwareVendor { get; init; }
+    public string? DeviceClass { get; init; }
+
+    public bool IsVersionless => ItemKey.Length > 0;
     public bool NeedsAttention => Suspended && SuspendAuto && AcknowledgedAt is null;
-    public string DisplayName => RolloutKeys.DisplayName(Title, Version);
+    public string DisplayName => IsVersionless ? $"{Title} (sans numéro de version)" : RolloutKeys.DisplayName(Title, Version);
 }
 
 /// <summary>Installations d'une version dans un anneau (postes distincts, état actuel de chaque poste).</summary>

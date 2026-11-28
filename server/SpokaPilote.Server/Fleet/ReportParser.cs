@@ -87,6 +87,9 @@ public static class ReportParser
                     Devices = Strings(Prop(c, "devices")),
                     DeviceIds = Strings(Prop(c, "deviceIds")),
                     BlockedReason = Str(c, "blockedReason"),
+                    ItemId = Str(c, "itemId"),
+                    // Repli si le périphérique visé est absent du rapport : l'ID matériel qui a permis l'association.
+                    HardwareVendor = Rollout.RolloutKeys.HardwareVendor(Str(c, "matchedHardwareId")),
                 });
 
         if (Prop(root, "installation") is { ValueKind: JsonValueKind.Array } installation)
@@ -97,6 +100,7 @@ public static class ReportParser
                 Status = Str(o, "status") ?? "",
                 Message = Str(o, "message"),
                 RebootRequired = Prop(o, "rebootRequired") is { ValueKind: JsonValueKind.True },
+                ItemId = Str(o, "itemId"),
             }).ToList();
 
         report.Health = ParseHealth(Prop(root, "health"));
@@ -105,8 +109,26 @@ public static class ReportParser
         var allowed = new HashSet<string>(report.Candidates.Where(c => !c.IsBlocked).SelectMany(c => c.DeviceIds), StringComparer.OrdinalIgnoreCase);
         var blocked = new HashSet<string>(report.Candidates.Where(c => c.IsBlocked).SelectMany(c => c.DeviceIds), StringComparer.OrdinalIgnoreCase);
 
+        // Matériel visé par chaque proposition (constructeur de la puce, classe du périphérique) : identité du pilote d'une source
+        // à l'autre pour la diffusion par anneaux. Seuls les périphériques visés par une proposition sont lus.
+        var targeted = new Dictionary<string, List<CandidateEntry>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var c in report.Candidates)
+            if (c.DeviceIds.FirstOrDefault() is { } first)
+            {
+                if (!targeted.TryGetValue(first, out var list)) targeted[first] = list = new List<CandidateEntry>(1);
+                list.Add(c);
+            }
+
         foreach (var dev in devices.EnumerateArray().Where(x => x.ValueKind == JsonValueKind.Object))
         {
+            if (targeted.Count > 0 && Str(dev, "instanceId") is { } targetId && targeted.TryGetValue(targetId, out var aimed) &&
+                Strings(Prop(dev, "hardwareIds")).Concat(Strings(Prop(dev, "compatibleIds"))).Select(Rollout.RolloutKeys.HardwareVendor)
+                    .FirstOrDefault(v => v is not null) is { } vendor)
+            {
+                var deviceClass = Rollout.RolloutKeys.NormalizeClass(Str(dev, "className"));
+                foreach (var c in aimed) { c.HardwareVendor = vendor; c.DeviceClass = deviceClass; }
+            }
+
             // Un périphérique débranché (isPresent=false) ne compte pas.
             if (Prop(dev, "isPresent") is { ValueKind: JsonValueKind.False }) continue;
             report.DeviceCount++;

@@ -351,9 +351,10 @@ public sealed class DriverPolicy
         {
             // Console en mode décisions : retenues et suspensions décidées par la console pour CETTE proposition (les règles
             // de la politique ne portent que les suspensions). Évaluées avant les règles de l'organisation, comme les règles
-            // « anneau-… » : une règle « allow » ne lève pas une retenue.
+            // « anneau-… » : une règle « allow » ne lève pas une retenue. Une proposition sans numéro de version lisible est
+            // décidée elle aussi, d'après son identité stable (DriverIdentity.ItemKey : UpdateID, identifiant du paquet...).
             unknownHold = null;
-            if (!candidate.IsInformational && DriverVersion.Parse(candidate.Version) is not null)
+            if (DriverIdentity.IsTrackable(candidate))
             {
                 var d = Decisions?.For(candidate);
                 switch (d?.Status)
@@ -431,23 +432,23 @@ public sealed class DriverPolicy
     /// Applique la politique aux candidats d'une analyse : renseigne <see cref="DriverCandidate.BlockedReason"/>,
     /// retire de la liste les candidats d'une règle « hide », et écarte les alternatives bloquées.
     /// </summary>
+    /// <para>
+    /// Même pilote proposé par plusieurs sources (même constructeur du matériel, même version, voir
+    /// <see cref="DriverIdentity.SameDriver"/>) : une suspension ou une retenue de la diffusion par anneaux qui vise l'une des
+    /// propositions vise aussi les autres (et leurs alternatives) — la fusion ne peut donc jamais choisir, à la place d'une
+    /// version suspendue, la même version venue d'une autre source.
+    /// </para>
     public List<CandidateDecision> Apply(List<DriverCandidate> candidates, IReadOnlyList<DeviceInfo> devices, DateTime? now = null)
     {
+        DriverIdentity.Annotate(candidates, devices);
         var decisions = new List<CandidateDecision>();
+        var holds = new List<(DriverCandidate Candidate, PolicyDecision Decision)>();
         foreach (var c in candidates.ToList())
         {
             var decision = Evaluate(c, devices, now);
             decisions.Add(new CandidateDecision(c, decision));
-            if (decision.IsBlocked && c.BlockedReason is null)
-            {
-                c.BlockedReason = decision.Reason;
-                if (decision.IsRolloutHold)
-                {
-                    c.HeldByRollout = true;
-                    c.RolloutAvailableAt = decision.AvailableAt;
-                    c.RolloutRing = Rollout?.Ring;
-                }
-            }
+            if (decision.IsRolloutHold) holds.Add((c, decision));
+            if (decision.IsBlocked && c.BlockedReason is null) MarkBlocked(c, decision);
             if (decision.Verdict == PolicyVerdict.Hidden) candidates.Remove(c);
 
             // Alternatives (autres paquets de la même source essayés en repli) : une version bloquée n'est jamais tentée.
@@ -455,10 +456,35 @@ public sealed class DriverPolicy
             {
                 var alt = c.Alternatives[i];
                 if (alt.TargetDeviceIds.Count == 0) alt.TargetDeviceIds.AddRange(c.TargetDeviceIds);
-                if (Evaluate(alt, devices, now).IsBlocked) c.Alternatives.RemoveAt(i);
+                var d = Evaluate(alt, devices, now);
+                if (d.IsRolloutHold) holds.Add((alt, d));
+                if (d.IsBlocked) c.Alternatives.RemoveAt(i);
             }
         }
+
+        if (holds.Count == 0) return decisions;
+        for (var n = 0; n < decisions.Count; n++)
+        {
+            var c = decisions[n].Candidate;
+            if (!decisions[n].Decision.IsBlocked && holds.FirstOrDefault(h => !ReferenceEquals(h.Candidate, c) && DriverIdentity.SameDriver(h.Candidate, c)) is { Candidate: not null } same)
+            {
+                var decision = PolicyDecision.Block($"{same.Decision.Reason} (même pilote, proposé par {same.Candidate.SourceLabel})", setting: "rollout",
+                    availableAt: same.Decision.AvailableAt);
+                decisions[n] = new CandidateDecision(c, decision);
+                if (c.BlockedReason is null) MarkBlocked(c, decision);
+            }
+            c.Alternatives.RemoveAll(alt => holds.Any(h => !ReferenceEquals(h.Candidate, alt) && DriverIdentity.SameDriver(h.Candidate, alt)));
+        }
         return decisions;
+    }
+
+    private void MarkBlocked(DriverCandidate c, PolicyDecision decision)
+    {
+        c.BlockedReason = decision.Reason;
+        if (!decision.IsRolloutHold) return;
+        c.HeldByRollout = true;
+        c.RolloutAvailableAt = decision.AvailableAt;
+        c.RolloutRing = Rollout?.Ring;
     }
 
     /// <summary>

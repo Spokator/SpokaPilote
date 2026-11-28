@@ -188,6 +188,8 @@ public sealed class DriverScanEngine
         LoadedPolicy policy, IEnumerable<DriverCandidate> candidates, IReadOnlyList<DeviceInfo> devices, CancellationToken ct, DateTime? now = null)
     {
         var list = candidates.ToList();
+        // Matériel visé (constructeur, classe) : envoyé avec les propositions pour qu'une suspension suive le même pilote d'une source à l'autre.
+        DriverIdentity.Annotate(list, devices);
         if (policy.Organization?.Rollout is { Decisions: true })
             policy.Effective.Decisions = await loader.DecideAsync(policy, list, ct).ConfigureAwait(false);
         return ApplyPolicy(list, devices, policy.Effective, now);

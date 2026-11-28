@@ -266,6 +266,156 @@ public sealed class RolloutDecisionClientTests : IDisposable
         Assert.Null(merged.Single(c => c.Title == "Intel - Display - 31.0.101.5600").BlockedReason);
     }
 
+    // ------------------------------------------------------------------ 4.0.1 : propositions sans version, même pilote d'une autre source
+
+    private static readonly DeviceInfo IntelGpu = new()
+    {
+        InstanceId = @"PCI\VEN_8086&DEV_9A49&SUBSYS_0A1F1028&REV_01\3&11583659&0&10", Name = "Intel(R) Iris(R) Xe Graphics", ClassName = "Display",
+        HardwareIds = [@"PCI\VEN_8086&DEV_9A49&SUBSYS_0A1F1028&REV_01", @"PCI\VEN_8086&DEV_9A49&SUBSYS_0A1F1028"],
+        CompatibleIds = [@"PCI\VEN_8086&DEV_9A49&REV_01", @"PCI\VEN_8086&CC_030000"],
+    };
+
+    private static readonly DeviceInfo Printer = new()
+    {
+        InstanceId = @"USBPRINT\HPLASERJET\7&1", Name = "HP LaserJet", ClassName = "Printer", HardwareIds = [@"USBPRINT\HPLaserJet_M40AFE6"],
+    };
+
+    private static DriverCandidate For(DeviceInfo device, string title, string? version, DriverSourceKind source, string? itemId = null)
+    {
+        var c = new DriverCandidate { Id = $"{source}:{title}", Source = source, Title = title, Version = version, SourceItemId = itemId, Kind = CandidateKind.Update };
+        c.TargetDeviceIds.Add(device.InstanceId);
+        c.TargetDeviceNames.Add(device.Name);
+        return c;
+    }
+
+    [Fact]
+    public void Driver_identity_spans_windows_update_and_the_catalog_and_reads_the_chip_vendor()
+    {
+        var wu = For(Printer, "HP - Printer", null, DriverSourceKind.WindowsUpdate, "6F1C2A8E-1D2B-4C3D-9E4F-0123456789AB");
+        var catalog = For(Printer, "HP Inc. - Printer", "n/a", DriverSourceKind.MicrosoftCatalog, "6f1c2a8e-1d2b-4c3d-9e4f-0123456789ab");
+        Assert.Equal("update:6f1c2a8e-1d2b-4c3d-9e4f-0123456789ab", DriverIdentity.ItemKey(wu));
+        Assert.Equal(DriverIdentity.ItemKey(wu), DriverIdentity.ItemKey(catalog));
+        Assert.Null(DriverIdentity.ItemKey(For(IntelGpu, "Intel - Display - 31.0.101.5590", "31.0.101.5590", DriverSourceKind.WindowsUpdate, "x")));
+        var noId = new DriverCandidate { Id = "x", Source = DriverSourceKind.Dell, Title = "Pilote", Manufacturer = "Dell", Date = new DateTime(2024, 5, 17) };
+        Assert.Equal("dell:date=2024-05-17;fournisseur=dell", DriverIdentity.ItemKey(noId));
+        Assert.NotEqual(RolloutDecisions.Key(wu), RolloutDecisions.Key(For(Printer, "HP - Printer", null, DriverSourceKind.WindowsUpdate, "autre")));
+
+        Assert.Equal(@"PCI\VEN_8086", DriverIdentity.HardwareVendor(@"PCI\VEN_8086&DEV_9A49&SUBSYS_0A1F1028&REV_01"));
+        Assert.Equal(@"HDAUDIO\VEN_10EC", DriverIdentity.HardwareVendor(@"HDAUDIO\FUNC_01&VEN_10EC&DEV_0257&SUBSYS_10280A1F"));
+        Assert.Null(DriverIdentity.HardwareVendor(@"ACPI\INT33A0"));
+        Assert.Equal(DriverIdentity.CanonicalVersion(DriverIdentity.NvidiaVendor, "32.0.15.6636"), DriverIdentity.CanonicalVersion(DriverIdentity.NvidiaVendor, "566.36 (Windows x.x.15.6636)"));
+
+        var dell = For(IntelGpu, "Intel UHD Graphics Driver", "31.0.101.5590 (A12)", DriverSourceKind.Dell);
+        var lenovo = For(IntelGpu, "Intel UHD Graphics Driver for Windows 11 (64-bit)", "31.0.101.5590", DriverSourceKind.Lenovo);
+        var other = For(IntelGpu, "Intel - Display - 31.0.101.5592", "31.0.101.5592", DriverSourceKind.WindowsUpdate);
+        DriverIdentity.Annotate([dell, lenovo, other], [IntelGpu, Printer]);
+        Assert.Equal(@"PCI\VEN_8086", dell.HardwareVendor);
+        Assert.Equal("Display", dell.DeviceClass);
+        Assert.True(DriverIdentity.SameDriver(dell, lenovo));
+        Assert.False(DriverIdentity.SameDriver(dell, other));
+    }
+
+    /// <summary>Décisions selon l'identité (sans version) ou le matériel (même pilote) envoyés par le poste.</summary>
+    private static JsonObject DecideByIdentity(JsonNode request) => new()
+    {
+        ["ring"] = "Général",
+        ["decisions"] = new JsonArray(request["candidates"]!.AsArray().Select(c =>
+        {
+            JsonObject d = c!["itemId"]?.GetValue<string>() == "update:printer-1"
+                ? new() { ["status"] = "held", ["availableAt"] = Available.ToString("O"), ["reason"] = "Pilote HP - Printer (sans numéro de version) : disponible le 06/12/2026" }
+                : c["title"]!.GetValue<string>() == "Intel UHD Graphics Driver"
+                    ? new() { ["status"] = "suspended", ["reason"] = "Pilote Intel UHD Graphics Driver 31.0.101.5590 (A12) : suspendu sur tout le parc par alice : écrans noirs" }
+                    : new() { ["status"] = "allowed" };
+            return (JsonNode)d;
+        }).ToArray()),
+    };
+
+    [Fact]
+    public async Task A_versionless_candidate_is_sent_with_its_identity_and_held_like_any_other()
+    {
+        var console = new FakeConsole(PolicyJson(), DecideByIdentity);
+        var printer = For(Printer, "HP - Printer", null, DriverSourceKind.WindowsUpdate, "printer-1");
+        var policy = await Loader(console).LoadAsync();
+        var (merged, _) = await DriverScanEngine.ApplyPolicyAsync(Loader(console), policy, [printer], [Printer], CancellationToken.None, Now);
+        var sent = JsonNode.Parse(console.Requests.Single(r => r.Request.RequestUri!.AbsolutePath == "/api/rollout/decide").Body!)!["candidates"]!.AsArray().Single()!;
+        Assert.Equal("update:printer-1", sent["itemId"]!.GetValue<string>());
+        Assert.Null(sent["version"]);
+        var held = merged.Single();
+        Assert.True(held.HeldByRollout);
+        Assert.Equal(Available, held.RolloutAvailableAt);
+
+        // Console injoignable, aucune décision connue pour cette identité : retenue par prudence (anneau à délai), comme une version.
+        console.DecideDown = true;
+        var fresh = For(Printer, "HP - Printer", null, DriverSourceKind.WindowsUpdate, "printer-2");
+        policy = await Loader(console).LoadAsync();
+        (merged, _) = await DriverScanEngine.ApplyPolicyAsync(Loader(console), policy, [fresh], [Printer], CancellationToken.None, Now);
+        Assert.True(merged.Single().HeldByRollout);
+        Assert.Contains("console injoignable", merged.Single().BlockedReason);
+        // L'identité déjà décidée garde sa décision (cache), même sans console.
+        (merged, _) = await DriverScanEngine.ApplyPolicyAsync(Loader(console), policy, [For(Printer, "HP - Printer", null, DriverSourceKind.WindowsUpdate, "printer-1")],
+            [Printer], CancellationToken.None, Now);
+        Assert.Equal(Available, merged.Single().RolloutAvailableAt);
+    }
+
+    /// <summary>
+    /// Intel 31.0.101.5590 suspendu pour le paquet Dell : le catalogue Microsoft et Windows Update proposent la même version
+    /// sous d'autres titres. La fusion ne doit JAMAIS retenir l'une d'elles à la place du paquet Dell bloqué.
+    /// </summary>
+    [Fact]
+    public async Task Merge_never_picks_the_same_suspended_version_from_another_source()
+    {
+        var console = new FakeConsole(PolicyJson(), DecideByIdentity);
+        var dell = For(IntelGpu, "Intel UHD Graphics Driver", "31.0.101.5590 (A12)", DriverSourceKind.Dell);
+        var catalog = For(IntelGpu, "Intel Corporation - Display - 31.0.101.5590", "31.0.101.5590", DriverSourceKind.MicrosoftCatalog, "c0ffee");
+        catalog.Alternatives.Add(new DriverCandidate { Id = "alt", Source = DriverSourceKind.MicrosoftCatalog, Title = "Intel Corporation - Display - 31.0.101.5590", Version = "31.0.101.5590" });
+        catalog.Alternatives.Add(new DriverCandidate { Id = "alt2", Source = DriverSourceKind.MicrosoftCatalog, Title = "Intel Corporation - Display - 31.0.101.5555", Version = "31.0.101.5555" });
+        var wu = For(IntelGpu, "Intel - Display - 31.0.101.5590", "31.0.101.5590", DriverSourceKind.WindowsUpdate, "f00d");
+        var policy = await Loader(console).LoadAsync();
+        var (merged, decisions) = await DriverScanEngine.ApplyPolicyAsync(Loader(console), policy, [catalog, wu, dell], [IntelGpu], CancellationToken.None, Now);
+
+        // Le matériel visé est envoyé avec chaque proposition (la console 4.0.1 suspend elle aussi le même pilote).
+        var sent = JsonNode.Parse(console.Requests.Single(r => r.Request.RequestUri!.AbsolutePath == "/api/rollout/decide").Body!)!["candidates"]!.AsArray();
+        Assert.All(sent, c => Assert.Equal(@"PCI\VEN_8086", c!["hardwareVendor"]!.GetValue<string>()));
+        Assert.All(sent, c => Assert.Equal("Display", c!["deviceClass"]!.GetValue<string>()));
+
+        var shown = Assert.Single(merged);
+        Assert.Equal(DriverSourceKind.Dell, shown.Source); // tous bloqués : la source la plus prioritaire reste affichée
+        Assert.True(shown.HeldByRollout);
+        Assert.Contains("écrans noirs", shown.BlockedReason);
+        Assert.All([catalog, wu], c =>
+        {
+            Assert.True(c.HeldByRollout);
+            Assert.Contains("même pilote, proposé par Dell", c.BlockedReason);
+        });
+        Assert.Equal(["Intel Corporation - Display - 31.0.101.5555"], catalog.Alternatives.Select(a => a.Title)); // l'alternative de même version est écartée
+        Assert.All(decisions, d => Assert.True(d.Decision.IsBlocked));
+    }
+
+    [Fact]
+    public void A_hardware_suspension_rule_served_to_40_clients_blocks_every_source()
+    {
+        // Règle complémentaire servie par la console 4.0.1 (format 1 : aussi comprise par les postes 3.x et 4.0.0).
+        var json = """
+            { "schema": 1, "name": "Parc", "rules": [
+              { "id": "anneau-suspendu-7", "action": "block", "source": "Dell", "title": "Intel UHD Graphics Driver", "versions": "31.0.101.5590", "reason": "Pilote X : suspendu" },
+              { "id": "anneau-suspendu-materiel-7", "action": "block", "hardwareId": ["PCI\\*VEN_8086&*", "PCI\\*VEN_8086"], "category": "Display",
+                "versions": "31.0.101.5590", "reason": "Pilote X : suspendu (même pilote, quelle que soit la source)" } ],
+              "rollout": { "ring": "Général", "enabled": true, "decisions": true, "holdUnknown": false } }
+            """;
+        var parsed = DriverPolicy.Parse(json);
+        Assert.True(parsed.IsValid, string.Join(" ; ", parsed.Errors));
+        var policy = DriverPolicy.Combine(parsed.Policy, null);
+        var hp = For(IntelGpu, "Intel UHD Graphics Driver", "31.0.101.5590 Rev.A", DriverSourceKind.HP);
+        var newer = For(IntelGpu, "Intel - Display - 31.0.101.5592", "31.0.101.5592", DriverSourceKind.WindowsUpdate);
+        var (merged, _) = DriverScanEngine.ApplyPolicy([hp, newer], [IntelGpu], policy, Now);
+        Assert.True(hp.HeldByRollout);
+        Assert.Null(newer.BlockedReason);
+        Assert.Equal(newer, Assert.Single(merged));
+        // Résumé : une suspension, pas deux.
+        var loaded = new LoadedPolicy { Effective = policy, Organization = parsed.Policy, OrganizationOrigin = "https://console.exemple.fr/api/policy" };
+        Assert.Contains("1 suspendue(s)", loaded.Summary);
+    }
+
     [Fact]
     public void The_cache_keeps_the_most_recent_decisions_of_the_same_console_only()
     {

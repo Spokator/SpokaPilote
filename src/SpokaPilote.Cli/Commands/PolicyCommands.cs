@@ -137,7 +137,9 @@ internal static partial class Program
         }
 
         var rules = org.Rules.Where(x => x.IsRollout).ToList();
-        var suspended = rules.Where(x => x.Id!.StartsWith(PolicyRollout.SuspendedPrefix, StringComparison.Ordinal)).ToList();
+        // Règle complémentaire « même pilote, toutes sources » (anneau-suspendu-materiel-N) : même suspension, affichée une fois.
+        var suspended = rules.Where(x => x.Id!.StartsWith(PolicyRollout.SuspendedPrefix, StringComparison.Ordinal) &&
+                                         !x.Id.StartsWith(PolicyRollout.SuspendedHardwarePrefix, StringComparison.Ordinal)).ToList();
         var holds = rules.Where(x => x.Id!.StartsWith(PolicyRollout.HoldPrefix, StringComparison.Ordinal)).ToList();
         var families = rules.Count(x => x.IsRolloutFamily);
         WriteLine($"  Versions suspendues sur tout le parc ({suspended.Count}) :", ConsoleColor.White);

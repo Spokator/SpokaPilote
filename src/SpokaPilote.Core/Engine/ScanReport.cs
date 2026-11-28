@@ -25,6 +25,8 @@ public sealed class ReportCandidate
     public string? InfoUrl { get; set; }
     /// <summary>Motif de blocage par la politique de pilotes (null = autorisé).</summary>
     public string? BlockedReason { get; set; }
+    /// <summary>Identité stable d'une proposition sans numéro de version lisible (diffusion par anneaux, voir DriverIdentity.ItemKey), sinon null.</summary>
+    public string? ItemId { get; set; }
 }
 
 /// <summary>Politique de pilotes appliquée lors de l'analyse.</summary>
@@ -57,6 +59,8 @@ public sealed class ReportOutcome
     public string Status { get; set; } = "";
     public string Message { get; set; } = "";
     public bool RebootRequired { get; set; }
+    /// <summary>Identité stable d'un pilote sans numéro de version lisible (rattache le résultat à sa proposition sur la console).</summary>
+    public string? ItemId { get; set; }
 }
 
 /// <summary>
@@ -133,6 +137,7 @@ public sealed class ScanReport
             DownloadUrl = c.DownloadUrl,
             InfoUrl = c.InfoUrl,
             BlockedReason = c.BlockedReason,
+            ItemId = DriverIdentity.ItemKey(c),
         }).ToList(),
         Policy = scan.Policy is not { } p ? null : new ReportPolicy
         {
@@ -158,6 +163,7 @@ public sealed class ScanReport
             Status = o.Status.ToString(),
             Message = o.Message,
             RebootRequired = o.RebootRequired,
+            ItemId = DriverIdentity.ItemKey(o.Candidate),
         }).ToList(),
     };
 

@@ -47,9 +47,12 @@ public sealed class RolloutDecisions
     public DateTime? CachedAt { get; }
     public int Count => _byKey.Count;
 
-    /// <summary>Identité d'une proposition : source, titre (sans tenir compte de la casse), version numérique (comme la console).</summary>
+    /// <summary>
+    /// Identité d'une proposition : source, titre (sans tenir compte de la casse), version numérique (comme la console) ;
+    /// sans version lisible, son identité stable (<see cref="DriverIdentity.ItemKey"/>, précédée de « # »).
+    /// </summary>
     public static string Key(DriverCandidate c) =>
-        $"{c.Source}|{c.Title.Trim().ToUpperInvariant()}|{(DriverVersion.Parse(c.Version) is { } v ? v.ToString(4) : c.Version?.Trim())}";
+        $"{c.Source}|{c.Title.Trim().ToUpperInvariant()}|{(DriverVersion.Parse(c.Version) is { } v ? v.ToString(4) : "#" + DriverIdentity.ItemKey(c))}";
 
     public RolloutDecision? For(DriverCandidate c) => _byKey.GetValueOrDefault(Key(c));
 

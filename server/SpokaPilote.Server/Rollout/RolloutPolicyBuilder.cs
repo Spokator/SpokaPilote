@@ -88,6 +88,8 @@ public static class RolloutPolicyBuilder
 {
     public const string RulePrefix = "anneau-";
     public const string SuspendedPrefix = RulePrefix + "suspendu-";
+    /// <summary>Même version suspendue, même pilote quelle que soit la source (constructeur du matériel + classe + version).</summary>
+    public const string SuspendedHardwarePrefix = SuspendedPrefix + "materiel-";
     public const string HoldPrefix = RulePrefix + "retenue-";
     public const string FamilyPrefix = RulePrefix + "famille-";
     public const string SourcePrefix = RulePrefix + "source-";
@@ -154,19 +156,49 @@ public static class RolloutPolicyBuilder
         var budgetRules = limits.MaxRules;
         long budgetBytes = limits.MaxBytes - reservedBytes - 256;
 
-        // 1. Suspensions : toujours servies (même anneaux désactivés), sans restriction de type.
+        // 1. Suspensions : toujours servies (même anneaux désactivés), sans restriction de type. Version ordinaire : source, titre,
+        // version — et, si le matériel visé est connu, la même version pour ce constructeur et cette classe de périphérique, QUELLE
+        // QUE SOIT LA SOURCE (même pilote proposé par Dell, le catalogue Microsoft, Windows Update... sous un autre titre).
+        // Proposition sans numéro de version : source et titre (toutes les propositions sans version de ce titre).
         var suspended = plans.Where(p => p.Version.Suspended).OrderBy(p => p.Version.Id).Select(p => p.Version).ToList();
-        var suspensionItems = suspended.Select(v => new Item(Rule(SuspendedPrefix + v.Id, "block", v.Source, v.Title, null, versions: [v.Version],
-            reason: SuspensionReason(v)))).ToList();
+        var suspensionItems = new List<Item>();
+        foreach (var v in suspended)
+        {
+            if (v.IsVersionless)
+            {
+                suspensionItems.Add(new Item(Rule(SuspendedPrefix + v.Id, "block", v.Source, v.Title, null, reason: SuspensionReason(v))));
+                continue;
+            }
+            suspensionItems.Add(new Item(Rule(SuspendedPrefix + v.Id, "block", v.Source, v.Title, null, versions: [v.Version], reason: SuspensionReason(v))));
+            if (v.HardwareVendor is { } vendor)
+                suspensionItems.Add(new Item(HardwareRule(SuspendedHardwarePrefix + v.Id, vendor, v.DeviceClass, RolloutKeys.RuleVersions(vendor, v.Version).ToArray(),
+                    $"{SuspensionReason(v)} (même pilote, quelle que soit la source)")));
+        }
         if (suspensionItems.Count > budgetRules / 4 || suspensionItems.Sum(i => (long)i.Bytes) > budgetBytes / 4)
         {
-            // Très nombreuses suspensions : une règle par source, qui bloque ces numéros de version quel que soit le titre (plus large, sûr).
-            suspensionItems = suspended.GroupBy(v => RolloutKeys.SourceKind(v.Source)).OrderBy(g => g.Key ?? "~", StringComparer.Ordinal)
+            // Très nombreuses suspensions : une règle par source, qui bloque ces numéros de version quel que soit le titre (plus large,
+            // sûr) ; une règle par constructeur du matériel et classe (même pilote, toutes sources) ; propositions sans version :
+            // une règle par source avec la liste de leurs titres.
+            var versioned = suspended.Where(v => !v.IsVersionless).ToList();
+            suspensionItems = versioned.GroupBy(v => RolloutKeys.SourceKind(v.Source)).OrderBy(g => g.Key ?? "~", StringComparer.Ordinal)
                 .Select(g => new Item(Rule(SuspendedPrefix + (g.Key ?? "toutes"), "block", g.Key ?? "", "*", null,
                     versions: g.Select(v => RolloutKeys.Text(RolloutKeys.ParseVersion(v.Version)!)).Distinct().Order(StringComparer.Ordinal).ToArray(),
                     reason: $"{RolloutPlanner.Plural(g.Count(), "version suspendue", "versions suspendues")} sur tout le parc " +
                             $"({(g.Key is null ? "toutes sources" : RolloutKeys.SourceLabel(g.Key))}) : liste détaillée dans la console, page Déploiement")))
                 .ToList();
+            var group = 0;
+            suspensionItems.AddRange(versioned.Where(v => v.HardwareVendor is not null)
+                .GroupBy(v => (Vendor: v.HardwareVendor!, Class: v.DeviceClass?.ToUpperInvariant()))
+                .OrderBy(g => g.Key.Vendor, StringComparer.Ordinal).ThenBy(g => g.Key.Class ?? "", StringComparer.Ordinal)
+                .Select(g => new Item(HardwareRule(SuspendedHardwarePrefix + "groupe-" + ++group, g.Key.Vendor, g.First().DeviceClass,
+                    g.SelectMany(v => RolloutKeys.RuleVersions(v.HardwareVendor, v.Version)).Distinct().Order(StringComparer.Ordinal).ToArray(),
+                    $"{RolloutPlanner.Plural(g.Count(), "version suspendue", "versions suspendues")} sur tout le parc (même pilote, quelle que soit la source) : " +
+                    "liste détaillée dans la console, page Déploiement"))));
+            suspensionItems.AddRange(suspended.Where(v => v.IsVersionless).GroupBy(v => RolloutKeys.SourceKind(v.Source)).OrderBy(g => g.Key ?? "~", StringComparer.Ordinal)
+                .Select(g => new Item(Rule(SuspendedPrefix + "sans-version-" + (g.Key ?? "toutes"), "block", g.Key ?? "",
+                    titles: g.Select(v => v.Title).Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.Ordinal).ToArray(),
+                    reason: $"{RolloutPlanner.Plural(g.Count(), "pilote sans numéro de version suspendu", "pilotes sans numéro de version suspendus")} sur tout le parc " +
+                            $"({(g.Key is null ? "toutes sources" : RolloutKeys.SourceLabel(g.Key))}) : liste détaillée dans la console, page Déploiement"))));
         }
         foreach (var i in suspensionItems)
         {
@@ -187,7 +219,9 @@ public static class RolloutPolicyBuilder
             var v = p.Version;
             var (reason, availableAt) = HoldReason(p, target, ringLabel, zone);
             var at = availableAt?.ToUniversalTime().ToString("O");
-            return new Item(Rule(HoldPrefix + v.Id, "block", v.Source, v.Title, kinds, versions: [v.Version], reason: reason), at is null ? 0 : AvailabilityBytes)
+            // Sans numéro de version : retenue du titre (toutes les propositions sans version de ce titre et de cette source).
+            return new Item(Rule(HoldPrefix + v.Id, "block", v.Source, v.Title, kinds, versions: v.IsVersionless ? null : [v.Version], reason: reason),
+                at is null ? 0 : AvailabilityBytes)
             {
                 Availability = at, HoldId = HoldPrefix + v.Id,
             };
@@ -195,7 +229,9 @@ public static class RolloutPolicyBuilder
 
         // 2. Familles (seulement si l'anneau retient les nouveautés), avec leurs versions retenues.
         var families = result.HoldUnknown ? Families(s, plans, target, now, kinds, ringLabel) : new List<FamilyPlan>();
-        var uncoveredWithoutFamily = result.HoldUnknown ? new List<VersionPlan>() : held; // anneau sans nouveautés retenues : règles datées seules
+        // Anneau sans nouveautés retenues : règles datées seules. Propositions sans numéro de version : aucune règle de famille ne
+        // peut les couvrir (critères de version), leur règle datée est toujours indispensable.
+        var uncoveredWithoutFamily = result.HoldUnknown ? held.Where(p => p.Version.IsVersionless).ToList() : held;
 
         var required = new List<(string Bucket, Item Item)>();
         foreach (var p in uncoveredWithoutFamily) required.Add((RolloutKeys.SourceKind(p.Version.Source) ?? "*", Dated(p)));
@@ -370,12 +406,13 @@ public static class RolloutPolicyBuilder
         return ($"Pilote {v.DisplayName} : disponible pour votre anneau « {ringLabel} » après {validation ?? "validation dans l'anneau précédent"}", null);
     }
 
-    private static JsonObject Rule(string id, string action, string source, string title, string[]? kinds, string[]? versions = null,
-        string? versionMin = null, string? versionMax = null, string? pinVersion = null, string? reason = null)
+    private static JsonObject Rule(string id, string action, string source, string? title = null, string[]? kinds = null, string[]? versions = null,
+        string? versionMin = null, string? versionMax = null, string? pinVersion = null, string? reason = null, string[]? titles = null)
     {
         var rule = new JsonObject { ["id"] = id, ["action"] = action };
         if (RolloutKeys.SourceKind(source) is { } kind) rule["source"] = kind;
-        rule["title"] = title;
+        if (titles is { Length: > 1 }) rule["title"] = new JsonArray(titles.Select(t => (JsonNode)JsonValue.Create(t)).ToArray());
+        else rule["title"] = titles is { Length: 1 } ? titles[0] : title;
         if (kinds is not null) rule["kind"] = new JsonArray(kinds.Select(k => (JsonNode)JsonValue.Create(k)).ToArray());
         if (versions is { Length: 1 }) rule["versions"] = versions[0];
         else if (versions is not null) rule["versions"] = new JsonArray(versions.Select(v => (JsonNode)JsonValue.Create(v)).ToArray());
@@ -383,6 +420,25 @@ public static class RolloutPolicyBuilder
         if (versionMax is not null) rule["versionMax"] = versionMax;
         if (pinVersion is not null) rule["pinVersion"] = pinVersion;
         if (reason is not null) rule["reason"] = reason;
+        return rule;
+    }
+
+    /// <summary>
+    /// Règle « block » du même pilote quelle que soit la source : matériel de ce constructeur (« hardwareId » : ID matériels et
+    /// compatibles des périphériques visés), de cette classe (« category » : classe Windows du périphérique visé, si connue),
+    /// ces versions. Format 1 : comprise par les postes 3.x.
+    /// </summary>
+    private static JsonObject HardwareRule(string id, string vendor, string? deviceClass, string[] versions, string reason)
+    {
+        var rule = new JsonObject
+        {
+            ["id"] = id,
+            ["action"] = "block",
+            ["hardwareId"] = new JsonArray(RolloutKeys.VendorPatterns(vendor).Select(p => (JsonNode)JsonValue.Create(p)).ToArray()),
+        };
+        if (deviceClass is not null) rule["category"] = deviceClass;
+        rule["versions"] = versions.Length == 1 ? versions[0] : new JsonArray(versions.Select(v => (JsonNode)JsonValue.Create(v)).ToArray());
+        rule["reason"] = reason;
         return rule;
     }
 

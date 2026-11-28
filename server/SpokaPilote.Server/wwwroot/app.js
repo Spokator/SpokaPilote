@@ -2532,9 +2532,11 @@ schtasks /Create /F /TN "SpokaPilote\\Analyse" /SC WEEKLY /D MON /ST 09:00 /RU S
     const d = await api(`/rollout/versions/${enc(id)}`);
     const v = d.version;
     const facts = [
-      ['Source', esc(v.sourceLabel)], ['Type', esc(v.kind || '—')], ['Version', esc(v.version)],
+      ['Source', esc(v.sourceLabel)], ['Type', esc(v.kind || '—')], ['Version', esc(v.version || 'sans numéro de version')],
       ['Première détection', `${esc(fmtDate(v.firstSeen))}${v.firstMachine ? ` <span class="muted">(${machineLink(v.firstMachine)})</span>` : ''}`],
-      ['Dernière détection', esc(fmtDate(v.lastSeen))], ['Famille', `<code>${esc(v.family)}</code>`], ['État', versionStatusBadge(v)],
+      ['Dernière détection', esc(fmtDate(v.lastSeen))], ['Famille', `<code>${esc(v.family)}</code>`],
+      ...(v.itemKey ? [['Identité', `<code>${esc(v.itemKey)}</code>`]] : []),
+      ...(v.hardwareVendor ? [['Matériel', `<code>${esc(v.hardwareVendor)}</code>${v.deviceClass ? ` · ${esc(v.deviceClass)}` : ''} <span class="muted">(une suspension vise aussi ce pilote proposé par une autre source)</span>`]] : []), ['État', versionStatusBadge(v)],
       ...(v.approval ? [['Diffusion forcée', `par ${esc(v.approval.by)} le ${esc(fmtDate(v.approval.at))}`]] : []),
     ];
     let chosen = null;
