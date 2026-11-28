@@ -298,13 +298,18 @@ public sealed class MainViewModel : ObservableObject
         SaveSettings();
     }
 
-    internal void SaveSettings()
+    internal bool SaveSettings()
     {
         Settings.RepositoryPaths = RepositoryPaths.ToList();
         Settings.CreateRestorePoint = CreateRestorePoint;
         Settings.BackupDriversBeforeInstall = BackupDrivers;
-        Settings.Save();
-        Status = Loc.F("Paramètres enregistrés ({0}).", AppPaths.SettingsFile);
+        var ok = Settings.Save();
+        Status = ok
+            ? Loc.F("Paramètres enregistrés ({0}).", AppPaths.SettingsFile)
+            : IsAdmin
+                ? Loc.F("Paramètres non enregistrés ({0}) : voir le journal.", AppPaths.SettingsFile)
+                : Loc.F("Paramètres non enregistrés : {0} ne se modifie qu'en administrateur (il pilote les tâches planifiées du poste).", AppPaths.SettingsFile);
+        return ok;
     }
 
     internal static string CliPath => Path.Combine(AppContext.BaseDirectory, "spokapilote.exe");

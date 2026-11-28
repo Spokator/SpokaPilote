@@ -80,7 +80,10 @@
                         <TextBlock Text="Adresse de la console centrale (ex. https://spokapilote.mon-entreprise.fr)" Margin="0,0,0,4" />
                         <TextBox Text="{Binding Settings.ServerUrl, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="Adresse de la console centrale" />
                         <TextBlock Text="Jeton d'enrôlement des postes" Margin="0,12,0,4" />
-                        <TextBox Text="{Binding Settings.ServerToken, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="Jeton d'enrôlement des postes" />
+                        <!-- Jeton jamais affiché : saisie masquée d'un nouveau jeton (vide = inchangé). -->
+                        <PasswordBox x:Name="TokenBox" PasswordChanged="OnTokenChanged" IsEnabled="{Binding CanEditToken, Mode=OneWay}"
+                                     AutomationProperties.Name="Jeton d'enrôlement des postes" />
+                        <TextBlock Style="{StaticResource Caption}" Margin="0,4,0,0" TextWrapping="Wrap" Text="{Binding TokenStatus, Mode=OneWay}" />
                         <TextBlock Text="Source de la politique (fichier, \\serveur\partage\driver-policy.json ou URL HTTPS ; vide = console centrale)" Margin="0,12,0,4" TextWrapping="Wrap" />
                         <TextBox Text="{Binding Settings.PolicySource, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="Source de la politique de pilotes" />
                         <TextBlock Text="Cache de pilotes de la console" Margin="0,12,0,4" />

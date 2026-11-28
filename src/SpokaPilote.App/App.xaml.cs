@@ -18,6 +18,8 @@ public partial class App : Application
         if (themeIndex >= 0 && themeIndex + 1 < args.Length)
             ThemeMode = args[themeIndex + 1].ToLowerInvariant() switch { "dark" => ThemeMode.Dark, "light" => ThemeMode.Light, _ => ThemeMode.System };
         DispatcherUnhandledException += OnUnhandled;
+        // Lancée en administrateur : dossier de données protégé avant tout usage (contrôle rapide en temps normal).
+        DataProtection.OnStartup();
         base.OnStartup(e);
     }
 

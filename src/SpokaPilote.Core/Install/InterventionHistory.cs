@@ -89,7 +89,7 @@ public static class InterventionHistory
         try
         {
             intervention.MachineId ??= SystemInfoProvider.ReadMachineId();
-            File.WriteAllText(Path.Combine(Folder, intervention.Id + ".json"), JsonSerializer.Serialize(intervention, Json));
+            DataProtection.WriteTextAtomically(Path.Combine(AppPaths.Ensure(Folder), intervention.Id + ".json"), JsonSerializer.Serialize(intervention, Json));
         }
         catch (Exception ex)
         {
@@ -100,8 +100,16 @@ public static class InterventionHistory
     public static List<Intervention> List()
     {
         var list = new List<Intervention>();
+        if (!Directory.Exists(Folder)) return list;
         foreach (var file in Directory.GetFiles(Folder, "*.json"))
         {
+            // Exécution élevée : une entrée qui n'a pas été écrite par SYSTEM ou un administrateur (déposée par un
+            // utilisateur pour faire retirer des pilotes choisis par lui) est ignorée.
+            if (!DataProtection.IsTrustedForElevatedUse(file))
+            {
+                Log.Warn($"Entrée d'historique ignorée : {file} n'a pas été écrite par un administrateur.");
+                continue;
+            }
             try
             {
                 var item = JsonSerializer.Deserialize<Intervention>(File.ReadAllText(file));
@@ -167,6 +175,8 @@ public static class InterventionHistory
     {
         if (!Elevation.IsAdministrator()) return (false, "La restauration nécessite les droits administrateur.");
         if (!Directory.Exists(backupFolder)) return (false, $"Sauvegarde introuvable : {backupFolder}");
+        if (!DataProtection.IsTrustedForElevatedUse(backupFolder))
+            return (false, $"Sauvegarde refusée : {backupFolder} n'a pas été créée par un administrateur.");
         var r = await PnpUtil.AddDriversRecursiveAsync(backupFolder, install: true, ct).ConfigureAwait(false);
         return PnpUtil.IsSuccess(r.ExitCode)
             ? (true, $"Pilotes de la sauvegarde {Path.GetFileName(backupFolder)} réinstallés.")
@@ -174,5 +184,5 @@ public static class InterventionHistory
     }
 
     public static List<string> Backups() =>
-        Directory.GetDirectories(AppPaths.Backups).OrderByDescending(d => d).ToList();
+        Directory.Exists(AppPaths.Backups) ? Directory.GetDirectories(AppPaths.Backups).OrderByDescending(d => d).ToList() : new List<string>();
 }

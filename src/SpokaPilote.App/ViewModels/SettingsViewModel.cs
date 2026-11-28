@@ -51,10 +51,33 @@ public sealed class SettingsViewModel : ObservableObject
 
     private void Save()
     {
-        Shell.SaveSettings();
+        if (TokenInput.Trim().Length > 0) Settings.ServerToken = TokenInput.Trim();
+        var ok = Shell.SaveSettings();
+        TokenInput = "";
+        TokenSaved?.Invoke();
+        OnPropertyChanged(nameof(TokenStatus));
         Shell.Tools.Maintenance.RefreshConsole();
-        SaveResult = Loc.F("✓ Enregistré à {0:HH:mm:ss}.", DateTime.Now);
+        SaveResult = ok
+            ? Loc.F("✓ Enregistré à {0:HH:mm:ss}.", DateTime.Now)
+            : Loc.T("⚠ Non enregistré : la configuration commune du poste ne se modifie qu'en administrateur.");
     }
+
+    // ------------------------------------------------------------------ jeton de la console (jamais affiché)
+
+    /// <summary>Nouveau jeton saisi (champ masqué) ; vide = jeton actuel conservé.</summary>
+    public string TokenInput { get; set; } = "";
+
+    /// <summary>Le champ masqué est vidé après chaque enregistrement.</summary>
+    public event Action? TokenSaved;
+
+    /// <summary>Un jeton ne se règle qu'en administrateur (version installée) : il est lisible des seuls administrateurs.</summary>
+    public bool CanEditToken => Shell.IsAdmin || Shell.IsPortable;
+
+    public string TokenStatus => !CanEditToken
+        ? Loc.T("Jeton enregistré à part, lisible des seuls administrateurs : relancez SpokaPilote en administrateur pour le modifier.")
+        : string.IsNullOrWhiteSpace(Settings.ServerToken)
+            ? Loc.T("Aucun jeton enregistré.")
+            : Loc.T("Jeton enregistré (masqué). Saisissez un nouveau jeton pour le remplacer.");
 
     // ------------------------------------------------------------------ console centrale
 

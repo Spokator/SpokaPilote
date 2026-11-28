@@ -39,15 +39,17 @@ public static class Archive
         var dir = Path.Combine(AppPaths.Cache, cacheName + ".x");
         var stamp = Path.Combine(dir, ".stamp");
         var cabTime = File.GetLastWriteTimeUtc(cabPath).Ticks.ToString();
-        if (File.Exists(stamp) && File.ReadAllText(stamp) == cabTime)
+        // Exécution élevée : l'extraction précédente n'est réutilisée que si elle a été faite par SYSTEM ou un administrateur.
+        if (File.Exists(stamp) && DataProtection.IsTrustedForElevatedUse(dir) && DataProtection.IsTrustedForElevatedUse(stamp) &&
+            File.ReadAllText(stamp) == cabTime)
         {
             var existing = Directory.GetFiles(dir).FirstOrDefault(f => !f.EndsWith(".stamp"));
-            if (existing is not null) return existing;
+            if (existing is not null && DataProtection.IsTrustedForElevatedUse(existing)) return existing;
         }
-        if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true);
+        if (Directory.Exists(dir)) DataProtection.DeleteTree(dir);
         await ExtractCabAsync(cabPath, dir, ct).ConfigureAwait(false);
         var file = Directory.GetFiles(dir).OrderByDescending(f => new FileInfo(f).Length).First();
-        await File.WriteAllTextAsync(stamp, cabTime, ct).ConfigureAwait(false);
+        DataProtection.WriteTextAtomically(stamp, cabTime);
         return file;
     }
 }
