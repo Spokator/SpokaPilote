@@ -23,6 +23,10 @@ public sealed class Settings
     public bool IncludeBiosAndFirmware { get; set; } = false;
     public bool CreateRestorePoint { get; set; } = true;
     public bool BackupDriversBeforeInstall { get; set; } = true;
+    /// <summary>Sauvegardes complètes des pilotes (une par installation, 1 à 4 Go) conservées au plus (la plus récente toujours).</summary>
+    public int BackupRetentionCount { get; set; } = 3;
+    /// <summary>Place totale maximale des sauvegardes complètes, en Mo (0 = sans limite) ; la plus récente est toujours gardée.</summary>
+    public int BackupMaxTotalSizeMB { get; set; } = 10240;
 
     /// <summary>Domaines supplémentaires autorisés au téléchargement (en plus de la liste officielle intégrée).</summary>
     public List<string> ExtraTrustedHosts { get; set; } = new();

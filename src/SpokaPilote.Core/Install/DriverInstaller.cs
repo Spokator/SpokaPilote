@@ -31,6 +31,7 @@ public sealed class DriverInstaller
     private readonly TrustPolicy _trust;
     private readonly Downloader _downloader;
     private readonly SystemInfo _system;
+    private readonly BackupRetention _retention;
 
     /// <summary>Dossier de travail de l'exécution en cours (téléchargements, extractions), supprimé à la fin.</summary>
     private WorkDirectory? _work;
@@ -40,6 +41,7 @@ public sealed class DriverInstaller
         _trust = new TrustPolicy(settings);
         _downloader = new Downloader(_trust);
         _system = system;
+        _retention = BackupRetention.From(settings);
     }
 
     private WorkDirectory Work => _work ?? throw new InvalidOperationException("Aucune installation en cours.");
@@ -94,7 +96,7 @@ public sealed class DriverInstaller
             if (options.BackupDrivers)
             {
                 progress?.Report(new InstallProgress(0, candidates.Count, "Préparation", "Sauvegarde des pilotes actuels..."));
-                intervention.BackupFolder = await SystemProtection.BackupDriversAsync(ct).ConfigureAwait(false);
+                intervention.BackupFolder = await SystemProtection.BackupDriversAsync(_retention, ct).ConfigureAwait(false);
             }
             storeBefore = InterventionHistory.SnapshotDriverStore();
         }

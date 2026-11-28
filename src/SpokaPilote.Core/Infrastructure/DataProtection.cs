@@ -117,6 +117,7 @@ public static class DataProtection
             if (report is null) return null;
             Settings.MigrateLegacyToken();
             WorkDirectory.CleanupLeftovers();
+            Install.SystemProtection.PruneBackupsAtStartup();
             return report;
         }
         catch (Exception ex)

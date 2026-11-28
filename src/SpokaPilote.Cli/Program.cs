@@ -517,7 +517,7 @@ internal static partial class Program
             foreach (var item in i.Items) WriteLine($"    {item.Status,-13} {item.Title} {item.Version}", ConsoleColor.Gray);
             if (i.AddedDriverPackages.Count > 0) WriteLine($"    paquets ajoutés : {string.Join(", ", i.AddedDriverPackages)}", ConsoleColor.DarkGray);
             if (i.RemovedDriverPackages.Count > 0) WriteLine($"    paquets retirés (non annulable{(i.BackupFolder is null ? "" : ", sauf restauration de la sauvegarde")}) : {string.Join(", ", i.RemovedDriverPackages)}", ConsoleColor.DarkGray);
-            if (i.BackupFolder is not null) WriteLine($"    sauvegarde : {i.BackupFolder}", ConsoleColor.DarkGray);
+            if (i.BackupFolder is not null) WriteLine($"    sauvegarde : {i.BackupFolder}{(Directory.Exists(i.BackupFolder) ? "" : " (supprimée depuis par la rétention)")}", ConsoleColor.DarkGray);
         }
         WriteLine("\nAnnuler une intervention : spokapilote rollback <id|last>", ConsoleColor.Cyan);
         return ExitOk;
