@@ -32,10 +32,6 @@ public sealed class DriversViewModel : ObservableObject
     public ObservableCollection<CandidateItem> Candidates { get; } = new();
     public ICollectionView View { get; }
 
-    private bool _deepScan;
-    /// <summary>Analyse approfondie : cherche aussi des mises à jour pour les composants qui fonctionnent.</summary>
-    public bool DeepScan { get => _deepScan; set => Set(ref _deepScan, value); }
-
     // ------------------------------------------------------------------ filtres
 
     private string _filter = "all";
@@ -92,13 +88,17 @@ public sealed class DriversViewModel : ObservableObject
     // ------------------------------------------------------------------ états vides
 
     public bool IsListEmpty => View.IsEmpty;
+    /// <summary>Rien trouvé par une analyse rapide : l'analyse complète est proposée directement dans l'état vide.</summary>
+    public bool ShowFullScanInEmptyState => Scan is not null && Candidates.Count == 0 && Shell.OfferFullScan;
     public string EmptyTitle =>
         Scan is null ? Loc.T("Aucune analyse pour l'instant")
         : Candidates.Count == 0 ? Loc.T("Aucun pilote à installer")
         : Loc.T("Rien dans cette catégorie");
     public string EmptyText =>
-        Scan is null ? Loc.T("Lancez « Analyser ce poste » (F5) : la liste des pilotes manquants et des mises à jour apparaîtra ici.")
-        : Candidates.Count == 0 ? Loc.T("Les sources officielles ne proposent rien de plus pour ce poste. Cochez « Chercher aussi les mises à jour » puis analysez à nouveau pour aller plus loin.")
+        Scan is null ? Loc.T("Lancez une analyse : les pilotes manquants et les mises à jour apparaîtront ici. L'analyse ne modifie rien sur le poste.")
+        : Candidates.Count == 0 ? (Shell.OfferFullScan
+            ? Loc.T("Les sources officielles ne proposent rien de plus pour ce poste. Pour aller plus loin, lancez l'analyse complète : elle compare aussi les pilotes déjà installés au Microsoft Update Catalog.")
+            : Loc.T("Les sources officielles ne proposent rien de plus pour ce poste."))
         : Loc.T("Choisissez « Tout » pour voir l'ensemble des pilotes proposés.");
 
     // ------------------------------------------------------------------ politique et sources

@@ -17,6 +17,11 @@ public sealed class UiPreferences
     /// <summary>Dernière page affichée (« accueil », « pilotes »... voir MainViewModel.PageKeys).</summary>
     public string? LastPage { get; set; }
     /// <summary>
+    /// Type d'analyse choisi à l'Accueil (avant d'analyser) : false = analyse rapide, true = analyse complète (le catalogue
+    /// Microsoft est aussi interrogé pour les pilotes de fabricant déjà installés). Repris par F5 et « Analyser à nouveau ».
+    /// </summary>
+    public bool DeepScan { get; set; }
+    /// <summary>
     /// Ancien index d'onglet (versions 3.1 et antérieures, 8 onglets) : lu une fois pour retrouver la page, puis oublié.
     /// </summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]

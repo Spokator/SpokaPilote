@@ -32,7 +32,10 @@ public partial class MainWindow : Window
         }
         // Mode portable (clé USB) : visible dès la barre de titre (détail dans la barre d'état).
         if (Core.Infrastructure.AppPaths.IsPortable) Title += " · " + Localization.Loc.T("mode portable");
-        _vm = new MainViewModel(IsScreenshotMode ? Argument("--alias") : null);
+        // Type d'analyse : celui choisi la dernière fois ; en mode capture, analyse rapide sauf --deep (préférences intactes).
+        _vm = IsScreenshotMode
+            ? new MainViewModel(Argument("--alias"), deepScan: _args.Contains("--deep"), persistPreferences: false)
+            : new MainViewModel(deepScan: _prefs.DeepScan);
         DataContext = _vm;
         if (IsScreenshotMode && Argument("--size") is { } size && TryParseSize(size, out var w, out var h))
         {
@@ -128,7 +131,8 @@ public partial class MainWindow : Window
 
     /// <summary>
     /// Mode capture (contrôle de l'interface par scripts\publish.ps1, visuels du Store et du site) :
-    /// <c>SpokaPilote.App.exe --screenshot dossier [--scan] [--lang en] [--theme dark|light] [--size 1000x660] [--alias PC-DEMO] [--expand]</c>.
+    /// <c>SpokaPilote.App.exe --screenshot dossier [--scan] [--deep] [--lang en] [--theme dark|light] [--size 1000x660] [--alias PC-DEMO] [--expand]</c>.
+    /// --deep : analyse complète au lieu de l'analyse rapide.
     /// Écrit page-N-nom.png pour chaque page de la navigation (page entière en plus dans complet-N-nom.png quand elle
     /// défile), puis assistant-N.png pour chaque étape de l'assistant, et quitte. Toute erreur d'interface : code 3.
     /// --alias remplace le nom de l'ordinateur (et masque le numéro de série) ; --expand ouvre les volets de détail.

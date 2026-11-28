@@ -60,8 +60,8 @@ public sealed class DevicesViewModel : ObservableObject
         : Filter == "all" ? Loc.T("Aucun périphérique")
         : Loc.T("Aucun périphérique en erreur");
     public string EmptyText =>
-        Scan is null ? Loc.T("Lancez « Analyser ce poste » (F5) : l'inventaire du matériel apparaîtra ici.")
-        : Filter == "all" ? Loc.T("Cochez « Afficher aussi les périphériques logiciels et virtuels » pour tout voir.")
+        Scan is null ? Loc.T("Lancez une analyse : l'inventaire du matériel et les périphériques en erreur apparaîtront ici.")
+        : Filter == "all" ? Loc.T("Cochez « Inclure les périphériques logiciels et virtuels » pour tout voir.")
         : Loc.T("Tout le matériel fonctionne. Choisissez « Tous » pour voir l'inventaire complet.");
 
     // ------------------------------------------------------------------ chargement

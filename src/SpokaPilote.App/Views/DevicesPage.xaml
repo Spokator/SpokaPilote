@@ -18,16 +18,20 @@
         <StackPanel>
             <TextBlock Style="{StaticResource PageTitle}" Text="Périphériques" />
             <TextBlock Style="{StaticResource PageSubtitle}"
-                       Text="Le matériel détecté et son état. Sélectionnez un périphérique en erreur : SpokaPilote explique le problème et propose une réparation guidée." />
+                       Text="Le matériel détecté et son état. Sélectionnez un périphérique en erreur : la cause s'affiche à droite, avec la réparation conseillée." />
         </StackPanel>
 
         <DockPanel Grid.Row="1" Margin="0,0,0,8" Visibility="{Binding Shell.HasScan, Converter={StaticResource BoolToVisibility}}">
+            <!-- Option d'affichage à côté des filtres (elle change la liste : visible là où on regarde). -->
+            <CheckBox DockPanel.Dock="Right" Margin="16,0,0,8" VerticalAlignment="Center"
+                      Content="Inclure les périphériques logiciels et virtuels" IsChecked="{Binding ShowAllDevices}" />
             <WrapPanel AutomationProperties.Name="Filtrer les périphériques">
                 <RadioButton Style="{StaticResource FilterChip}" GroupName="DeviceFilter" AutomationProperties.Name="Périphériques en erreur"
                              IsChecked="{Binding Filter, Converter={StaticResource EqualsToBool}, ConverterParameter=problems}">
                     <TextBlock><Run Text="En erreur" /> <Run Text="{Binding ProblemCount, Mode=OneWay, StringFormat='({0})'}" /></TextBlock>
                 </RadioButton>
                 <RadioButton Style="{StaticResource FilterChip}" GroupName="DeviceFilter" AutomationProperties.Name="Périphériques sans pilote trouvé"
+                             ToolTip="En erreur, et aucune source officielle n'a trouvé de pilote : la réparation guidée indique quoi faire"
                              IsChecked="{Binding Filter, Converter={StaticResource EqualsToBool}, ConverterParameter=unresolved}">
                     <TextBlock><Run Text="Sans pilote trouvé" /> <Run Text="{Binding UnresolvedCount, Mode=OneWay, StringFormat='({0})'}" /></TextBlock>
                 </RadioButton>
@@ -104,9 +108,13 @@
                     <app:Glyph Style="{StaticResource Icon}" FontSize="32" HorizontalAlignment="Center" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Text="&#xE772;" />
                     <TextBlock Margin="0,12,0,4" HorizontalAlignment="Center" Style="{StaticResource CardTitle}" Text="{Binding EmptyTitle, Mode=OneWay}" />
                     <TextBlock HorizontalAlignment="Center" TextAlignment="Center" MaxWidth="440" Style="{StaticResource Secondary}" Text="{Binding EmptyText, Mode=OneWay}" />
-                    <Button Margin="0,16,0,0" HorizontalAlignment="Center" Style="{DynamicResource AccentButtonStyle}" Content="Analyser ce poste"
-                            Command="{Binding Shell.ScanCommand}" ToolTip="Analyser ce poste (F5)"
-                            Visibility="{Binding Shell.HasScan, Converter={StaticResource VisibleWhen}, ConverterParameter=not}" />
+                    <StackPanel Margin="0,16,0,0" Orientation="Horizontal" HorizontalAlignment="Center"
+                                Visibility="{Binding Shell.HasScan, Converter={StaticResource VisibleWhen}, ConverterParameter=not}">
+                        <Button Style="{DynamicResource AccentButtonStyle}" Content="Lancer l'analyse rapide" Command="{Binding Shell.QuickScanCommand}"
+                                ToolTip="Pilotes manquants et mises à jour recommandées. En général moins de 2 minutes." Margin="0,0,8,0" />
+                        <Button Content="Lancer l'analyse complète" Command="{Binding Shell.FullScanCommand}"
+                                ToolTip="Vérifie aussi les pilotes déjà installés dans le Microsoft Update Catalog (plus long)" />
+                    </StackPanel>
                 </StackPanel>
             </Border>
 
@@ -125,6 +133,8 @@
                             <TextBlock Margin="0,8,0,0" Style="{StaticResource Secondary}" Text="{Binding SelectedDevice.Hint, Mode=OneWay}"
                                        Visibility="{Binding SelectedDevice.HasHint, Converter={StaticResource BoolToVisibility}, FallbackValue=Collapsed}" />
 
+                            <TextBlock Margin="0,8,0,0" Style="{StaticResource Secondary}" Text="Ce périphérique fonctionne : rien à réparer."
+                                       Visibility="{Binding SelectedDevice.HasProblem, Converter={StaticResource VisibleWhen}, ConverterParameter=not, FallbackValue=Collapsed}" />
                             <TextBlock Margin="0,14,0,2" Style="{StaticResource Caption}" Text="Pilote actuel" />
                             <TextBlock TextWrapping="Wrap" Text="{Binding SelectedDevice.DriverSummary, Mode=OneWay}" />
 
@@ -137,8 +147,8 @@
                                     <ComboBox ItemsSource="{Binding RepairPlan.Actions, Mode=OneWay}" SelectedItem="{Binding SelectedRepairAction}"
                                               DisplayMemberPath="Label" HorizontalAlignment="Stretch" AutomationProperties.Name="Action de réparation" />
                                     <TextBlock Margin="0,6,0,0" Style="{StaticResource Caption}" Text="{Binding SelectedRepairAction.Explanation, Mode=OneWay}" />
-                                    <Button Margin="0,10,0,0" HorizontalAlignment="Left" Content="Appliquer la réparation" Style="{DynamicResource AccentButtonStyle}"
-                                            Command="{Binding ExecuteRepairCommand}" />
+                                    <Button Margin="0,10,0,0" HorizontalAlignment="Left" Content="Réparer ce périphérique" Style="{DynamicResource AccentButtonStyle}"
+                                            Command="{Binding ExecuteRepairCommand}" ToolTip="Applique l'action choisie ci-dessus ; elle est enregistrée dans l'Historique" />
                                     <TextBlock Margin="0,8,0,0" TextWrapping="Wrap" Text="{Binding RepairResultText, Mode=OneWay}"
                                                AutomationProperties.LiveSetting="Polite"
                                                Visibility="{Binding RepairResultText, Converter={StaticResource VisibleWhen}}" />
@@ -162,9 +172,5 @@
                 </Grid>
             </Border>
         </Grid>
-
-        <CheckBox Grid.Row="3" Margin="0,10,0,0" HorizontalAlignment="Left"
-                  Content="Afficher aussi les périphériques logiciels et virtuels" IsChecked="{Binding ShowAllDevices}"
-                  Visibility="{Binding Shell.HasScan, Converter={StaticResource BoolToVisibility}}" />
     </Grid>
 </UserControl>

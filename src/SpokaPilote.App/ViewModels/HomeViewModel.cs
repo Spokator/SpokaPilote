@@ -16,6 +16,7 @@ public sealed class HomeViewModel : ObservableObject
         Shell = shell;
         PrimaryCommand = new RelayCommand(OnPrimary, () => !Shell.IsBusy && State is "scan" or "install");
         ShowDetailsCommand = new RelayCommand(ShowDetails);
+        ShowDevicesCommand = new RelayCommand(() => { Shell.Devices.Filter = "problems"; Shell.Navigate("peripheriques"); });
         DismissMessageCommand = new RelayCommand(ClearMessage);
     }
 
@@ -190,8 +191,21 @@ public sealed class HomeViewModel : ObservableObject
     public string PrimaryHelp => State switch
     {
         "install" => Loc.T("Installer les pilotes cochés dans la page Pilotes"),
-        _ => Loc.T("Analyser ce poste (F5)"),
+        _ => Shell.DeepScan ? Loc.T("Lancer l'analyse complète (F5)") : Loc.T("Lancer l'analyse rapide (F5)"),
     };
+
+    /// <summary>« Analyser à nouveau » reprend le type d'analyse choisi : dit lequel.</summary>
+    public string RescanHelp => Shell.DeepScan ? Loc.T("Relance une analyse complète (F5)") : Loc.T("Relance une analyse rapide (F5)");
+
+    // ------------------------------------------------------------------ périphériques en erreur (lien direct)
+
+    private int ProblemDevices => Scan?.ProblemDevices.Count() ?? 0;
+    public bool HasProblemDevices => ProblemDevices > 0;
+    public string ProblemDevicesLabel => ProblemDevices == 1 ? Loc.T("1 périphérique en erreur") : Loc.F("{0} périphériques en erreur", ProblemDevices);
+    public RelayCommand ShowDevicesCommand { get; }
+
+    /// <summary>Pilotes bloqués ou retenus par la politique (non installables) : signalés pour qu'on sache où voir pourquoi.</summary>
+    private int BlockedCount => Scan?.Candidates.Count(c => c.BlockedReason is not null) ?? 0;
 
     public string Headline
     {
@@ -214,14 +228,25 @@ public sealed class HomeViewModel : ObservableObject
         }
     }
 
-    public string SubHeadline => State switch
+    public string SubHeadline
     {
-        "scan" or "busy" when Scan is null => Loc.T("L'analyse ne modifie rien. Les pilotes viennent uniquement de sources officielles et sont vérifiés avant toute installation."),
-        "install" => Loc.T("Chaque pilote est téléchargé depuis sa source officielle et vérifié (signature, compatibilité) avant d'être installé.")
-                     + (Shell.IsAdmin ? "" : " " + Loc.T("Les droits administrateur seront demandés.")),
-        _ when Scan is not null && Scan.UnresolvedDevices.Any() => Loc.T("La page Périphériques propose une réparation guidée pour chacun."),
-        _ => Loc.F("Dernière analyse : {0:HH:mm}. Relancez-la après un changement de matériel (F5).", Scan?.Timestamp ?? DateTime.Now),
-    };
+        get
+        {
+            var text = State switch
+            {
+                "scan" or "busy" when Scan is null => Loc.T("Choisissez le type d'analyse ci-dessous, puis « Analyser ce poste ». L'analyse ne modifie rien sur le poste."),
+                "install" => Loc.T("Chaque pilote est téléchargé depuis sa source officielle et vérifié (signature, compatibilité) avant d'être installé.")
+                             + (Shell.IsAdmin ? "" : " " + Loc.T("Les droits administrateur seront demandés.")),
+                _ when Scan is not null && Scan.UnresolvedDevices.Any() => Loc.T("La page Périphériques explique chaque erreur et propose une réparation guidée."),
+                _ => Loc.F("Dernière analyse : {0:HH:mm}. Relancez-la après un changement de matériel (F5).", Scan?.Timestamp ?? DateTime.Now),
+            };
+            if (Scan is not null && BlockedCount > 0)
+                text += " " + (BlockedCount == 1
+                    ? Loc.T("1 pilote est bloqué ou retenu par la politique de pilotes : la raison est indiquée dans Pilotes › Bloqués.")
+                    : Loc.F("{0} pilotes sont bloqués ou retenus par la politique de pilotes : la raison est indiquée dans Pilotes › Bloqués.", BlockedCount));
+            return text;
+        }
+    }
 
     public RelayCommand PrimaryCommand { get; }
     public RelayCommand ShowDetailsCommand { get; }
@@ -233,11 +258,10 @@ public sealed class HomeViewModel : ObservableObject
         return Task.CompletedTask;
     }
 
-    /// <summary>« Voir le détail » : la liste des pilotes, ou les périphériques s'il n'y a rien à installer mais des erreurs.</summary>
+    /// <summary>« Voir la liste des pilotes » : page Pilotes (les périphériques en erreur ont leur propre lien).</summary>
     private Task ShowDetails()
     {
-        var goDevices = Scan is not null && Scan.Candidates.Count == 0 && Scan.ProblemDevices.Any();
-        Shell.Navigate(goDevices ? "peripheriques" : "pilotes");
+        Shell.Navigate("pilotes");
         return Task.CompletedTask;
     }
 
