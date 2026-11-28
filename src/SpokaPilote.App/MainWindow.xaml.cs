@@ -230,7 +230,17 @@ public partial class MainWindow : Window
         using (var dc = visual.RenderOpen())
         {
             dc.DrawRectangle(background, null, new Rect(0, 0, root.ActualWidth, root.ActualHeight));
-            dc.DrawRectangle(new VisualBrush(root), null, new Rect(0, 0, root.ActualWidth, root.ActualHeight));
+            // Viewbox absolu = zone exacte de la fenêtre : sinon le pinceau s'adapte aux limites de tout ce qui est dessiné
+            // et, si un élément déborde (texte long...), toute la capture est comprimée (bande vide à droite).
+            var brush = new VisualBrush(root)
+            {
+                Viewbox = new Rect(0, 0, root.ActualWidth, root.ActualHeight),
+                ViewboxUnits = BrushMappingMode.Absolute,
+                Stretch = Stretch.None,
+                AlignmentX = AlignmentX.Left,
+                AlignmentY = AlignmentY.Top,
+            };
+            dc.DrawRectangle(brush, null, new Rect(0, 0, root.ActualWidth, root.ActualHeight));
         }
         bmp.Render(visual);
         var encoder = new PngBitmapEncoder();
