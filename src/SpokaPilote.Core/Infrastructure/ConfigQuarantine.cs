@@ -176,7 +176,7 @@ public static class ConfigQuarantine
         {
             var marker = ReadMarker() ?? new Marker();
             var changed = false;
-            var announced = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var detected = new HashSet<string>(StringComparer.OrdinalIgnoreCase); // quarantaine de la 4.0.1 découverte maintenant
 
             foreach (var item in report.QuarantinedConfig)
             {
@@ -188,7 +188,6 @@ public static class ConfigQuarantine
                 };
                 marker.Entries.RemoveAll(e => SamePath(e.Path, entry.Path));
                 marker.Entries.Add(entry);
-                announced.Add(entry.Path);
                 changed = true;
                 Log.Error($"{entry.Notice} Fichier : {Path.Combine(AppPaths.Root, entry.Path)}.");
             }
@@ -208,6 +207,7 @@ public static class ConfigQuarantine
                     }
                 }
                 marker.Entries.Add(entry);
+                detected.Add(entry.Path);
                 changed = true;
             }
 
@@ -222,7 +222,6 @@ public static class ConfigQuarantine
                     if (entry.Legacy && candidate.TrustExtendingSettings.Count > 0) continue; // contenu relu : même règle
                     Apply(candidate, marker);
                     changed = true;
-                    announced.Add(entry.Path);
                     var token = candidate.ContainsToken ? $" ; jeton enregistré chiffré dans {SecretStore.TokenFileName}" : "";
                     Log.Warn(entry.Legacy
                         ? $"{entry.Name} mis en quarantaine par la version 4.0.1 le {entry.QuarantinedAt:dd/MM/yyyy HH:mm} restauré automatiquement " +
@@ -236,7 +235,8 @@ public static class ConfigQuarantine
                 }
             }
 
-            foreach (var entry in marker.Entries.Where(e => !announced.Contains(e.Path))) Log.Error(entry.Notice);
+            // Une seule ERREUR par configuration (ensuite : marqueur, bandeau de la CLI et de l'interface).
+            foreach (var entry in marker.Entries.Where(e => detected.Contains(e.Path))) Log.Error(entry.Notice);
             if (changed) WriteMarker(marker);
         }
         catch (Exception ex)
