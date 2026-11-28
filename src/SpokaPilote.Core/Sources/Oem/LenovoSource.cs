@@ -4,13 +4,17 @@ using System.Text;
 using System.Xml.Linq;
 using SpokaPilote.Core.Firmware;
 using SpokaPilote.Core.Infrastructure;
+using SpokaPilote.Core.Install;
 using SpokaPilote.Core.Models;
 
 namespace SpokaPilote.Core.Sources.Oem;
 
 /// <summary>
 /// Catalogue officiel Lenovo (download.lenovo.com/catalog/{MTM}_Win11.xml, utilisé par Lenovo System Update /
-/// Commercial Vantage). Chaque paquet est décrit par un XML signé ; contrôle SHA-256 du descripteur et de l'installeur.
+/// Commercial Vantage). Chaque paquet est décrit par un XML ; contrôle SHA-256 du descripteur et de l'installeur.
+/// Catalogue et descripteurs sont toujours lus directement chez Lenovo, jamais par le cache de la console : le catalogue
+/// n'est pas signé et les descripteurs portent les lignes de commande exécutées en SYSTEM (voir
+/// <see cref="Online.ConsoleCache.CanRelayCatalog"/>, <see cref="VendorCommand"/>).
 /// </summary>
 public sealed class LenovoSource : IDriverSource
 {
@@ -30,7 +34,8 @@ public sealed class LenovoSource : IDriverSource
         string catalogPath;
         try
         {
-            catalogPath = await Http.GetCachedFileAsync(url, $"lenovo-{mtm}-{os}.xml", TimeSpan.FromHours(24), ct).ConfigureAwait(false);
+            // Noms de cache propres à la lecture directe : une copie relayée par une console (versions 4.0.0) n'est pas reprise.
+            catalogPath = await Http.GetCachedFileAsync(url, $"lenovo-direct-{mtm}-{os}.xml", TimeSpan.FromHours(24), ct).ConfigureAwait(false);
         }
         catch (HttpRequestException ex)
         {
@@ -69,7 +74,7 @@ public sealed class LenovoSource : IDriverSource
     private static async Task<DriverCandidate?> ReadPackageAsync(string location, string? category, string? sha256, ScanContext context, CancellationToken ct)
     {
         var uri = TrustPolicy.NormalizeUrl(location);
-        var cacheName = "lenovo-pkg-" + AppPaths.SafeName(Path.GetFileName(uri.AbsolutePath));
+        var cacheName = "lenovo-direct-pkg-" + AppPaths.SafeName(Path.GetFileName(uri.AbsolutePath));
         var path = await Http.GetCachedFileAsync(uri.ToString(), cacheName, TimeSpan.FromDays(7), ct).ConfigureAwait(false);
         var bytes = await File.ReadAllBytesAsync(path, ct).ConfigureAwait(false);
         if (sha256 is not null && !Convert.ToHexString(SHA256.HashData(bytes)).Equals(sha256, StringComparison.OrdinalIgnoreCase))
@@ -104,8 +109,19 @@ public sealed class LenovoSource : IDriverSource
         var installType = install?.Attribute("type")?.Value ?? "cmd";
         var cmdline = install?.Element("Cmdline")?.Value?.Trim();
         if (installType.Equals("INF", StringComparison.OrdinalIgnoreCase))
-            cmdline = "@INF"; // signal pour le moteur : installer les INF extraits via pnputil
+            cmdline = VendorCommand.InfMarker; // signal pour le moteur : installer les INF extraits via pnputil
         if (string.IsNullOrEmpty(cmdline)) return null;
+        var extractCommand = pkg.Element("ExtractCommand")?.Value?.Trim() is { Length: > 0 } extract ? extract : null;
+        // Lignes de commande exécutées en SYSTEM : forme attendue seulement (programme du paquet, ni enchaînement ni
+        // redirection) ; sinon le paquet est écarté (et le serait de toute façon à l'installation).
+        foreach (var command in new[] { extractCommand, cmdline == VendorCommand.InfMarker ? null : cmdline })
+        {
+            if (command is not null && VendorCommand.Validate(command) is { } problem)
+            {
+                Log.Warn($"Paquet Lenovo écarté ({descriptorUri}) : commande refusée ({problem}) : {command}");
+                return null;
+            }
+        }
 
         var successCodes = (install?.Attribute("rc")?.Value ?? "0")
             .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
@@ -130,7 +146,7 @@ public sealed class LenovoSource : IDriverSource
             DownloadUrl = new Uri(baseUri, fileName).ToString(),
             FileName = fileName,
             Sha256 = crc is { Length: 64 } ? crc : null,
-            ExtractCommand = pkg.Element("ExtractCommand")?.Value?.Trim() is { Length: > 0 } extract ? extract : null,
+            ExtractCommand = extractCommand,
             SilentCommand = cmdline,
             SuccessExitCodes = successCodes.Length > 0 ? successCodes : new[] { 0 },
             RebootRequired = pkg.Element("Reboot")?.Attribute("type")?.Value is "1" or "3" or "4",
