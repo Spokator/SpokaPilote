@@ -25,7 +25,13 @@ public enum DataLocationMode
 /// </param>
 /// <param name="PortableHome">Dossier de l'exécutable portable (contenant SpokaPilote.portable), sinon null.</param>
 /// <param name="UiPreferencesFile">Préférences d'interface (langue, premier lancement, dernier onglet).</param>
-public sealed record AppLayout(DataLocationMode Mode, string Root, string MachineRoot, string? PortableHome, string UiPreferencesFile)
+/// <param name="UserRoot">
+/// Version installée lancée sans élévation : %LocalAppData%\SpokaPilote, où vont toutes ses écritures (journaux, cache,
+/// rapports, dossiers de travail, caches de politique). Le dossier commun (%ProgramData%\SpokaPilote) n'est modifiable
+/// que par SYSTEM et les Administrateurs (<see cref="DataProtection"/>) : il n'y est que lu. Null = écritures dans
+/// <paramref name="Root"/> / <paramref name="MachineRoot"/>.
+/// </param>
+public sealed record AppLayout(DataLocationMode Mode, string Root, string MachineRoot, string? PortableHome, string UiPreferencesFile, string? UserRoot = null)
 {
     /// <summary>Exécutables lancés depuis une copie portable (fichier témoin présent), quel que soit l'emplacement des données.</summary>
     public bool IsPortable => PortableHome is not null;
@@ -76,29 +82,43 @@ public static class AppPaths
     public static bool IsPortable => Layout.IsPortable;
     public static string? PortableHome => Layout.PortableHome;
 
-    public static string Cache => Ensure(Path.Combine(Root, "Cache"));
-    public static string Downloads => Ensure(Path.Combine(Root, "Downloads"));
-    public static string Extracted => Ensure(Path.Combine(Root, "Extracted"));
-    public static string Reports => Ensure(Path.Combine(Root, "Reports"));
-    public static string Logs => Ensure(Path.Combine(MachineRoot, "Logs"));
-    public static string Backups => Ensure(Path.Combine(MachineRoot, "Backups"));
-    public static string History => Ensure(Path.Combine(MachineRoot, "History"));
+    /// <summary>Racine des écritures de ce processus : <see cref="AppLayout.UserRoot"/> (non élevé, version installée) ou <see cref="Root"/>.</summary>
+    public static string WritableRoot => Layout.UserRoot ?? Layout.Root;
+    /// <summary>Racine des écritures propres au poste : <see cref="AppLayout.UserRoot"/> ou <see cref="MachineRoot"/>.</summary>
+    public static string WritableMachineRoot => Layout.UserRoot ?? Layout.MachineRoot;
+
+    /// <summary>Catalogues et index en cache (dossier privé quand le processus est élevé).</summary>
+    public static string Cache => DataProtection.EnsurePrivateDirectory(Path.Combine(WritableRoot, "Cache"));
+    /// <summary>Dossiers de travail propres à chaque exécution (<see cref="WorkDirectory"/>) : dossier privé quand le processus est élevé.</summary>
+    public static string Work => DataProtection.EnsurePrivateDirectory(Path.Combine(WritableRoot, WorkDirectory.FolderName));
+    public static string Reports => Ensure(Path.Combine(WritableRoot, "Reports"));
+    public static string Logs => Ensure(Path.Combine(WritableMachineRoot, "Logs"));
+    /// <summary>Journaux des exécutions élevées du poste (tâches planifiées, agent) : lus aussi par un processus non élevé.</summary>
+    public static string MachineLogs => EnsureIfWritable(Path.Combine(MachineRoot, "Logs"));
+    public static string Backups => EnsureIfWritable(Path.Combine(MachineRoot, "Backups"));
+    public static string History => EnsureIfWritable(Path.Combine(MachineRoot, "History"));
     /// <summary>Archives portables téléchargées par la mise à jour (mode portable).</summary>
-    public static string Updates => Ensure(Path.Combine(Root, "Mises-a-jour"));
-    public static string SettingsFile => Path.Combine(Ensure(Root), "settings.json");
-    /// <summary>Dernière politique de pilotes valide (fonctionnement hors ligne).</summary>
-    public static string PolicyCache => Path.Combine(Ensure(Root), "policy-cache.json");
-    /// <summary>Dernières décisions de diffusion par anneaux reçues de la console (poste hors ligne).</summary>
-    public static string RolloutDecisionsCache => Path.Combine(Ensure(Root), "rollout-decisions.json");
+    public static string Updates => Ensure(Path.Combine(WritableRoot, "Mises-a-jour"));
+    /// <summary>Configuration : modifiable par SYSTEM et les Administrateurs seulement (version installée), lisible par tous.</summary>
+    public static string SettingsFile => Path.Combine(EnsureIfWritable(Root), "settings.json");
+    internal const string PolicyCacheFileName = "policy-cache.json";
+    internal const string RolloutDecisionsCacheFileName = "rollout-decisions.json";
+    /// <summary>
+    /// Dernière politique de pilotes valide (fonctionnement hors ligne). Propre au poste : en mode portable, chaque poste a
+    /// la sienne (un poste ne réutilise jamais la politique ou l'anneau reçus par un autre poste servi par la même clé).
+    /// </summary>
+    public static string PolicyCache => Path.Combine(Ensure(WritableMachineRoot), PolicyCacheFileName);
+    /// <summary>Dernières décisions de diffusion par anneaux reçues de la console (poste hors ligne) : propres au poste, comme <see cref="PolicyCache"/>.</summary>
+    public static string RolloutDecisionsCache => Path.Combine(Ensure(WritableMachineRoot), RolloutDecisionsCacheFileName);
     public static string UiPreferencesFile => Layout.UiPreferencesFile;
 
     /// <summary>
     /// Points de montage DISM (images Windows). DISM exige un volume NTFS local : en mode portable (clé souvent en
     /// FAT32/exFAT), dossier temporaire du poste, vidé après chaque injection.
     /// </summary>
-    public static string Mount => Ensure(Layout.Mode == DataLocationMode.Portable
-        ? Path.Combine(Path.GetTempPath(), AppIdentity.Current.DataFolderName, "Mount")
-        : Path.Combine(Root, "Mount"));
+    public static string Mount => Layout.Mode == DataLocationMode.Portable
+        ? Ensure(Path.Combine(Path.GetTempPath(), AppIdentity.Current.DataFolderName, "Mount"))
+        : DataProtection.EnsurePrivateDirectory(Path.Combine(Root, "Mount"));
 
     /// <summary>Dépôt de pilotes de la clé (&lt;dossier de l'exe&gt;\Depot) s'il existe, sinon null.</summary>
     public static string? DefaultRepository => DefaultRepositoryFor(Layout, Directory.Exists);
@@ -137,18 +157,19 @@ public static class AppPaths
     /// <summary>
     /// Résout les emplacements. <paramref name="homeOverride"/> (SPOKAPILOTE_HOME) est prioritaire ; sinon le fichier
     /// témoin <see cref="PortableMarkerFileName"/> dans <paramref name="executableDirectory"/> active le mode portable ;
-    /// sinon %ProgramData%\SpokaPilote.
+    /// sinon %ProgramData%\SpokaPilote. <paramref name="elevated"/> = false : la version installée écrit dans
+    /// %LocalAppData% (<see cref="AppLayout.UserRoot"/>).
     /// </summary>
     public static AppLayout Resolve(string? homeOverride, string executableDirectory, string programData, string localAppData,
-        string machineName, string? machineId, Func<string, bool>? fileExists = null) =>
-        Resolve(AppIdentity.Current, homeOverride, executableDirectory, programData, localAppData, machineName, machineId, fileExists);
+        string machineName, string? machineId, Func<string, bool>? fileExists = null, bool elevated = true) =>
+        Resolve(AppIdentity.Current, homeOverride, executableDirectory, programData, localAppData, machineName, machineId, fileExists, elevated);
 
     /// <summary>
     /// Résolution pour un produit donné : dossier %ProgramData%\&lt;<see cref="AppIdentity.DataFolderName"/>&gt; et
     /// fichier témoin <see cref="AppIdentity.PortableMarkerFileName"/> (aucun mode portable s'il est null).
     /// </summary>
     public static AppLayout Resolve(AppIdentity identity, string? homeOverride, string executableDirectory, string programData,
-        string localAppData, string machineName, string? machineId, Func<string, bool>? fileExists = null)
+        string localAppData, string machineName, string? machineId, Func<string, bool>? fileExists = null, bool elevated = true)
     {
         fileExists ??= File.Exists;
         var exeDir = Path.TrimEndingDirectorySeparator(executableDirectory);
@@ -169,7 +190,8 @@ public static class AppPaths
                 portableHome, Path.Combine(root, "ui.json"));
         }
         var installed = Path.Combine(programData, identity.DataFolderName);
-        return new AppLayout(DataLocationMode.Installed, installed, installed, null, installedUi);
+        return new AppLayout(DataLocationMode.Installed, installed, installed, null, installedUi,
+            elevated ? null : Path.Combine(localAppData, identity.DataFolderName));
     }
 
     /// <summary>
@@ -198,7 +220,8 @@ public static class AppPaths
             Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             Environment.MachineName,
-            IsPortableDirectory(exeDir) ? ReadMachineGuidQuietly() : null);
+            IsPortableDirectory(exeDir) ? ReadMachineGuidQuietly() : null,
+            elevated: DataProtection.IsElevated);
     }
 
     /// <summary>MachineGuid de Windows, sans journalisation (le journal dépend lui-même de ces emplacements).</summary>
@@ -224,6 +247,12 @@ public static class AppPaths
         Directory.CreateDirectory(dir);
         return dir;
     }
+
+    /// <summary>
+    /// Dossier commun lu par un processus non élevé (version installée) : jamais créé par lui (il n'en a pas le droit) ;
+    /// les exécutions élevées et l'installeur le créent. Les lecteurs tolèrent son absence.
+    /// </summary>
+    private static string EnsureIfWritable(string dir) => Layout.UserRoot is null ? Ensure(dir) : dir;
 
     /// <summary>Retourne un nom de fichier/dossier sûr à partir d'un texte quelconque.</summary>
     public static string SafeName(string value, int maxLength = 80)

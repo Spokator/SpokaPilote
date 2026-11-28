@@ -82,7 +82,9 @@ public static class OemDriverPackDownloader
             return new(false, folder, spaceError);
 
         var trust = new TrustPolicy(settings);
-        var downloader = new Downloader(trust);
+        // Téléchargement, vérification et extraction dans un dossier de travail neuf et privé, supprimé à la fin.
+        using var work = WorkDirectory.Create("pack");
+        using var downloader = new Downloader(trust);
         progress?.Report($"Téléchargement de {pack.FileName} ({pack.SizeLabel}) depuis {new Uri(pack.Url).Host}...");
         var lastPercent = -1L;
         string file;
@@ -96,7 +98,7 @@ public static class OemDriverPackDownloader
                     if (percent / 10 == lastPercent / 10) return;
                     lastPercent = percent;
                     progress?.Report($"Téléchargement {percent} % ({p.Received / 1048576.0:0} / {p.Total.Value / 1048576.0:0} Mo)");
-                }), ct).ConfigureAwait(false);
+                }), ct, directory: work.Path).ConfigureAwait(false);
         }
         catch (HttpRequestException ex) when (ex.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.Gone or HttpStatusCode.Forbidden)
         {
@@ -141,13 +143,11 @@ public static class OemDriverPackDownloader
 
         // Extraction dans un dossier au chemin court : l'arborescence des packs est profonde et les extracteurs
         // constructeurs échouent au-delà de 260 caractères (constaté avec un pack Dell).
-        var staging = Path.Combine(AppPaths.Extracted, "pk-" + AppPaths.SafeName(pack.Id, 24));
+        var staging = work.NewSubdirectory("pk");
         int infs, signed, firmware;
         List<string> rejected;
         try
         {
-            if (Directory.Exists(staging)) Directory.Delete(staging, recursive: true);
-            Directory.CreateDirectory(staging);
             progress?.Report($"Extraction dans {staging}...");
             await ExtractAsync(pack, file, staging, ct).ConfigureAwait(false);
 
@@ -168,13 +168,25 @@ public static class OemDriverPackDownloader
             await WriteManifestAsync(staging, match, sig, infs, signed, firmware, rejected, ct).ConfigureAwait(false);
             progress?.Report($"Copie dans le dépôt : {folder}...");
             await Task.Run(() => Publish(staging, folder), ct).ConfigureAwait(false);
+            // Déplacé depuis le dossier de travail privé : droits du dépôt rétablis (héritage de son dossier parent).
+            if (DataProtection.Enforced)
+            {
+                try { DataProtection.Security.ResetToInherited(folder, isDirectory: true); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException) { Log.Warn($"Droits du dossier {folder} non rétablis : {ex.Message}"); }
+            }
         }
         finally
         {
             TryDelete(staging);
         }
 
-        if (!options.KeepDownload) TryDeleteFile(file);
+        if (options.KeepDownload)
+        {
+            // Le dossier de travail est supprimé à la fin : le fichier conservé est rangé à côté du pack dans le dépôt.
+            var kept = Path.Combine(Path.GetDirectoryName(folder)!, Path.GetFileName(file));
+            try { File.Copy(file, kept, overwrite: true); Log.Info($"Fichier du pack conservé : {kept}"); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { Log.Warn($"Fichier du pack non conservé ({kept}) : {ex.Message}"); }
+        }
         var message = $"{signed} pilote(s) INF signé(s) sur {infs} prêt(s) dans {folder}";
         if (firmware > 0) message += $" (dont {firmware} firmware(s) UEFI : installés seulement avec --include-firmware)";
         if (rejected.Count > 0) message += $" — {rejected.Count} INF sans signature valide (ils seront refusés à l'installation)";
@@ -348,10 +360,10 @@ public static class OemDriverPackDownloader
         try
         {
             // Contenu extrait : jusqu'à 4 fois la taille du pack (constaté : Dell 484 Mo → 1,98 Go, HP 890 Mo → 2,98 Go),
-            // plus une marge. Le téléchargement et l'extraction se font sous %ProgramData%\SpokaPilote, puis le pack
-            // est déplacé (même volume) ou copié dans le dépôt.
+            // plus une marge. Le téléchargement et l'extraction se font dans un dossier de travail (%ProgramData%\SpokaPilote\Work),
+            // puis le pack est déplacé (même volume) ou copié dans le dépôt.
             var extracted = (long)(pack.Size.Value * 4.5);
-            var workDrive = new DriveInfo(Path.GetPathRoot(AppPaths.Downloads)!);
+            var workDrive = new DriveInfo(Path.GetPathRoot(AppPaths.Work)!);
             var needWork = pack.Size.Value + extracted;
             if (workDrive.AvailableFreeSpace < needWork)
                 return $"Espace disque insuffisant sur {workDrive.Name} : {needWork / 1073741824.0:0.0} Go nécessaires, {workDrive.AvailableFreeSpace / 1073741824.0:0.0} Go libres.";

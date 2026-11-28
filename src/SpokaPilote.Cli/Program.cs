@@ -41,6 +41,10 @@ internal static partial class Program
         if (a.Command is "help" or null) return a.Positional(0) is { } topic ? HelpFor(topic) : Help();
         if (a.Flag("help")) return HelpFor(a.Command);
 
+        // Exécution élevée (tâche SYSTEM, agent, console administrateur) : dossier de données protégé avant tout usage
+        // (contrôle rapide ; reprise complète au premier démarrage d'une version 4.0.1 ou si les droits ont été modifiés).
+        if (a.Command is not ("secure-data" or "proteger-donnees" or "version" or "--version")) DataProtection.OnStartup();
+
         try
         {
             return a.Command switch
@@ -67,6 +71,7 @@ internal static partial class Program
                 "device" or "peripherique" or "périphérique" => await DeviceAsync(a, cts.Token),
                 "driverstore" or "driver-store" or "magasin" => await DriverStoreAsync(a, cts.Token),
                 "agent" => await AgentAsync(a, cts.Token),
+                "secure-data" or "proteger-donnees" => SecureData(a),
                 "version" or "--version" => Version(),
                 _ => Help(a.Command),
             };
@@ -411,7 +416,7 @@ internal static partial class Program
             if (a.Flag("verify"))
             {
                 // Télécharge et valide le premier paquet téléchargeable, sans rien installer.
-                var installer = new PrinterInstaller(settings);
+                using var installer = new PrinterInstaller(settings);
                 foreach (var o in options.Where(o => o.Kind is PrinterDriverOptionKind.MicrosoftCatalog or PrinterDriverOptionKind.LocalRepository))
                 {
                     WriteLine($"\nVérification de « {o.Label} »...", ConsoleColor.White);
@@ -462,7 +467,8 @@ internal static partial class Program
             }
             if (!a.Flag("yes") && !Confirm($"Installer avec « {choice.Label} » ?")) return ExitOk;
 
-            var result = await new PrinterInstaller(settings).InstallAsync(new PrinterInstallRequest
+            using var printerInstaller = new PrinterInstaller(settings);
+            var result = await printerInstaller.InstallAsync(new PrinterInstallRequest
             {
                 Printer = printer,
                 Driver = choice,
@@ -533,9 +539,12 @@ internal static partial class Program
         {
             WriteLine($"{i.Id}  {i.Summary}", i.RolledBackAt is null ? ConsoleColor.White : ConsoleColor.DarkGray);
             foreach (var item in i.Items) WriteLine($"    {item.Status,-13} {item.Title} {item.Version}", ConsoleColor.Gray);
-            if (i.AddedDriverPackages.Count > 0) WriteLine($"    paquets ajoutés : {string.Join(", ", i.AddedDriverPackages)}", ConsoleColor.DarkGray);
+            if (i.HasPackageDetails)
+                foreach (var p in i.AddedPackages) WriteLine($"    paquet ajouté : {p}", ConsoleColor.DarkGray);
+            else if (i.AddedDriverPackages.Count > 0)
+                WriteLine($"    paquets ajoutés : {string.Join(", ", i.AddedDriverPackages)} (version antérieure à 4.0.1 : annulation par « rollback {i.Id} » seulement)", ConsoleColor.DarkGray);
             if (i.RemovedDriverPackages.Count > 0) WriteLine($"    paquets retirés (non annulable{(i.BackupFolder is null ? "" : ", sauf restauration de la sauvegarde")}) : {string.Join(", ", i.RemovedDriverPackages)}", ConsoleColor.DarkGray);
-            if (i.BackupFolder is not null) WriteLine($"    sauvegarde : {i.BackupFolder}", ConsoleColor.DarkGray);
+            if (i.BackupFolder is not null) WriteLine($"    sauvegarde : {i.BackupFolder}{(Directory.Exists(i.BackupFolder) ? "" : " (supprimée depuis par la rétention)")}", ConsoleColor.DarkGray);
         }
         WriteLine("\nAnnuler une intervention : spokapilote rollback <id|last>", ConsoleColor.Cyan);
         return ExitOk;
@@ -543,16 +552,24 @@ internal static partial class Program
 
     private static async Task<int> RollbackAsync(Args a, CancellationToken ct)
     {
-        var intervention = InterventionHistory.Find(a.Positional(0) ?? "last");
+        var target = a.Positional(0) ?? "last";
+        var intervention = InterventionHistory.Find(target);
         if (intervention is null)
         {
             WriteLine("Aucune intervention annulable trouvée (voir « spokapilote history »).", ConsoleColor.Yellow);
             return ExitError;
         }
+        // « last » : limite d'âge et paquets vérifiables exigés ; un identifiant explicite : vérifications seules.
+        var options = InterventionHistory.IsLast(target) ? RollbackOptions.Last(Settings.Load()) : new RollbackOptions();
+        if (InterventionHistory.CheckAutomaticRollback(intervention, options, DateTime.Now) is { } refusal)
+        {
+            WriteLine(refusal, ConsoleColor.Yellow);
+            return ExitError;
+        }
         WriteLine($"Intervention {intervention.Id} : {intervention.Summary}", ConsoleColor.White);
-        WriteLine($"Paquets qui seront retirés : {string.Join(", ", intervention.AddedDriverPackages)}", ConsoleColor.Gray);
+        WriteLine($"Paquets qui seront retirés s'ils n'ont pas changé depuis : {string.Join(", ", intervention.AddedDriverPackages)}", ConsoleColor.Gray);
         if (!a.Flag("yes") && !Confirm("Annuler cette intervention ?")) return ExitOk;
-        var (ok, message) = await InterventionHistory.RollbackAsync(intervention, new Progress<string>(m => WriteLine($"› {m}", ConsoleColor.DarkGray)), ct);
+        var (ok, message) = await InterventionHistory.RollbackAsync(intervention, options, new Progress<string>(m => WriteLine($"› {m}", ConsoleColor.DarkGray)), ct);
         WriteLine(message, ok ? ConsoleColor.Green : ConsoleColor.Red);
         return ok ? ExitOk : ExitPartial;
     }
@@ -683,8 +700,39 @@ internal static partial class Program
                 ? $"Dépôt de la clé (utilisé automatiquement) : {depot}"
                 : $"Dépôt de la clé : absent (créez {Path.Combine(AppPaths.PortableHome!, AppPaths.PortableRepositoryFolderName)} pour l'utiliser)", ConsoleColor.Gray);
         WriteLine($"Fichier : {AppPaths.SettingsFile}", ConsoleColor.Gray);
-        Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(settings, new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
+        // Jeton jamais affiché (journal de déploiement, capture d'écran, historique de la console).
+        Console.WriteLine(settings.ToDisplayJson().ToJsonString(new System.Text.Json.JsonSerializerOptions { WriteIndented = true, Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping }));
         return ExitOk;
+    }
+
+    /// <summary>
+    /// « spokapilote secure-data [--force] » : protège le dossier de données (lancé par l'installeur ; --force = reprise
+    /// complète même si le contrôle rapide est bon). Console administrateur requise.
+    /// </summary>
+    private static int SecureData(Args a)
+    {
+        if (AppPaths.Layout.Mode == DataLocationMode.Portable)
+        {
+            WriteLine("Mode portable : aucune ACL sur la clé (FAT32/exFAT) ; réservez la clé au technicien.", ConsoleColor.Yellow);
+            return ExitOk;
+        }
+        if (!Elevation.IsAdministrator())
+        {
+            WriteLine("La protection du dossier de données nécessite une console administrateur.", ConsoleColor.Red);
+            return ExitError;
+        }
+        var report = DataProtection.OnStartup(forceFullPass: a.Flag("force"));
+        if (report is null)
+        {
+            WriteLine($"Dossier de données non protégé : voir le journal ({AppPaths.Logs}).", ConsoleColor.Red);
+            return ExitError;
+        }
+        WriteLine(report.Summary(AppPaths.Root), report.Errors.Count == 0 ? ConsoleColor.Green : ConsoleColor.Yellow);
+        foreach (var q in report.Quarantined) WriteLine($"  quarantaine : {q}", ConsoleColor.Yellow);
+        foreach (var d in report.Deleted) WriteLine($"  supprimé : {d}", ConsoleColor.DarkGray);
+        foreach (var l in report.LinksRemoved) WriteLine($"  lien retiré : {l}", ConsoleColor.Yellow);
+        foreach (var e in report.Errors) WriteLine($"  erreur : {e}", ConsoleColor.Red);
+        return report.Errors.Count == 0 ? ExitOk : ExitPartial;
     }
 
     private static Settings LoadSettings(Args a)
@@ -830,7 +878,8 @@ internal static partial class Program
 
             HISTORIQUE ET RETOUR ARRIÈRE
               spokapilote history                          interventions passées sur ce poste
-              spokapilote rollback [id|last] [--yes]       annule une intervention (retour aux pilotes précédents)
+              spokapilote rollback [id|last] [--yes]       annule une intervention (retour aux pilotes précédents) ;
+                                   « last » : au plus RollbackLastMaxAgeDays jours (30 par défaut)
               spokapilote restore [dossier-de-sauvegarde]  réinstalle une sauvegarde de pilotes
 
             DÉPÔT DE PILOTES ET POSTES SANS RÉSEAU
@@ -895,6 +944,8 @@ internal static partial class Program
                                    « show » indique aussi l'emplacement des données (installé ou mode portable)
               spokapilote config set UseConsoleCache auto|on|off   cache de pilotes de la console centrale (4.0) ;
                                    « server status » en donne l'état (taille, taux de réussite)
+              spokapilote secure-data [--force]            protège %ProgramData%\SpokaPilote (SYSTEM et Administrateurs ;
+                                   lecture seule pour les utilisateurs) ; fait à chaque démarrage élevé et par l'installeur
 
             MODE PORTABLE (clé USB, voir docs/MODE-PORTABLE.md)
               Archive SpokaPilote-Portable-<version>-<arch>.zip : données dans <clé>\SpokaPilote\Data (un dossier par
@@ -902,7 +953,8 @@ internal static partial class Program
               pas de tâche planifiée ; « self-update » télécharge l'archive portable vérifiée au lieu de l'installeur.
 
             Codes de sortie : 0 OK · 1 erreur · 2 échec partiel · 3010 redémarrage requis
-            Journaux : %ProgramData%\SpokaPilote\Logs (mode portable : Data\Postes\<POSTE>\Logs sur la clé)
+            Journaux : %ProgramData%\SpokaPilote\Logs (console non administrateur : %LocalAppData%\SpokaPilote\Logs ;
+            mode portable : Data\Postes\<POSTE>\Logs sur la clé)
             """;
 }
 

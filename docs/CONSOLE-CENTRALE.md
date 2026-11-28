@@ -198,7 +198,9 @@ spokapilote server status        # teste l'adresse, le certificat HTTPS et le je
 ```
 
 La configuration est enregistrée dans `%ProgramData%\SpokaPilote\settings.json`, commune à tout le poste : ce
-fichier peut aussi être déployé directement par GPO ou Intune (clés `serverUrl` et `serverToken`).
+fichier peut aussi être déployé directement par GPO ou Intune (clés `serverUrl` et `serverToken`, casse indifférente).
+Depuis la 4.0.1, le jeton n'y reste pas : à chaque démarrage élevé, il est déplacé dans `server-token.dat`, lisible
+des seuls SYSTEM et Administrateurs (voir § 7).
 
 Ensuite, **chaque `spokapilote scan` ou `spokapilote install` envoie son rapport** à la console (compressé). Un échec
 d'envoi n'est jamais bloquant : l'analyse ou l'installation se termine normalement, avec un avertissement, et le
@@ -323,7 +325,7 @@ de commande libre ni de script : seules six actions existent, vérifiées par la
 | Installer les pilotes manquants (`install-missing`) | `install --missing` : pilotes des périphériques en erreur, après point de restauration et sauvegarde | oui |
 | Installer manquants + mises à jour (`install-updates`) | `install` : manquants et mises à jour (jamais les pilotes bloqués par la politique) | oui |
 | Déployer le profil d'imprimantes (`deploy-printers`) | `printers deploy` avec le profil publié sur la console | oui |
-| Annuler la dernière intervention (`rollback-last`) | `rollback last`, puis nouvelle analyse envoyée à la console | oui |
+| Annuler la dernière intervention (`rollback-last`) | `rollback last` (intervention de moins de `RollbackLastMaxAgeDays` jours, 30 par défaut ; refusée au-delà), puis nouvelle analyse envoyée à la console | oui |
 | Mettre à jour SpokaPilote (`self-update`) | Télécharge la dernière version officielle (taille et SHA-256 publiés par GitHub vérifiés — sans empreinte publiée, rien n'est lancé ; signature contrôlée si l'installeur est signé) et l'installe | oui (vérifie seulement) |
 
 **Simulation** : la case « Simulation » de la fenêtre de confirmation montre ce qui serait fait, sans rien modifier.
@@ -535,6 +537,15 @@ Les déclencheurs s'activent ou se désactivent un par un dans la page **Paramè
 - **Actions à distance** : liste fermée côté console et côté poste ; le jeton d'enrôlement ne permet pas de créer de
   tâche ; un poste ne voit et ne complète que ses tâches.
 - Le jeton administrateur ne doit jamais être déployé sur les postes.
+- **Sur les postes (4.0.1)** : `%ProgramData%\SpokaPilote` n'est modifiable que par SYSTEM et les Administrateurs
+  (lecture seule pour les utilisateurs), et le jeton d'enrôlement est dans `server-token.dat`, lisible des seuls
+  administrateurs (DPAPI « machine »). Un `serverToken` déployé en clair dans `settings.json` (GPO, Intune, kit de
+  déploiement) est déplacé à chaque démarrage élevé ; entre son dépôt et ce démarrage, le fichier reste lisible par
+  les utilisateurs : préférez `spokapilote config set ServerToken` dans un script SYSTEM. Une interface non élevée
+  n'envoie rien à la console. Détail : [OUTILS-TECHNICIEN.md, § 6](OUTILS-TECHNICIEN.md#6-dossier-de-données-et-droits-401).
+  Mode portable : le jeton reste dans `Data\settings.json` de la clé, à réserver au technicien.
+- **Annulations** : seuls les paquets ajoutés par SpokaPilote lui-même, et inchangés depuis, sont retirés, sans
+  `/force` ([OUTILS-TECHNICIEN.md, § 5](OUTILS-TECHNICIEN.md#5-retour-arrière-et-sauvegardes-401)).
 - **Comptes et sessions** : voir § 2.1 (empreintes PBKDF2, cookie `HttpOnly` / `SameSite=Strict`, jeton anti-CSRF).
 
 ### Journal d'audit (3.1)

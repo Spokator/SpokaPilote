@@ -18,11 +18,22 @@ public sealed class PrinterInstallRequest
 }
 
 /// <summary>Installe le pilote (si nécessaire), crée le port TCP/IP et la file d'impression Windows.</summary>
-public sealed class PrinterInstaller
+public sealed class PrinterInstaller : IDisposable
 {
     private readonly Downloader _downloader;
+    /// <summary>Dossier de travail neuf et privé (paquets téléchargés et extraits) : supprimé par <see cref="Dispose"/>.</summary>
+    private WorkDirectory? _work;
 
     public PrinterInstaller(Settings settings) => _downloader = new Downloader(new TrustPolicy(settings));
+
+    private WorkDirectory Work => _work ??= WorkDirectory.Create("printer");
+
+    public void Dispose()
+    {
+        _downloader.Dispose();
+        _work?.Dispose();
+        _work = null;
+    }
 
     public async Task<PrinterInstallResult> InstallAsync(PrinterInstallRequest request, IProgress<string>? progress = null, CancellationToken ct = default)
     {
@@ -136,9 +147,8 @@ public sealed class PrinterInstaller
             var url = urls.FirstOrDefault();
             if (url is null) { lastError = "Aucun fichier téléchargeable pour ce pilote."; continue; }
             var file = await _downloader.DownloadAsync(url, sha1: MicrosoftCatalogClient.Sha1FromUrl(url),
-                progress: new Progress<DownloadProgress>(p => progress?.Report($"Téléchargement {p.Received / 1048576.0:0.0} Mo")), ct: ct).ConfigureAwait(false);
-            var folder = Path.Combine(AppPaths.Extracted, AppPaths.SafeName(updateId));
-            if (Directory.Exists(folder)) Directory.Delete(folder, recursive: true);
+                progress: new Progress<DownloadProgress>(p => progress?.Report($"Téléchargement {p.Received / 1048576.0:0.0} Mo")), ct: ct, directory: Work.Path).ConfigureAwait(false);
+            var folder = Work.NewSubdirectory("x-" + updateId);
             progress?.Report("Extraction...");
             await Archive.ExtractAsync(file, folder, ct).ConfigureAwait(false);
 

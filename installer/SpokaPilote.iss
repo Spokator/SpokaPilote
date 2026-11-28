@@ -95,6 +95,9 @@ Root: HKLM; Subkey: "SYSTEM\CurrentControlSet\Control\Session Manager\Environmen
   ValueData: "{olddata};{app}"; Tasks: addtopath; Check: NeedsAddPath(ExpandConstant('{app}'))
 
 [Run]
+; Dossier de données protégé (SYSTEM + Administrateurs, lecture seule pour les utilisateurs ; jeton déplacé hors de
+; settings.json) avant le premier lancement : l'installeur s'exécute en administrateur.
+Filename: "{app}\{#CliExe}"; Parameters: "secure-data --quiet"; Flags: runhidden waituntilterminated; StatusMsg: "Protection du dossier de données..."
 Filename: "{app}\{#AppExe}"; Description: "{cm:LaunchApp}"; Flags: nowait postinstall skipifsilent runasoriginaluser
 ; Mise à jour depuis l'application (/RELAUNCH=1) : relance l'interface même en mode silencieux.
 ; Un déploiement de parc (/VERYSILENT sans ce paramètre) n'ouvre rien sur les postes.

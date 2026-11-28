@@ -50,8 +50,7 @@ public static class Http
     public static async Task<string> GetCachedFileAsync(string url, string cacheName, TimeSpan maxAge, CancellationToken ct = default)
     {
         var path = Path.Combine(AppPaths.Cache, cacheName);
-        if (File.Exists(path) && DateTime.UtcNow - File.GetLastWriteTimeUtc(path) < maxAge && new FileInfo(path).Length > 0)
-            return path;
+        if (IsFresh(path, maxAge, DateTime.UtcNow)) return path;
 
         if (Online.ConsoleCache.Current is { Catalogs: true } console && Uri.TryCreate(url, UriKind.Absolute, out var official))
         {
@@ -71,12 +70,35 @@ public static class Http
         cts.CancelAfter(TimeSpan.FromMinutes(10));
         using var response = await Client.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cts.Token).ConfigureAwait(false);
         response.EnsureSuccessStatusCode();
-        var tmp = path + ".part";
-        await using (var fs = File.Create(tmp))
+        // Fichier temporaire neuf (nom aléatoire, CreateNew) : jamais un « .part » laissé par quelqu'un d'autre.
+        var tmp = $"{path}.{DataProtection.RandomName(6)}.part";
+        try
         {
-            await response.Content.CopyToAsync(fs, cts.Token).ConfigureAwait(false);
+            await using (var fs = new FileStream(tmp, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+            {
+                await response.Content.CopyToAsync(fs, cts.Token).ConfigureAwait(false);
+            }
+            DataProtection.ClaimOwnership(tmp);
+            File.Move(tmp, path, overwrite: true);
         }
-        File.Move(tmp, path, overwrite: true);
+        finally
+        {
+            try { if (File.Exists(tmp)) File.Delete(tmp); } catch (IOException) { /* nettoyé avec le cache */ }
+        }
         return path;
+    }
+
+    /// <summary>
+    /// Fichier en cache encore utilisable : non vide, daté de moins de <paramref name="maxAge"/> ; une date dans le futur
+    /// (horloge déréglée, ou fichier daté exprès pour rester « frais » indéfiniment) le rend périmé. Exécution élevée : un
+    /// fichier qui n'a pas été écrit par SYSTEM ou un administrateur est périmé.
+    /// </summary>
+    internal static bool IsFresh(string path, TimeSpan maxAge, DateTime nowUtc)
+    {
+        if (!File.Exists(path)) return false;
+        var info = new FileInfo(path);
+        var age = nowUtc - info.LastWriteTimeUtc;
+        if (info.Length == 0 || age < TimeSpan.Zero || age >= maxAge) return false;
+        return DataProtection.IsTrustedForElevatedUse(path);
     }
 }

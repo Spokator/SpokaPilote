@@ -31,14 +31,27 @@ public sealed class DriverInstaller
     private readonly TrustPolicy _trust;
     private readonly Downloader _downloader;
     private readonly SystemInfo _system;
+    private readonly BackupRetention _retention;
+
+    /// <summary>Dossier de travail de l'exécution en cours (téléchargements, extractions), supprimé à la fin.</summary>
+    private WorkDirectory? _work;
+    /// <summary>Noms publiés renvoyés par pnputil /add-driver pendant l'étape en cours.</summary>
+    private readonly List<string> _reportedNames = new();
 
     public DriverInstaller(Settings settings, SystemInfo system)
     {
         _trust = new TrustPolicy(settings);
         _downloader = new Downloader(_trust);
         _system = system;
+        _retention = BackupRetention.From(settings);
     }
 
+    private WorkDirectory Work => _work ?? throw new InvalidOperationException("Aucune installation en cours.");
+
+    /// <summary>
+    /// Installe les propositions. Tout est téléchargé, vérifié et exécuté dans un dossier de travail neuf et privé
+    /// (<see cref="WorkDirectory"/>), supprimé à la fin, que l'installation réussisse ou non.
+    /// </summary>
     public async Task<List<InstallOutcome>> InstallAsync(
         IReadOnlyList<DriverCandidate> candidates,
         IReadOnlyList<DeviceInfo> devices,
@@ -48,9 +61,29 @@ public sealed class DriverInstaller
     {
         if (!options.DryRun && candidates.Any(c => c.BlockedReason is null) && !Elevation.IsAdministrator())
             throw new UnauthorizedAccessException("L'installation de pilotes nécessite les droits administrateur.");
+        if (candidates.Count == 0) return new List<InstallOutcome>();
 
+        using var work = WorkDirectory.Create("install");
+        _work = work;
+        try
+        {
+            return await InstallCoreAsync(candidates, devices, options, progress, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            _work = null;
+        }
+    }
+
+    private async Task<List<InstallOutcome>> InstallCoreAsync(
+        IReadOnlyList<DriverCandidate> candidates,
+        IReadOnlyList<DeviceInfo> devices,
+        InstallOptions options,
+        IProgress<InstallProgress>? progress,
+        CancellationToken ct)
+    {
         var outcomes = new List<InstallOutcome>();
-        if (candidates.Count == 0) return outcomes;
+        var added = new List<AddedDriverPackage>();
 
         // Un candidat bloqué par la politique de pilotes n'est jamais installé, même si l'appelant l'a sélectionné.
         var installable = candidates.Count(c => c.BlockedReason is null);
@@ -66,7 +99,7 @@ public sealed class DriverInstaller
             if (options.BackupDrivers)
             {
                 progress?.Report(new InstallProgress(0, candidates.Count, "Préparation", "Sauvegarde des pilotes actuels..."));
-                intervention.BackupFolder = await SystemProtection.BackupDriversAsync(ct).ConfigureAwait(false);
+                intervention.BackupFolder = await SystemProtection.BackupDriversAsync(_retention, ct).ConfigureAwait(false);
             }
             storeBefore = InterventionHistory.SnapshotDriverStore();
         }
@@ -84,6 +117,10 @@ public sealed class DriverInstaller
                 outcomes.Add(outcome);
                 continue;
             }
+            // Paquets attribués à cette seule étape : jamais ceux qu'un autre outil (Windows Update, Intune...) ajoute
+            // entre deux étapes ou pendant la préparation.
+            var stepBefore = storeBefore is null ? null : InterventionHistory.SnapshotDriverStore();
+            _reportedNames.Clear();
             try
             {
                 outcome = c.IsInformational
@@ -109,6 +146,9 @@ public sealed class DriverInstaller
                 outcome = new InstallOutcome(c, InstallStatus.Failed, ex.Message);
             }
 
+            if (stepBefore is not null)
+                added.AddRange(AttributeStep(c, stepBefore, InterventionHistory.SnapshotDriverStore(), _reportedNames));
+
             var level = outcome.Succeeded || outcome.Status == InstallStatus.Skipped ? LogLevel.Info : LogLevel.Warning;
             Log.Write(level, $"[{outcome.Status}] {c.Title} {c.Version} — {outcome.Message}");
             outcomes.Add(outcome);
@@ -122,8 +162,21 @@ public sealed class DriverInstaller
 
         if (storeBefore is not null)
         {
-            intervention.AddedDriverPackages = InterventionHistory.SnapshotDriverStore().Except(storeBefore, StringComparer.OrdinalIgnoreCase)
-                .OrderBy(n => n).ToList();
+            // Identité de chaque paquet ajouté (nom d'origine, éditeur, classe, version, dossier du magasin) : revérifiée
+            // avant toute suppression par l'annulation.
+            var described = InterventionHistory.DescribeStore(added.Select(a => a.PublishedName));
+            foreach (var a in added)
+            {
+                if (!described.TryGetValue(a.PublishedName, out var d)) continue;
+                a.OriginalName = d.OriginalName;
+                a.PackageId = d.PackageId;
+                a.Provider = d.Provider;
+                a.ClassName = d.ClassName;
+                a.Version = d.Version;
+            }
+            intervention.AddedPackages = added.Where(a => described.ContainsKey(a.PublishedName)).OrderBy(a => a.PublishedName, StringComparer.OrdinalIgnoreCase).ToList();
+            intervention.AddedDriverPackages = intervention.AddedPackages.Select(a => a.PublishedName).ToList();
+            intervention.CompletedAt = DateTime.Now;
             intervention.Items = outcomes.Select(o => new InterventionItem
             {
                 Title = o.Candidate.Title,
@@ -140,6 +193,21 @@ public sealed class DriverInstaller
 
     /// <summary>Intervention enregistrée par le dernier appel à <see cref="InstallAsync"/> (null en simulation).</summary>
     public Intervention? LastIntervention { get; private set; }
+
+    /// <summary>
+    /// Paquets à attribuer à une étape (une proposition) : ceux dont pnputil a renvoyé le nom publié et qui n'existaient
+    /// pas avant l'étape (un paquet « déjà présent » n'est pas à nous) ; à défaut de nom renvoyé (installeur constructeur,
+    /// Windows Update), les paquets apparus pendant cette seule étape.
+    /// </summary>
+    internal static List<AddedDriverPackage> AttributeStep(DriverCandidate c, IReadOnlySet<string> before, IReadOnlySet<string> after, IEnumerable<string> reported)
+    {
+        var appeared = after.Where(n => !before.Contains(n)).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var named = reported.Where(appeared.Contains).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        var (names, origin) = named.Count > 0 ? (named, AddedPackageOrigins.PnpUtil) : (appeared.ToList(), AddedPackageOrigins.Step);
+        return names.Where(PnpUtil.IsPublishedOemName).OrderBy(n => n, StringComparer.OrdinalIgnoreCase)
+            .Select(n => new AddedDriverPackage { PublishedName = n.ToLowerInvariant(), Origin = origin, Candidate = $"{c.Title} {c.Version}".Trim() })
+            .ToList();
+    }
 
     // ------------------------------------------------------------------ Windows Update
 
@@ -206,17 +274,15 @@ public sealed class DriverInstaller
                 }
                 progress.Report("Téléchargement depuis Microsoft...");
                 var file = await _downloader.DownloadAsync(url, sha1: MicrosoftCatalogClient.Sha1FromUrl(url),
-                    progress: new Progress<DownloadProgress>(p => progress.Report(FormatDownload(p))), ct: ct).ConfigureAwait(false);
-                folder = Path.Combine(AppPaths.Extracted, AppPaths.SafeName(attempt.SourceItemId));
-                if (Directory.Exists(folder)) Directory.Delete(folder, recursive: true);
+                    progress: new Progress<DownloadProgress>(p => progress.Report(FormatDownload(p))), ct: ct, directory: Work.Path).ConfigureAwait(false);
+                folder = Work.NewSubdirectory("x-" + attempt.SourceItemId);
                 progress.Report("Extraction...");
                 await Archive.ExtractAsync(file, folder, ct).ConfigureAwait(false);
             }
             else if (attempt.DownloadUrl is not null)
             {
-                var file = await _downloader.DownloadAsync(attempt.DownloadUrl, attempt.FileName, attempt.Sha256, attempt.Sha1, attempt.Md5, ct: ct).ConfigureAwait(false);
-                folder = Path.Combine(AppPaths.Extracted, AppPaths.SafeName(attempt.Id));
-                if (Directory.Exists(folder)) Directory.Delete(folder, recursive: true);
+                var file = await _downloader.DownloadAsync(attempt.DownloadUrl, attempt.FileName, attempt.Sha256, attempt.Sha1, attempt.Md5, ct: ct, directory: Work.Path).ConfigureAwait(false);
+                folder = Work.NewSubdirectory("x-" + attempt.Id);
                 await Archive.ExtractAsync(file, folder, ct).ConfigureAwait(false);
             }
             else
@@ -247,6 +313,7 @@ public sealed class DriverInstaller
                 reboot |= result.ExitCode == PnpUtil.ErrorSuccessRebootRequired;
                 if (PnpUtil.IsSuccess(result.ExitCode))
                 {
+                    _reportedNames.AddRange(PnpUtil.ParsePublishedNames(result.Combined));
                     anyOk = true;
                     messages.Add(result.ExitCode == PnpUtil.ErrorNoMoreItems
                         ? $"{Path.GetFileName(inf)} ajouté au magasin (Windows conserve le pilote actuel, jugé équivalent ou meilleur)"
@@ -271,7 +338,7 @@ public sealed class DriverInstaller
         if (c.DownloadUrl is null) return new InstallOutcome(c, InstallStatus.Failed, "Aucune URL de téléchargement.");
         progress.Report("Téléchargement depuis le site officiel du constructeur...");
         var file = await _downloader.DownloadAsync(c.DownloadUrl, c.FileName, c.Sha256, c.Sha1, c.Md5,
-            new Progress<DownloadProgress>(p => progress.Report(FormatDownload(p))), ct).ConfigureAwait(false);
+            new Progress<DownloadProgress>(p => progress.Report(FormatDownload(p))), ct, directory: Work.Path).ConfigureAwait(false);
 
         progress.Report("Vérification de la signature numérique...");
         var sig = SignatureVerifier.Verify(file);
@@ -285,12 +352,11 @@ public sealed class DriverInstaller
 
         var packageName = AppPaths.SafeName(c.Id.Replace(':', '_'));
         // Auto-extracteur NVIDIA en mode silencieux : destination obligatoirement directement sous %TEMP%
-        // et inexistante (sinon codes 8 / 12) ; elle n'est donc pas créée à l'avance.
+        // et inexistante (sinon codes 8 / 12) ; elle n'est donc pas créée à l'avance. Nom aléatoire : impossible à
+        // préparer d'avance par un autre compte. Sinon : sous-dossier neuf du dossier de travail privé.
         var packagePath = c.ExtractToTempFolder
-            ? Path.Combine(Path.GetTempPath(), "SpokaPilote-" + packageName)
-            : Path.Combine(AppPaths.Extracted, packageName);
-        if (Directory.Exists(packagePath)) Directory.Delete(packagePath, recursive: true);
-        if (!c.ExtractToTempFolder) Directory.CreateDirectory(packagePath);
+            ? Path.Combine(Path.GetTempPath(), $"SpokaPilote-{AppPaths.SafeName(packageName, 40)}-{DataProtection.RandomName(6)}")
+            : Work.NewSubdirectory("pkg-" + packageName);
         try
         {
             return await RunVendorCommandsAsync(c, file, packagePath, progress, ct).ConfigureAwait(false);

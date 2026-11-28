@@ -88,7 +88,7 @@ internal static partial class Program
     {
         try
         {
-            return new DirectoryInfo(AppPaths.Logs).GetFiles("maintenance-*.log").OrderByDescending(f => f.Name).FirstOrDefault()?.FullName;
+            return new DirectoryInfo(AppPaths.MachineLogs).GetFiles("maintenance-*.log").OrderByDescending(f => f.Name).FirstOrDefault()?.FullName;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {

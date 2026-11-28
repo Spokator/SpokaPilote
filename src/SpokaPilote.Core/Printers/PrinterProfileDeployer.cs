@@ -332,7 +332,7 @@ public sealed class PrinterProfileDeployer
 
         if (plan.Package is not null)
         {
-            var installer = new PrinterInstaller(_settings);
+            using var installer = new PrinterInstaller(_settings);
             var (inf, resolved, error) = await installer.PrepareInfAsync(plan.Package, plan.Printer!, progress, ct).ConfigureAwait(false);
             if (inf is null) return (false, null, error ?? "paquet de pilote inutilisable");
             progress?.Report($"Ajout du paquet {Path.GetFileName(inf)} au magasin de pilotes...");

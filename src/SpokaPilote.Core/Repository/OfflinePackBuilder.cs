@@ -35,7 +35,9 @@ public static class OfflinePackBuilder
         CancellationToken ct = default)
     {
         Directory.CreateDirectory(outputFolder);
-        var downloader = new Downloader(new TrustPolicy(settings));
+        // Téléchargements et extractions dans un dossier de travail neuf, supprimé à la fin (les paquets retenus sont copiés).
+        using var work = WorkDirectory.Create("offline");
+        using var downloader = new Downloader(new TrustPolicy(settings));
         var context = new ScanContext
         {
             System = target,
@@ -76,9 +78,8 @@ public static class OfflinePackBuilder
                     var urls = await MicrosoftCatalogClient.GetDownloadUrlsAsync(attempt.SourceItemId!, ct).ConfigureAwait(false);
                     var url = urls.FirstOrDefault(u => u.EndsWith(".cab", StringComparison.OrdinalIgnoreCase)) ?? urls.FirstOrDefault();
                     if (url is null) continue;
-                    var file = await downloader.DownloadAsync(url, sha1: MicrosoftCatalogClient.Sha1FromUrl(url), ct: ct).ConfigureAwait(false);
-                    var temp = Path.Combine(AppPaths.Extracted, "pack-" + AppPaths.SafeName(attempt.SourceItemId!));
-                    if (Directory.Exists(temp)) Directory.Delete(temp, recursive: true);
+                    var file = await downloader.DownloadAsync(url, sha1: MicrosoftCatalogClient.Sha1FromUrl(url), ct: ct, directory: work.Path).ConfigureAwait(false);
+                    var temp = work.NewSubdirectory("pack-" + attempt.SourceItemId!);
                     await Archive.ExtractAsync(file, temp, ct).ConfigureAwait(false);
 
                     var verified = PackageVerifier.SelectVerifiedInfs(temp, null, targets, target.Architecture, target.OsVersion);

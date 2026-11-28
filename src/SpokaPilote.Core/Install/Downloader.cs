@@ -7,12 +7,15 @@ namespace SpokaPilote.Core.Install;
 public sealed record DownloadProgress(string FileName, long Received, long? Total);
 
 /// <summary>
-/// Téléchargement contrôlé : HTTPS uniquement, domaines officiels uniquement, empreinte vérifiée, cache local.
+/// Téléchargement contrôlé : HTTPS uniquement, domaines officiels uniquement, empreinte vérifiée. Chaque fichier est
+/// écrit dans un dossier de travail propre à l'exécution (<see cref="WorkDirectory"/>, privé quand le processus est
+/// élevé) : jamais dans un dossier partagé où un utilisateur aurait pu déposer d'avance un « .part » ou un fichier
+/// « déjà en cache », puis le remplacer entre la vérification et l'exécution.
 /// Avec une console centrale 4.0 dont le cache est actif, le fichier est d'abord demandé à la console
 /// (<see cref="ConsoleCache"/>) ; la copie reçue n'est gardée que si le poste peut la vérifier seul (empreinte publiée, ou
 /// signature Authenticode valide d'un éditeur approuvé), sinon c'est le téléchargement direct.
 /// </summary>
-public sealed class Downloader
+public sealed class Downloader : IDisposable
 {
     /// <summary>Types de fichiers vérifiables par leur seule signature Authenticode quand la source ne publie aucune empreinte.</summary>
     internal static readonly string[] SignedFileExtensions = [".exe", ".msi", ".msp", ".cab", ".msu"];
@@ -38,6 +41,19 @@ public sealed class Downloader
 
     private HttpClient Direct => _direct ?? Http.Client;
 
+    /// <summary>Dossier de travail créé à la demande quand l'appelant n'en fournit pas (supprimé par <see cref="Dispose"/>).</summary>
+    private WorkDirectory? _ownWork;
+
+    public void Dispose()
+    {
+        _ownWork?.Dispose();
+        _ownWork = null;
+    }
+
+    /// <summary>
+    /// Télécharge et vérifie un fichier dans <paramref name="directory"/> (dossier de travail de l'appelant, voir
+    /// <see cref="WorkDirectory"/>), ou à défaut dans un dossier de travail propre à ce téléchargeur.
+    /// </summary>
     public async Task<string> DownloadAsync(
         string url,
         string? fileName = null,
@@ -45,22 +61,26 @@ public sealed class Downloader
         string? sha1 = null,
         string? md5 = null,
         IProgress<DownloadProgress>? progress = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        string? directory = null)
     {
         var uri = TrustPolicy.NormalizeUrl(url);
         if (!_trust.IsTrustedHost(uri))
             throw new SecurityException($"Téléchargement refusé : {uri.Host} ne fait pas partie des sources officielles autorisées.");
 
         fileName ??= Path.GetFileName(uri.AbsolutePath);
-        var target = Path.Combine(AppPaths.Downloads, AppPaths.SafeName(fileName, 120));
+        directory ??= (_ownWork ??= WorkDirectory.Create("dl")).Path;
+        var target = Path.Combine(directory, AppPaths.SafeName(fileName, 120));
 
+        // Même fichier demandé deux fois pendant l'exécution (variantes d'un même paquet) : réutilisé s'il est vérifiable.
         if (File.Exists(target) && await VerifyHashesAsync(target, sha256, sha1, md5, ct).ConfigureAwait(false) is true)
         {
-            Log.Info($"Déjà en cache : {fileName}");
+            Log.Info($"Déjà téléchargé : {fileName}");
             return target;
         }
 
         var tmp = target + ".part";
+        if (File.Exists(tmp)) File.Delete(tmp);
         if ((_useCurrentCache ? ConsoleCache.Current : _cache) is { } cache && CanVerifyIndependently(fileName, sha256, sha1, md5) &&
             await TryConsoleAsync(cache, uri, fileName, tmp, sha256, sha1, md5, progress, ct).ConfigureAwait(false))
         {

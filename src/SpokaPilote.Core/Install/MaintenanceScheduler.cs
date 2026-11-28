@@ -316,12 +316,23 @@ public static class MaintenanceScheduler
     // ------------------------------------------------------------------ opérations communes à toutes les tâches \SpokaPilote\*
     // (publiques : un produit construit sur ce moteur gère ses propres tâches, dans son dossier du Planificateur)
 
-    /// <summary>Enregistre (ou remplace) une tâche à partir de sa définition XML, conservée dans %ProgramData%\SpokaPilote.</summary>
+    /// <summary>
+    /// Enregistre (ou remplace) une tâche à partir de sa définition XML. schtasks lit la définition dans un dossier de
+    /// travail neuf et privé (jamais un fichier existant, qu'un autre compte pourrait modifier entre l'écriture et la
+    /// lecture : la tâche s'exécute en SYSTEM) ; une copie de référence est conservée dans %ProgramData%\SpokaPilote.
+    /// </summary>
     public static async Task<(bool Ok, string Message, string File)> RegisterTaskAsync(string taskName, string xml, string fileName, CancellationToken ct)
     {
         var file = Path.Combine(AppPaths.Ensure(AppPaths.Root), fileName);
-        await File.WriteAllTextAsync(file, xml, Encoding.Unicode, ct).ConfigureAwait(false);
-        var r = await ProcessRunner.RunAsync(SchTasks, $"/Create /TN \"{taskName}\" /XML \"{file}\" /F", timeout: TimeSpan.FromMinutes(1), ct: ct).ConfigureAwait(false);
+        ProcessResult r;
+        using (var work = WorkDirectory.Create("task"))
+        {
+            var definition = Path.Combine(work.Path, AppPaths.SafeName(fileName));
+            await File.WriteAllTextAsync(definition, xml, Encoding.Unicode, ct).ConfigureAwait(false);
+            r = await ProcessRunner.RunAsync(SchTasks, $"/Create /TN \"{taskName}\" /XML \"{definition}\" /F", timeout: TimeSpan.FromMinutes(1), ct: ct).ConfigureAwait(false);
+        }
+        try { DataProtection.WriteTextAtomically(file, xml, Encoding.Unicode); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { Log.Debug($"Copie de la définition non conservée ({file}) : {ex.Message}"); }
         return r.ExitCode == 0 ? (true, "", file) : (false, $"schtasks a refusé la tâche (code {r.ExitCode}) : {r.Combined.Trim()}", file);
     }
 
