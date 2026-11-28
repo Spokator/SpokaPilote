@@ -69,7 +69,7 @@ public partial class MainWindow : Window
         return parts.Length == 2 && double.TryParse(parts[0], out width) && double.TryParse(parts[1], out height) && width >= 600 && height >= 400;
     }
 
-    /// <summary>Raccourcis : F5 analyser, Ctrl+1..6 pages, F1 aide en ligne.</summary>
+    /// <summary>Raccourcis : F5 analyser (type d'analyse retenu), Ctrl+1..6 pages, F1 aide de la page affichée.</summary>
     private void OnPreviewKeyDown(object sender, KeyEventArgs e)
     {
         var ctrl = (Keyboard.Modifiers & ModifierKeys.Control) != 0;
@@ -80,7 +80,7 @@ public partial class MainWindow : Window
         }
         else if (e.Key == Key.F1)
         {
-            _vm.OpenUrlCommand.Execute("https://github.com/Spokator/SpokaPilote#readme");
+            _vm.OpenHelp(); // section du guide de l'interface qui décrit la page affichée
             e.Handled = true;
         }
         else if (ctrl && (e.Key is >= Key.D1 and <= Key.D9 || e.Key is >= Key.NumPad1 and <= Key.NumPad9))
@@ -115,7 +115,9 @@ public partial class MainWindow : Window
         _prefs.Save();
         if (!accepted) return;
         if (wizard.FleetMode) _vm.ApplyFleetSetup(wizard.Repository, wizard.ServerUrl, wizard.ServerToken);
-        if (wizard.StartScan && _vm.ScanCommand.CanExecute(null)) _vm.ScanCommand.Execute(null);
+        if (!wizard.StartScan) return;
+        _vm.DeepScan = wizard.DeepScan; // type choisi dans l'assistant, retenu comme sur l'Accueil
+        if (_vm.ScanCommand.CanExecute(null)) _vm.ScanCommand.Execute(null);
     }
 
     private async void OnContentRendered(object? sender, EventArgs e)

@@ -3,7 +3,7 @@ using Microsoft.Win32;
 
 namespace SpokaPilote.App;
 
-/// <summary>Assistant de premier lancement : présentation, type d'usage (poste / parc), première analyse.</summary>
+/// <summary>Assistant de premier lancement : présentation, type d'usage (poste / parc), première analyse et son type.</summary>
 public partial class OnboardingWindow : Window
 {
     private int _step = 1;
@@ -18,8 +18,10 @@ public partial class OnboardingWindow : Window
     public bool FleetMode => UseFleet.IsChecked == true;
     public string Repository => RepoBox.Text.Trim();
     public string ServerUrl => ServerBox.Text.Trim();
-    public string ServerToken => TokenBox.Text.Trim();
+    public string ServerToken => TokenBox.Password.Trim();
     public bool StartScan => ScanNow.IsChecked == true;
+    /// <summary>Type de la première analyse : complète si choisie, sinon rapide.</summary>
+    public bool DeepScan => ScanFull.IsChecked == true;
 
     /// <summary>Affiche directement une étape (mode capture d'écran).</summary>
     public void GoToStep(int step, bool fleet = false)

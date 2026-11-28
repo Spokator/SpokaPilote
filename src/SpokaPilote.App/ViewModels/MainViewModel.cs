@@ -91,6 +91,16 @@ public sealed class MainViewModel : ObservableObject
         if (index >= 0) PageIndex = index;
     }
 
+    // ------------------------------------------------------------------ aide (F1)
+
+    /// <summary>Guide de l'interface : une section par page.</summary>
+    public const string HelpPage = "https://github.com/Spokator/SpokaPilote/blob/main/docs/INTERFACE.md";
+    /// <summary>Ancres GitHub des sections du guide, dans l'ordre de <see cref="PageKeys"/>.</summary>
+    private static readonly string[] HelpAnchors = { "accueil", "pilotes", "périphériques", "historique", "outils", "paramètres" };
+    /// <summary>F1 : section du guide qui décrit la page affichée.</summary>
+    public string HelpUrl => $"{HelpPage}#{Uri.EscapeDataString(HelpAnchors[PageIndex])}";
+    public void OpenHelp() => OpenPath(HelpUrl);
+
     // ------------------------------------------------------------------ poste et analyse
 
     public Settings Settings { get; }
@@ -438,10 +448,27 @@ public sealed class MainViewModel : ObservableObject
 
     // ------------------------------------------------------------------ configuration mise en quarantaine
 
-    private IReadOnlyList<string> _quarantineNotices = ConfigQuarantine.Notices();
+    private IReadOnlyList<QuarantineEntry> _quarantine = ConfigQuarantine.Pending();
     /// <summary>settings.json ou jeton mis en quarantaine (fichier créé par un compte non administrateur) : bandeau de l'accueil et des paramètres.</summary>
-    public string QuarantineNotice => string.Join(Environment.NewLine, _quarantineNotices);
-    public bool HasQuarantineNotice => _quarantineNotices.Count > 0;
+    public string QuarantineNotice => string.Join(Environment.NewLine, _quarantine.Select(QuarantineText));
+    public bool HasQuarantineNotice => _quarantine.Count > 0;
+
+    /// <summary>
+    /// Message du bandeau, traduit : mêmes informations que <see cref="QuarantineEntry.Notice"/> (texte de la ligne de
+    /// commande, en français), mais renvoie au bouton « Vérifier et restaurer » au lieu de « spokapilote config restore ».
+    /// </summary>
+    internal static string QuarantineText(QuarantineEntry e)
+    {
+        var date = e.QuarantinedAt.ToString(Loc.IsEnglish ? "yyyy-MM-dd HH:mm" : "dd/MM/yyyy 'à' HH:mm", System.Globalization.CultureInfo.InvariantCulture);
+        var why = e.Legacy
+            ? e.TrustExtendingSettings.Count > 0
+                ? Loc.F("par la version 4.0.1 (propriétaire d'origine inconnu ; réglages qui étendent la confiance : {0})", string.Join(", ", e.TrustExtendingSettings))
+                : Loc.T("par la version 4.0.1 (propriétaire d'origine inconnu)")
+            : Loc.F("(fichier créé par un compte non administrateur : {0})", e.Owner ?? e.OwnerSid ?? Loc.T("propriétaire illisible"));
+        return e.Name.Equals(ConfigQuarantine.SettingsFileName, StringComparison.OrdinalIgnoreCase)
+            ? Loc.F("Configuration ({0}) mise en quarantaine le {1} {2} : vérifiez-la avec « Vérifier et restaurer ».", e.Name, date, why)
+            : Loc.F("Jeton de la console ({0}) mis en quarantaine le {1} {2} : vérifiez-le avec « Vérifier et restaurer ».", e.Name, date, why);
+    }
     public RelayCommand RestoreQuarantineCommand { get; }
 
     /// <summary>Affiche la configuration mise en quarantaine (jeton masqué) et la restaure après confirmation (administrateur).</summary>
@@ -482,7 +509,7 @@ public sealed class MainViewModel : ObservableObject
             MessageBox.Show(Loc.F("Restauration impossible : {0}", ex.Message), "SpokaPilote", MessageBoxButton.OK, MessageBoxImage.Error);
             return;
         }
-        _quarantineNotices = ConfigQuarantine.Notices();
+        _quarantine = ConfigQuarantine.Pending();
         OnPropertyChanged(nameof(QuarantineNotice));
         OnPropertyChanged(nameof(HasQuarantineNotice));
         MessageBox.Show(Loc.T("Configuration restaurée. Redémarrez SpokaPilote pour l'appliquer."), "SpokaPilote", MessageBoxButton.OK, MessageBoxImage.Information);

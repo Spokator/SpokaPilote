@@ -188,7 +188,7 @@
                                     <StackPanel>
                                         <TextBlock FontWeight="SemiBold" TextWrapping="Wrap" Text="Analyse complète" />
                                         <TextBlock Margin="0,2,0,0" Style="{StaticResource Secondary}"
-                                                   Text="Vérifie aussi, dans le Microsoft Update Catalog, s'il existe une version plus récente de chaque pilote de fabricant déjà installé. Plus long : souvent plusieurs minutes." />
+                                                   Text="Vérifie aussi, dans le Microsoft Update Catalog, s'il existe une version plus récente de chaque pilote de fabricant déjà installé. Plus long : jusqu'à plusieurs minutes selon le matériel." />
                                     </StackPanel>
                                 </RadioButton>
                             </UniformGrid>
