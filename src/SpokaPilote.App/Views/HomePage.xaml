@@ -11,7 +11,19 @@
     <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
         <StackPanel Margin="36,28,36,28" MaxWidth="960">
 
-            <!-- ============================================ bandeaux : mise à jour de SpokaPilote, droits -->
+            <!-- ============================================ bandeaux : configuration en quarantaine, mise à jour, droits -->
+            <Border Style="{StaticResource InfoBarWarning}" Visibility="{Binding Shell.HasQuarantineNotice, Converter={StaticResource BoolToVisibility}}"
+                    AutomationProperties.Name="Configuration mise en quarantaine">
+                <DockPanel>
+                    <app:Glyph Style="{StaticResource WarningIcon}" />
+                    <Button DockPanel.Dock="Right" Margin="16,0,0,0" VerticalAlignment="Center" Content="Vérifier et restaurer"
+                            Command="{Binding Shell.RestoreQuarantineCommand}" />
+                    <TextBlock VerticalAlignment="Center" TextWrapping="Wrap">
+                        <Run FontWeight="SemiBold">Configuration mise en quarantaine.</Run>
+                        <Run Text="{Binding Shell.QuarantineNotice, Mode=OneWay}" />
+                    </TextBlock>
+                </DockPanel>
+            </Border>
             <Border Style="{StaticResource InfoBar}" Visibility="{Binding Shell.HasInstallerUpdate, Converter={StaticResource BoolToVisibility}}">
                 <DockPanel>
                     <app:Glyph Style="{StaticResource InfoIcon}" Text="&#xE896;" />
