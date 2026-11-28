@@ -136,7 +136,8 @@ public partial class MainWindow : Window
     /// <c>SpokaPilote.App.exe --screenshot dossier [--scan] [--deep] [--lang en] [--theme dark|light] [--size 1000x660] [--alias PC-DEMO] [--expand]</c>.
     /// --deep : analyse complète au lieu de l'analyse rapide.
     /// Écrit page-N-nom.png pour chaque page de la navigation (page entière en plus dans complet-N-nom.png quand elle
-    /// défile), puis assistant-N.png pour chaque étape de l'assistant, et quitte. Toute erreur d'interface : code 3.
+    /// défile), extra-pilotes-bloques.png si la politique bloque des pilotes, puis assistant-N.png pour chaque étape de
+    /// l'assistant, et quitte. Toute erreur d'interface : code 3.
     /// --alias remplace le nom de l'ordinateur (et masque le numéro de série) ; --expand ouvre les volets de détail.
     /// Les préférences de l'utilisateur (dernière page, premier lancement) ne sont pas modifiées.
     /// </summary>
@@ -169,6 +170,16 @@ public partial class MainWindow : Window
             if (page is not null && FindScrollViewer(page) is { Content: FrameworkElement content } scroller
                 && content.ActualHeight > scroller.ViewportHeight + 1)
                 CaptureElement(content, this, Path.Combine(folder, $"complet-{name}.png"));
+        }
+
+        // Pilotes bloqués ou retenus par la politique : le filtre « Bloqués » et son explication.
+        if (_vm.Drivers.BlockedCount > 0)
+        {
+            _vm.PageIndex = 1;
+            _vm.Drivers.Filter = "blocked";
+            await Task.Delay(700);
+            Capture(Path.Combine(folder, "extra-pilotes-bloques.png"));
+            _vm.Drivers.Filter = "all";
         }
 
         // Assistant de premier lancement (non modal pour la capture).

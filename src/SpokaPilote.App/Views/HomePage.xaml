@@ -138,33 +138,6 @@
                         <TextBlock Margin="0,6,0,0" Style="{StaticResource Secondary}" Text="{Binding SubHeadline, Mode=OneWay}" />
                     </StackPanel>
 
-                    <StackPanel Grid.Column="2" Margin="24,0,0,0" VerticalAlignment="Center" MinWidth="200">
-                        <Button Padding="24,11" FontSize="15" HorizontalAlignment="Stretch" Style="{DynamicResource AccentButtonStyle}"
-                                Content="{Binding PrimaryLabel, Mode=OneWay}" Command="{Binding PrimaryCommand}"
-                                ToolTip="{Binding PrimaryHelp, Mode=OneWay}"
-                                AutomationProperties.Name="{Binding PrimaryLabel, Mode=OneWay}"
-                                AutomationProperties.HelpText="{Binding PrimaryHelp, Mode=OneWay}"
-                                Visibility="{Binding ShowPrimaryButton, Converter={StaticResource BoolToVisibility}}" />
-                        <Border Padding="18,10" CornerRadius="6" HorizontalAlignment="Stretch"
-                                Background="{DynamicResource SystemFillColorSuccessBackgroundBrush}"
-                                Visibility="{Binding IsUpToDate, Converter={StaticResource BoolToVisibility}}">
-                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
-                                <app:Glyph Style="{StaticResource Icon}" Foreground="{DynamicResource SystemFillColorSuccessBrush}" Text="&#xE73E;" />
-                                <TextBlock Margin="8,0,0,0" FontSize="15" FontWeight="SemiBold" VerticalAlignment="Center"
-                                           Text="{Binding PrimaryLabel, Mode=OneWay}" AutomationProperties.LiveSetting="Polite" />
-                            </StackPanel>
-                        </Border>
-                        <WrapPanel HorizontalAlignment="Center" Margin="0,8,0,0" MaxWidth="280"
-                                   Visibility="{Binding HasScan, Converter={StaticResource BoolToVisibility}}">
-                            <Button Style="{StaticResource LinkButton}" Content="Voir la liste des pilotes" Command="{Binding ShowDetailsCommand}" />
-                            <Button Style="{StaticResource LinkButton}" Content="Analyser à nouveau" Command="{Binding Shell.ScanCommand}"
-                                    ToolTip="{Binding RescanHelp, Mode=OneWay}" AutomationProperties.HelpText="{Binding RescanHelp, Mode=OneWay}" />
-                            <Button Style="{StaticResource LinkButton}" Content="{Binding ProblemDevicesLabel, Mode=OneWay}" Command="{Binding ShowDevicesCommand}"
-                                    AutomationProperties.Name="{Binding ProblemDevicesLabel, Mode=OneWay}"
-                                    ToolTip="Voir la cause de chaque erreur et la réparation proposée"
-                                    Visibility="{Binding HasProblemDevices, Converter={StaticResource BoolToVisibility}}" />
-                        </WrapPanel>
-                    </StackPanel>
 
                     <!-- Avant la première analyse : le type d'analyse se choisit AVANT de lancer (rien de caché qui change le résultat). -->
                     <Border Grid.Row="1" Grid.ColumnSpan="3" Margin="0,18,0,0" Padding="0,14,0,0" BorderThickness="0,1,0,0"
@@ -201,6 +174,34 @@
                             </DockPanel>
                         </StackPanel>
                     </Border>
+                    <!-- Action principale : après le choix du type d'analyse dans l'ordre de tabulation (le choix d'abord). -->
+                    <StackPanel Grid.Column="2" Margin="24,0,0,0" VerticalAlignment="Center" MinWidth="200">
+                        <Button Padding="24,11" FontSize="15" HorizontalAlignment="Stretch" Style="{DynamicResource AccentButtonStyle}"
+                                Content="{Binding PrimaryLabel, Mode=OneWay}" Command="{Binding PrimaryCommand}"
+                                ToolTip="{Binding PrimaryHelp, Mode=OneWay}"
+                                AutomationProperties.Name="{Binding PrimaryLabel, Mode=OneWay}"
+                                AutomationProperties.HelpText="{Binding PrimaryHelp, Mode=OneWay}"
+                                Visibility="{Binding ShowPrimaryButton, Converter={StaticResource BoolToVisibility}}" />
+                        <Border Padding="18,10" CornerRadius="6" HorizontalAlignment="Stretch"
+                                Background="{DynamicResource SystemFillColorSuccessBackgroundBrush}"
+                                Visibility="{Binding IsUpToDate, Converter={StaticResource BoolToVisibility}}">
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                                <app:Glyph Style="{StaticResource Icon}" Foreground="{DynamicResource SystemFillColorSuccessBrush}" Text="&#xE73E;" />
+                                <TextBlock Margin="8,0,0,0" FontSize="15" FontWeight="SemiBold" VerticalAlignment="Center"
+                                           Text="{Binding PrimaryLabel, Mode=OneWay}" AutomationProperties.LiveSetting="Polite" />
+                            </StackPanel>
+                        </Border>
+                        <WrapPanel HorizontalAlignment="Center" Margin="0,8,0,0" MaxWidth="280"
+                                   Visibility="{Binding HasScan, Converter={StaticResource BoolToVisibility}}">
+                            <Button Style="{StaticResource LinkButton}" Content="Voir la liste des pilotes" Command="{Binding ShowDetailsCommand}" />
+                            <Button Style="{StaticResource LinkButton}" Content="Analyser à nouveau" Command="{Binding Shell.ScanCommand}"
+                                    ToolTip="{Binding RescanHelp, Mode=OneWay}" AutomationProperties.HelpText="{Binding RescanHelp, Mode=OneWay}" />
+                            <Button Style="{StaticResource LinkButton}" Content="{Binding ProblemDevicesLabel, Mode=OneWay}" Command="{Binding ShowDevicesCommand}"
+                                    AutomationProperties.Name="{Binding ProblemDevicesLabel, Mode=OneWay}"
+                                    ToolTip="Voir la cause de chaque erreur et la réparation proposée"
+                                    Visibility="{Binding HasProblemDevices, Converter={StaticResource BoolToVisibility}}" />
+                        </WrapPanel>
+                    </StackPanel>
 
                     <!-- Après l'analyse : ce qu'elle a couvert, et l'autre type d'analyse en un clic. -->
                     <Border Grid.Row="2" Grid.ColumnSpan="3" Margin="0,18,0,0" Padding="0,14,0,0" BorderThickness="0,1,0,0"
