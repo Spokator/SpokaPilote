@@ -666,6 +666,8 @@ public sealed class DriverCacheTests : IDisposable
         var report = JsonNode.Parse(ReportFixture.Typical("PC-01").Json())!.AsObject();
         report["candidates"]![0]!["downloadUrl"] = DellFile;
         report["candidates"]![0]!["sizeBytes"] = 2000;
+        // 4.0.1 : seuls les paquets dont l'empreinte officielle est connue sont préchargés.
+        report["candidates"]![0]!["sha256"] = Sha256(Bytes(2000));
         var r = await _host.Client(AgentToken).PostAsync("/api/reports", Json(report.ToJsonString()));
         Assert.Equal(HttpStatusCode.OK, r.StatusCode);
         _origin.Add(DellFile, Bytes(2000));
