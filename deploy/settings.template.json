@@ -1,0 +1,30 @@
+{
+  "_aide": "Modèle de %ProgramData%\\SpokaPilote\\settings.json pour Install-SpokaPilote.ps1 -SettingsTemplate (voir docs/DEPLOIEMENT-ENTREPRISE.md). Les clés sont en camelCase et SENSIBLES À LA CASSE pour l'application (« ServerUrl » serait ignoré ; le script corrige la casse). Les clés commençant par « _ » sont ignorées. Une valeur null retire la clé (valeur par défaut). Supprimez les lignes que vous ne voulez pas imposer : les autres réglages du poste sont conservés.",
+  "_jeton": "Ne mettez PAS serverToken dans ce fichier s'il est copié par GPO (SYSVOL est lisible par tous les utilisateurs du domaine) : passez-le par -ServerTokenFile, depuis le paquet Intune / MECM ou un partage lisible par les seuls comptes ordinateur.",
+
+  "_console": "Console centrale (HTTPS obligatoire, adresse finale sans redirection) et cache de pilotes de la console : auto, on ou off.",
+  "serverUrl": "https://spokapilote.mon-entreprise.fr",
+  "useConsoleCache": "auto",
+  "consoleCacheCatalogs": true,
+
+  "_depot": "Dépôts de pilotes indexés en priorité. En SYSTEM, le poste lit le partage avec son compte ordinateur : lecture pour « Ordinateurs du domaine ».",
+  "repositoryPaths": [
+    "\\\\srv-fichiers\\pilotes$"
+  ],
+
+  "_politique": "Politique de pilotes : chemin, partage UNC ou URL HTTPS. Sans policySource, la politique publiée par la console est utilisée.",
+  "policySource": "\\\\srv-fichiers\\deploiement$\\SpokaPilote\\driver-policy.json",
+
+  "_sources": "Sources de pilotes (valeurs par défaut de l'application).",
+  "useWindowsUpdate": true,
+  "windowsUpdateBypassWsus": true,
+  "useMicrosoftCatalog": true,
+  "useOemCatalogs": true,
+  "useGpuVendorSources": true,
+  "nvidiaBranch": "studio",
+  "includeBiosAndFirmware": false,
+
+  "_securite": "Filets de sécurité avant chaque installation (valeurs par défaut).",
+  "createRestorePoint": true,
+  "backupDriversBeforeInstall": true
+}
