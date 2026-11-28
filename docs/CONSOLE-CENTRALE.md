@@ -1009,9 +1009,9 @@ postes se servent chez elle** (réseau local), et elle relaie les catalogues ave
   catalogue des packs HP — et, à titre d'indication, les pages de **recherche** du Microsoft Update Catalog (clé : la
   recherche normalisée — casse et espaces). Le reste est toujours lu directement à la source (voir le modèle de
   sécurité ci-dessous). Chaque catalogue est gardé `SPOKAPILOTE_CACHE_CATALOG_HOURS` heures (12 par défaut) puis
-  redemandé une fois pour tout le parc ; un catalogue absent de la source (`404`) est mémorisé une heure ; si la source
-  est injoignable, la dernière copie est servie. Le poste date sa copie locale du moment où la console l'a obtenue :
-  l'âge maximal compte depuis la source. (La console sait toujours relayer catalogues Lenovo, réponses NVIDIA et liens
+  redemandé une fois pour tout le parc ; un catalogue absent de la source (`404`) est mémorisé une heure (les postes
+  4.0.1 le redemandent alors directement à la source) ; si la source est injoignable, la dernière copie est servie. Le
+  poste date sa copie locale du moment où la console l'a obtenue : l'âge maximal compte depuis la source. (La console sait toujours relayer catalogues Lenovo, réponses NVIDIA et liens
   du Microsoft Update Catalog pour les postes 4.0.0, qui les demandent encore.)
 - **Microsoft Update Catalog** : la console fait ses recherches deux à la fois, espacées de 400 ms. Une page
   « Too many search requests » **n'est jamais mise en cache** : la console suspend ses recherches 3 minutes et répond
@@ -1026,14 +1026,15 @@ officielle. Côté poste (`Online/ConsoleCache`, `Install/Downloader`) :
 
 1. Seules les adresses que le poste juge officielles (`TrustPolicy`) sont demandées à la console ; le jeton
    d'enrôlement ne part que vers `ServerUrl` (pas de redirection suivie, HTTPS obligatoire hors localhost).
-2. Un fichier reçu de la console n'est **gardé que si le poste peut le vérifier seul, avant tout usage** : empreinte
-   publiée par la source et obtenue **directement** par le poste (catalogue Dell, HP, Lenovo, lien du Microsoft Update
-   Catalog, MD5 de NVIDIA), ou à défaut **signature Authenticode valide de l'éditeur attendu pour ce domaine**
-   (`.exe`, `.msi`, `.cab`, `.msu`) : un fichier de `us.download.nvidia.com` doit être signé par NVIDIA Corporation, un
-   fichier de `downloads.dell.com` par Dell — pas seulement par « un » éditeur approuvé. La révocation du certificat est
-   alors contrôlée en ligne : un certificat **révoqué** est refusé ; une révocation **invérifiable** (poste isolé,
-   serveur de révocation injoignable) est tolérée et journalisée, pour ne pas bloquer les sites sans accès Internet
-   direct. Un fichier sans empreinte et non signable (ex. `.zip`) ne passe jamais par la console.
+2. Un fichier n'est demandé à la console **que si la source en publie une empreinte que le poste a obtenue sans
+   elle** (catalogue signé Dell ou HP, catalogue Lenovo lu à la source, lien du Microsoft Update Catalog, MD5 de
+   NVIDIA), et la copie reçue n'est **gardée que si elle a cette empreinte**, vérifiée avant tout usage. Une signature
+   valide ne suffit **jamais** (4.0.1) : une console compromise pourrait servir, à la place du fichier demandé,
+   n'importe quel **autre** fichier signé du même éditeur — par exemple une ancienne version vulnérable d'un installeur
+   Lenovo signé, pour charger un pilote vulnérable (BYOVD). Un fichier sans empreinte publiée (paquet Lenovo dont le
+   descripteur ne porte pas de SHA-256, fichier Microsoft sans empreinte, `.zip`…) est donc **toujours téléchargé
+   directement** depuis la source. Les seuls fichiers acceptés de la console sur leur signature sont les catalogues
+   `.cab` signés (point 5).
 3. Copie refusée → avertissement dans le journal du poste (« Copie fournie par la console REFUSÉE… ») et
    **téléchargement direct** depuis la source officielle ; les copies refusées par la console elle-même sont comptées
    dans `hashMismatches`.
@@ -1042,7 +1043,19 @@ officielle. Côté poste (`Online/ConsoleCache`, `Install/Downloader`) :
 5. **Catalogues et métadonnées** : elles désignent les installeurs à lancer, leurs empreintes et leurs **lignes de
    commande** (exécutées en SYSTEM) ; le poste n'en accepte de la console que ce qu'il peut authentifier seul.
    - Un `.cab` (Dell, HP) reçu de la console doit porter une signature Authenticode valide **de l'éditeur attendu**
-     (Dell pour `downloads.dell.com`, HP pour `hpia.hpcloud.hp.com`), sinon il est refusé et téléchargé directement.
+     (Dell pour `downloads.dell.com`, HP pour `hpia.hpcloud.hp.com`), certificat non révoqué (révocation invérifiable
+     tolérée et journalisée, pour les sites sans accès Internet direct), sinon il est refusé et téléchargé directement.
+   - **Pas d'ancien catalogue resservi** (4.0.1) : un ancien `CatalogPC.cab` reste validement signé. Le poste retient,
+     par adresse, la date de signature (horodatage Authenticode) du plus récent catalogue accepté et la dernière fois que
+     la source elle-même le lui a servi (`catalog-freshness.json` dans son cache). Une copie de la console plus ancienne
+     que le dernier catalogue accepté est refusée (avertissement « Copie fournie par la console REFUSÉE ») ; une copie
+     signée il y a plus de **30 jours** n'est acceptée que si la source a servi directement cette même version au poste
+     il y a moins de 30 jours (cas des catalogues rarement republiés : `CatalogPC.cab` de Dell date de juin 2026) ;
+     sinon, téléchargement direct, qui renouvelle cette confirmation. Un catalogue sans horodatage n'est jamais
+     relayé. Le rejeu est ainsi borné à 30 jours. L'en-tête `X-SpokaPilote-Fetched-At` de la console ne sert qu'à dater
+     la copie locale, jamais à juger de sa fraîcheur.
+   - Une console qui répond qu'un catalogue est **absent de la source** (`404` relayé) n'est pas crue : le poste le
+     demande directement à la source.
    - **Jamais par la console** (lus directement à la source, en HTTPS) : le catalogue Lenovo `{MTM}_Win11.xml`, les
      descripteurs de paquets Lenovo, le catalogue des packs Lenovo `catalogv2.xml` (XML sans signature vérifiable :
      le catalogue n'est pas signé et porte les empreintes des descripteurs, qui portent les lignes de commande), les
@@ -1052,20 +1065,35 @@ officielle. Côté poste (`Online/ConsoleCache`, `Install/Downloader`) :
      pas (le catalogue qui les désigne n'est pas signé) et ajouterait une dépendance pour un gain marginal.
    - La **recherche** du Microsoft Update Catalog peut passer par la console (c'est elle que Microsoft limite par
      adresse IP) mais n'est qu'une **indication** : l'entrée retenue est résolue directement chez Microsoft (liens et
-     SHA-1), et le paquet, d'où qu'il vienne, doit avoir ce SHA-1, être signé WHQL et déclarer l'ID matériel.
+     SHA-1), et le paquet, d'où qu'il vienne, doit avoir ce SHA-1, être signé WHQL et déclarer l'ID matériel. Comme le
+     titre et la version de la page de recherche décident du classement, de « plus récent que l'installé », des règles
+     de politique et de l'identité de diffusion (anneaux, disjoncteur), ils sont **confirmés** avant l'installation
+     (4.0.1, que la recherche soit passée par la console ou non) : la **fiche de l'entrée** (`ScopedViewInline.aspx`)
+     est lue directement chez Microsoft et doit porter le même titre et la même version ; puis chaque INF retenu doit
+     porter la **version annoncée** (`DriverVer`) et un **fournisseur** (`Provider`, ou fabricant de ses modèles) en
+     rapport avec l'éditeur annoncé. Une entrée légitime satisfait toujours ces conditions (la version du catalogue
+     est celle de l'INF signé) ; tout écart est refusé (« Entrée du catalogue Microsoft refusée… », statut « bloqué »,
+     jamais compté comme échec par le disjoncteur). Fiche injoignable : refus si les recherches passent par la console,
+     sinon seul le contrôle de l'INF s'applique. Même contrôle pour les packs hors ligne et les pilotes d'imprimante
+     du catalogue.
    - Les lignes de commande des catalogues (Dell, HP, Lenovo) ne passent plus par `cmd /c` : le programme doit être
      l'installeur téléchargé et vérifié ou un fichier extrait du paquet (`.exe`, ou script `.cmd`/`.bat` du paquet),
      sans enchaînement, redirection ni variable (`&`, `|`, `<`, `>`, `^`, `!`, `%` hors `%FILE%`/`%PACKAGEPATH%`/
-     `%LOGPATH%`, retour à la ligne) ; il est lancé directement. Un paquet à la commande inattendue est écarté dès
-     l'analyse et refusé à l'installation.
+     `%LOGPATH%`, retour à la ligne), en **ASCII imprimable** seulement (4.0.1 : un caractère Unicode comme le guillemet
+     pleine chasse U+FF02 deviendrait un `"` une fois converti « au mieux » dans la page de code d'un installeur ANSI) ;
+     il est lancé directement. Le programme (ou l'installeur téléchargé qu'il lance) doit être un `.exe`, `.cmd` ou
+     `.bat` : un paquet à la commande inattendue (`.msi`, `.ps1`, `.vbs`, SoftPaq livré en `.zip`…) est écarté **dès
+     l'analyse** (journalisé), au lieu d'être proposé puis refusé à chaque maintenance.
 
-   Limite restante : la page de recherche relayée n'est pas authentifiée ; une console compromise pourrait donc
-   **orienter le choix** vers une autre entrée officielle du Microsoft Update Catalog, signée WHQL et déclarant le
-   matériel (par exemple une version plus ancienne, que Windows n'installe pas s'il juge le pilote actuel meilleur), ou
-   servir un ancien catalogue `.cab` encore validement signé — jamais un fichier non officiel, non signé, destiné à un
-   autre matériel ou une commande arbitraire. C'est moins que ce qu'une console compromise peut déjà faire (publier une
-   politique de pilotes, lancer des actions à distance) ; pour l'exclure, `ConsoleCacheCatalogs = false` sur les postes
-   (ou `SPOKAPILOTE_CACHE_CATALOGS=false`) garde les fichiers en cache et interroge les catalogues directement.
+   Limite restante : la page de recherche relayée n'est pas authentifiée ; une console compromise peut encore **masquer**
+   des entrées ou **orienter le choix** vers une autre entrée officielle du Microsoft Update Catalog, signée WHQL,
+   déclarant le matériel et présentée sous son vrai titre et sa vraie version (par exemple une version plus ancienne
+   pour un périphérique sans pilote ; pour un périphérique qui fonctionne, seule une version plus récente que
+   l'installée est proposée), ou resservir un catalogue `.cab` signé de moins de 30 jours — jamais un fichier non
+   officiel, non signé, destiné à un autre matériel, déguisé sous une autre version ou une commande arbitraire. C'est
+   moins que ce qu'une console compromise peut déjà faire (publier une politique de pilotes, lancer des actions à
+   distance) ; pour l'exclure, `ConsoleCacheCatalogs = false` sur les postes (ou `SPOKAPILOTE_CACHE_CATALOGS=false`)
+   garde les fichiers en cache et interroge les catalogues directement.
 6. **Jamais d'échec à cause du cache** : console injoignable, trop lente (60 s sans en-têtes ou sans octet), en erreur,
    refusant le fichier (`403`, `502`, `503`), cache désactivé ou console 3.x → téléchargement direct (journalisé). Une
    console injoignable ou figée n'est plus sollicitée pendant 5 minutes ; une console 3.x pendant une heure. Une
@@ -1073,12 +1101,15 @@ officielle. Côté poste (`Online/ConsoleCache`, `Install/Downloader`) :
    sans mettre la console à l'écart. Un transfert interrompu d'un fichier en cache reprend une fois là où il s'était
    arrêté (`Range` + `If-Range`).
 
-Les tests le prouvent : copie altérée (même taille, empreinte différente ; fichier non signé sans empreinte ; fichier
-signé par un autre éditeur que celui de la source) refusée et remplacée par le fichier officiel, catalogue `.cab` non
-signé ou signé par un autre éditeur refusé, XML Lenovo, réponses NVIDIA et liens du Microsoft Update Catalog jamais
-demandés à la console, paquet du Microsoft Update Catalog servi par la console vérifié par le SHA-1 obtenu chez
-Microsoft, descripteur Lenovo ou SoftPaq HP à la commande injectée écarté, redirection vers un domaine non officiel
-refusée par la console, empreinte publiée différente → rien en cache.
+Les tests le prouvent : copie altérée (même taille, empreinte différente) refusée et remplacée par le fichier
+officiel, fichier sans empreinte (même validement signé par l'éditeur attendu) jamais demandé à la console, catalogue
+`.cab` non signé, signé par un autre éditeur, plus ancien que le dernier accepté ou vieux de plus de 30 jours sans
+confirmation de la source refusé, « absent de la source » selon la console redemandé à la source, XML Lenovo, réponses
+NVIDIA, liens et fiches du Microsoft Update Catalog jamais demandés à la console, paquet du Microsoft Update Catalog
+servi par la console vérifié par le SHA-1 obtenu chez Microsoft, titre ou version de la recherche contredits par la
+fiche Microsoft ou par l'INF (ancien pilote présenté sous une version plus récente, fournisseur sans rapport) refusés,
+descripteur Lenovo ou SoftPaq HP à la commande injectée, non ASCII ou au programme non lançable écarté, redirection
+vers un domaine non officiel refusée par la console, empreinte publiée différente → rien en cache.
 
 ### Réglages
 
