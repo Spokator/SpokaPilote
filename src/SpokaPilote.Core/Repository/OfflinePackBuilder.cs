@@ -75,6 +75,13 @@ public static class OfflinePackBuilder
                 try
                 {
                     progress?.Report($"[{index}/{candidates.Count}] {attempt.Title} : téléchargement...");
+                    // Comme à l'installation : titre et version de la recherche confirmés chez Microsoft, puis sur l'INF.
+                    var confirmation = await CatalogPackageCheck.ConfirmEntryAsync(attempt.SourceItemId!, attempt.Title, attempt.Version, ct).ConfigureAwait(false);
+                    if (confirmation.Refusal is { } refusal)
+                    {
+                        Log.Warn($"Pack : {attempt.Title} écarté ({refusal}).");
+                        continue;
+                    }
                     var urls = await MicrosoftCatalogClient.GetDownloadUrlsAsync(attempt.SourceItemId!, ct).ConfigureAwait(false);
                     var url = urls.FirstOrDefault(u => u.EndsWith(".cab", StringComparison.OrdinalIgnoreCase)) ?? urls.FirstOrDefault();
                     if (url is null) continue;
@@ -88,12 +95,18 @@ public static class OfflinePackBuilder
                         Log.Info($"Pack : {attempt.Title} écarté ({verified.Reason}).");
                         continue;
                     }
+                    var (matching, mismatch) = CatalogPackageCheck.CheckInfs(verified.Infs, attempt.Title, attempt.Version, confirmation.Details);
+                    if (matching.Count == 0)
+                    {
+                        Log.Warn($"Pack : {attempt.Title} écarté ({mismatch}).");
+                        continue;
+                    }
 
                     var name = AppPaths.SafeName(targets.FirstOrDefault()?.Name ?? attempt.Title, 50) + "_" + attempt.SourceItemId![..8];
                     var dest = Path.Combine(outputFolder, name);
                     CopyDirectory(temp, dest);
                     packed.Add(new PackedDriver(attempt.Title, attempt.Version, name, targets.Select(t => t.Name).Distinct().ToList(),
-                        verified.Infs.Select(i => Path.GetRelativePath(temp, i)).ToList()));
+                        matching.Select(i => Path.GetRelativePath(temp, i)).ToList()));
                     foreach (var t in targets) covered.Add(t.InstanceId);
                     break;
                 }

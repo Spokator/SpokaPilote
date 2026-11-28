@@ -103,6 +103,8 @@ public static class PrinterDriverResolver
                         Label = $"{e.Title}{(e.Version is null || e.Title.Contains(e.Version) ? "" : $" v{e.Version}")}",
                         CatalogUpdateId = e.UpdateId,
                         CatalogVariantIds = g.Select(x => x.UpdateId).ToList(),
+                        CatalogTitle = e.Title,
+                        CatalogVersion = e.Version,
                         Score = universal ? 150 : 250,
                         IsUniversal = universal,
                     });

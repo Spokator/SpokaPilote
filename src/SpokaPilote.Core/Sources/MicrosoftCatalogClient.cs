@@ -18,6 +18,9 @@ public sealed record CatalogEntry(
     string? Version,
     long? SizeBytes);
 
+/// <summary>Fiche d'une entrée du catalogue lue directement chez Microsoft (voir <see cref="MicrosoftCatalogClient.GetEntryDetailsAsync(string, CancellationToken)"/>).</summary>
+public sealed record CatalogEntryDetails(string UpdateId, string Title, string? Version, string? Provider, string? Manufacturer);
+
 /// <summary>
 /// Client du Microsoft Update Catalog (catalog.update.microsoft.com) : le dépôt public de Microsoft où sont
 /// publiés tous les pilotes distribués par Windows Update (signés WHQL). Recherche par ID matériel ou par modèle.
@@ -232,6 +235,51 @@ public static partial class MicrosoftCatalogClient
         response.EnsureSuccessStatusCode();
         var text = await response.Content.ReadAsStringAsync(cts.Token).ConfigureAwait(false);
         return ParseDownloadDialog(text);
+    }
+
+    /// <summary>
+    /// Fiche d'une entrée (ScopedViewInline.aspx), TOUJOURS demandée directement à Microsoft : titre, version, fournisseur et
+    /// fabricant du pilote. Confirme ce qu'annonçait la page de recherche (qui peut avoir été relayée, donc altérée, par la
+    /// console) avant que ces valeurs ne servent à la politique, aux anneaux et au contrôle de l'INF. null si la fiche est
+    /// injoignable ou illisible.
+    /// </summary>
+    public static Task<CatalogEntryDetails?> GetEntryDetailsAsync(string updateId, CancellationToken ct = default) =>
+        GetEntryDetailsAsync(updateId, Http.Client, ct);
+
+    internal static async Task<CatalogEntryDetails?> GetEntryDetailsAsync(string updateId, HttpClient direct, CancellationToken ct)
+    {
+        if (!UpdateIdRegex().IsMatch(updateId))
+            throw new ArgumentException($"Identifiant d'entrée du catalogue Microsoft invalide : {updateId}", nameof(updateId));
+        try
+        {
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            cts.CancelAfter(TimeSpan.FromSeconds(45));
+            using var response = await direct.GetAsync($"{BaseUrl}/ScopedViewInline.aspx?updateid={updateId}", cts.Token).ConfigureAwait(false);
+            if (!response.IsSuccessStatusCode) return null;
+            return ParseEntryDetails(await response.Content.ReadAsStringAsync(cts.Token).ConfigureAwait(false), updateId);
+        }
+        catch (Exception ex) when (ex is HttpRequestException || (ex is OperationCanceledException && !ct.IsCancellationRequested))
+        {
+            Log.Info($"Catalogue Microsoft : fiche de l'entrée {updateId} injoignable ({ex.Message}).");
+            return null;
+        }
+    }
+
+    [GeneratedRegex(@"<span id=""ScopedViewHandler_(?<key>titleText|version|driverProvider|manufacturer|UpdateID)""[^>]*>(?<value>.*?)</span>",
+        RegexOptions.Singleline | RegexOptions.IgnoreCase)]
+    private static partial Regex DetailFieldRegex();
+
+    /// <summary>Champs de la fiche (« ScopedViewHandler_titleText », « _version », « _driverProvider », « _manufacturer »).</summary>
+    internal static CatalogEntryDetails? ParseEntryDetails(string html, string updateId)
+    {
+        var fields = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (Match m in DetailFieldRegex().Matches(html))
+            fields.TryAdd(m.Groups["key"].Value, Spaces().Replace(WebUtility.HtmlDecode(TagRegex().Replace(m.Groups["value"].Value, " ")), " ").Trim());
+        // Fiche d'une autre entrée que celle demandée : inutilisable.
+        if (fields.TryGetValue("UpdateID", out var id) && !id.Equals(updateId, StringComparison.OrdinalIgnoreCase)) return null;
+        if (!fields.TryGetValue("titleText", out var title) || title.Length == 0) return null;
+        string? Optional(string key) => fields.TryGetValue(key, out var v) && v.Length > 0 && !v.Equals("n/a", StringComparison.OrdinalIgnoreCase) ? v : null;
+        return new CatalogEntryDetails(updateId, title, Optional("version"), Optional("driverProvider"), Optional("manufacturer"));
     }
 
     [GeneratedRegex(@"(?:downloadInformation\[(?<u>\d+)\]\.)?files\[(?<f>\d+)\]\.(?<key>url|digest)\s*=\s*'(?<value>[^']*)'", RegexOptions.IgnoreCase)]

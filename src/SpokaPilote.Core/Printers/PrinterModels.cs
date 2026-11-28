@@ -52,6 +52,9 @@ public sealed class PrinterDriverOption
     /// le précise) : essayées dans l'ordre jusqu'à trouver celle qui convient à ce poste.
     /// </summary>
     public List<string> CatalogVariantIds { get; init; } = new();
+    /// <summary>Titre et version annoncés par la recherche du catalogue (confirmés chez Microsoft et sur l'INF avant installation).</summary>
+    public string? CatalogTitle { get; init; }
+    public string? CatalogVersion { get; init; }
     public string? Url { get; init; }
     public bool IsUniversal { get; init; }
 

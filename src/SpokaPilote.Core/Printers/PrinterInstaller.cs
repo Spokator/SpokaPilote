@@ -143,6 +143,19 @@ public sealed class PrinterInstaller : IDisposable
         {
             var updateId = variants[i];
             progress?.Report(variants.Count > 1 ? $"Variante {i + 1}/{variants.Count} : résolution du lien officiel Microsoft..." : "Résolution du lien officiel Microsoft...");
+            // Titre et version de la recherche (peut-être relayée par la console) confirmés chez Microsoft, puis sur l'INF.
+            CatalogEntryDetails? details = null;
+            if (option.CatalogTitle is { } announced)
+            {
+                var confirmation = await CatalogPackageCheck.ConfirmEntryAsync(updateId, announced, option.CatalogVersion, ct).ConfigureAwait(false);
+                if (confirmation.Refusal is { } refusal)
+                {
+                    Log.Warn($"⚠ Variante {updateId} refusée : {refusal}.");
+                    lastError = $"Entrée du catalogue Microsoft refusée : {refusal}.";
+                    continue;
+                }
+                details = confirmation.Details;
+            }
             var urls = await MicrosoftCatalogClient.GetDownloadUrlsAsync(updateId, ct).ConfigureAwait(false);
             var url = urls.FirstOrDefault();
             if (url is null) { lastError = "Aucun fichier téléchargeable pour ce pilote."; continue; }
@@ -153,6 +166,9 @@ public sealed class PrinterInstaller : IDisposable
             await Archive.ExtractAsync(file, folder, ct).ConfigureAwait(false);
 
             var result = SelectDriver(folder, option, printer);
+            if (result.Inf is not null && option.CatalogTitle is { } title &&
+                CatalogPackageCheck.CheckInfs([result.Inf], title, option.CatalogVersion, details) is { Infs.Count: 0 } check)
+                result = (null, null, $"Paquet refusé : {check.Reason}.");
             if (result.Inf is not null) return result;
             lastError = result.Error;
             Log.Info($"Variante {updateId} écartée : {result.Error}");
