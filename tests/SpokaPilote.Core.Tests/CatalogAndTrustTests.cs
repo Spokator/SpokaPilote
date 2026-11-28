@@ -118,6 +118,12 @@ public class CatalogAndTrustTests
     [InlineData("CN=\"Logitech Europe S.A.\", O=\"Logitech Europe S.A.\", L=Lausanne, C=CH", true)]
     [InlineData("CN=Hewlett-Packard Company, O=Hewlett-Packard Company, L=Palo Alto, S=California, C=US", true)]
     [InlineData("CN=hp inc, O=HP INC, C=US", true)]                                         // casse, ponctuation
+    // Relevés sur des fichiers réels d'un poste (novembre 2026) : utilitaires Realtek, Logitech G HUB, pilotes WHQL.
+    [InlineData("CN=Realtek Semiconductor Corp, OU=Digital ID Class 3 - Microsoft Software Validation v2, O=Realtek Semiconductor Corp, L=Hsinchu, S=Taiwan, C=TW", true)]
+    [InlineData("CN=Realtek Semiconductor Corp., O=Realtek Semiconductor Corp., L=HSINCHU, C=TW, SERIALNUMBER=22671299, OID.2.5.4.15=Private Organization, OID.1.3.6.1.4.1.311.60.2.1.3=TW", true)]
+    [InlineData("CN=Logitech Inc, O=Logitech Inc, L=Newark, S=California, C=US", true)]
+    [InlineData("CN=NVIDIA Corporation, OU=2-J, O=NVIDIA Corporation, L=Santa Clara, S=California, C=US", true)]
+    [InlineData("CN=Microsoft Windows Hardware Compatibility Publisher, OU=MOPR, O=Microsoft Corporation, L=Redmond, S=Washington, C=US", true)]
     // Préfixes, homonymes et contrefaçons : refusés (l'ancienne comparaison « commence par » les acceptait).
     [InlineData("CN=Canonical Ltd., O=Canonical Ltd., L=London, C=GB", false)]
     [InlineData("CN=Dell Inc Malware Unit, O=Dell Inc Malware Unit, C=US", false)]
@@ -135,24 +141,65 @@ public class CatalogAndTrustTests
     [Fact]
     public void Extra_trusted_publishers_match_exactly_and_ignore_blank_entries()
     {
-        var policy = new TrustPolicy(new Settings { ExtraTrustedPublishers = { "", "   ", "Contoso Pilotes SAS", "Fabrikam" } });
+        var policy = new TrustPolicy(new Settings { ExtraTrustedPublishers = { "", "   ", "Contoso Pilotes SAS", "Fabrikam", "Northwind Traders Inc" } });
         Assert.False(policy.IsTrustedPublisher("CN=Random Driver Updater Ltd, O=Random Driver Updater Ltd")); // entrée vide ≠ tout le monde
         Assert.True(policy.IsTrustedPublisher("CN=Contoso Pilotes, O=Contoso Pilotes SAS, C=FR"));
-        Assert.True(policy.IsTrustedPublisher("CN=Fabrikam, O=\"Fabrikam, Inc.\", C=US"));                  // forme juridique
+        Assert.False(policy.IsTrustedPublisher("CN=Contoso Pilotes, O=Contoso Pilotes SARL, C=FR"));       // autre forme juridique
+        Assert.False(policy.IsTrustedPublisher("CN=Fabrikam, O=\"Fabrikam, Inc.\", C=US"));                 // forme juridique : exacte
+        Assert.True(policy.IsTrustedPublisher("CN=Northwind, O=\"Northwind Traders, Inc.\", C=US"));       // ponctuation
+        Assert.True(policy.IsTrustedPublisher("CN=Northwind, O=Northwind Traders Incorporated, C=US"));     // Inc = Incorporated
+        Assert.False(policy.IsTrustedPublisher("CN=Northwind, O=Northwind Traders Ltd, C=US"));
         Assert.False(policy.IsTrustedPublisher("CN=Fabrikam Evil, O=Fabrikamevil Ltd"));
         Assert.True(policy.IsTrustedPublisher("CN=Fabrikam, C=US"));                                       // sans O= : CN
         Assert.False(new TrustPolicy(new Settings { ExtraTrustedHosts = { "", "*." } }).IsTrustedHost(new Uri("https://evil.example/x.exe")));
     }
 
     [Theory]
-    [InlineData("HP Inc.", "hp")]
-    [InlineData("Ricoh Company, Ltd.", "ricoh")]
-    [InlineData("Logitech Europe S.A.", "logitech europe")]
-    [InlineData("Lenovo (Beijing) Limited", "lenovo (beijing)")]
-    [InlineData("Canonical Ltd.", "canonical")]
-    [InlineData("  Dell   Technologies Inc. ", "dell technologies")]
+    [InlineData("HP Inc.", "hp inc")]
+    [InlineData("HP INC", "hp inc")]
+    [InlineData("Ricoh Company, Ltd.", "ricoh co ltd")]
+    [InlineData("RICOH COMPANY LIMITED", "ricoh co ltd")]
+    [InlineData("Logitech Europe S.A.", "logitech europe sa")]
+    [InlineData("Lenovo (Beijing) Limited", "lenovo (beijing) ltd")]
+    [InlineData("Canonical Ltd.", "canonical ltd")]
+    [InlineData("  Dell   Technologies Inc. ", "dell technologies inc")]
+    [InlineData("Synaptics Incorporated", "synaptics inc")]
+    [InlineData("NVIDIA GmbH", "nvidia gmbh")]
     [InlineData("Inc", "inc")]
     public void Publisher_names_are_normalized(string name, string expected) => Assert.Equal(expected, TrustPolicy.NormalizePublisher(name));
+
+    /// <summary>
+    /// Même nom, autre forme juridique : autre société (filiale, homonyme, société créée pour l'occasion), autre
+    /// certificat. L'ancienne normalisation retirait la forme juridique et les confondait.
+    /// </summary>
+    [Theory]
+    [InlineData("CN=Canon Ltd, O=Canon Ltd, C=GB")]
+    [InlineData("CN=NVIDIA GmbH, O=NVIDIA GmbH, C=DE")]
+    [InlineData("CN=HP Co, O=HP Co, C=US")]
+    [InlineData("CN=Intel LLC, O=Intel LLC, C=US")]
+    [InlineData("CN=Dell, O=Dell, C=US")]
+    [InlineData("CN=Realtek Semiconductor Ltd, O=Realtek Semiconductor Ltd, C=HK")]
+    [InlineData("CN=Microsoft Corporation SA, O=Microsoft Corporation SA, C=FR")]
+    public void Same_name_with_another_legal_form_is_another_publisher(string subject)
+    {
+        Assert.False(new TrustPolicy(new Settings()).IsTrustedPublisher(subject));
+        Assert.False(TrustPolicy.SamePublisher(subject, "CN=Canon Inc., O=Canon Inc., C=JP"));
+        Assert.False(TrustPolicy.IsExpectedPublisher(new Uri("https://us.download.nvidia.com/Windows/x.exe"), subject));
+        Assert.False(TrustPolicy.IsExpectedPublisher(new Uri("https://downloads.dell.com/FOLDER1/x.exe"), subject));
+    }
+
+    [Theory]
+    // Variantes d'écriture d'une MÊME forme juridique : acceptées.
+    [InlineData("CN=Dell Inc., O=Dell Inc., C=US")]
+    [InlineData("CN=\"Dell, Inc.\", O=\"Dell, Inc.\", C=US")]
+    [InlineData("CN=Intel Corp., O=Intel Corp., C=US")]
+    [InlineData("CN=Synaptics Inc., O=Synaptics Inc., C=US")]
+    [InlineData("CN=Realtek Semiconductor Corporation, O=Realtek Semiconductor Corporation, C=TW")]
+    [InlineData("CN=Brother Industries Limited, O=Brother Industries Limited, C=JP")]
+    [InlineData("CN=Canon Incorporated, O=Canon Incorporated, C=JP")]
+    [InlineData("CN=Logitech Europe SA, O=Logitech Europe SA, C=CH")]
+    public void Spelling_variants_of_the_same_legal_form_match(string subject) =>
+        Assert.True(new TrustPolicy(new Settings()).IsTrustedPublisher(subject));
 
     [Fact]
     public void Each_official_host_expects_its_own_vendor()
