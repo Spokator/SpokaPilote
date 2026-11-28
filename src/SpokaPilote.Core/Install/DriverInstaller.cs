@@ -254,16 +254,34 @@ public sealed class DriverInstaller
         var targets = devices.Where(d => c.TargetDeviceIds.Contains(d.InstanceId, StringComparer.OrdinalIgnoreCase)).ToList();
         var attempts = new[] { c }.Concat(c.Alternatives.Where(alt => alt.BlockedReason is null)).ToList();
         var reasons = new List<string>();
+        // Toutes les tentatives écartées pour une raison de sécurité (entrée du catalogue contredite) : « bloqué », pas
+        // « échec » (un échec compterait contre la version annoncée dans le disjoncteur des anneaux).
+        var securityRefusals = 0;
 
         foreach (var attempt in attempts)
         {
             string folder;
+            var fromCatalog = false;
+            CatalogEntryDetails? details = null;
             if (attempt.LocalPath is not null)
             {
                 folder = File.Exists(attempt.LocalPath) ? Path.GetDirectoryName(attempt.LocalPath)! : attempt.LocalPath;
             }
             else if (attempt.Source == DriverSourceKind.MicrosoftCatalog && attempt.SourceItemId is not null)
             {
+                fromCatalog = true;
+                // Titre et version viennent de la page de recherche (peut-être relayée par la console) : confirmés
+                // directement chez Microsoft avant d'aller plus loin.
+                progress.Report("Confirmation de l'entrée auprès de Microsoft...");
+                var confirmation = await CatalogPackageCheck.ConfirmEntryAsync(attempt.SourceItemId, attempt.Title, attempt.Version, ct).ConfigureAwait(false);
+                if (confirmation.Refusal is { } refusal)
+                {
+                    Log.Warn($"⚠ Entrée du catalogue Microsoft refusée ({attempt.Title} {attempt.Version}) : {refusal}.");
+                    reasons.Add($"{attempt.Title} : {refusal}");
+                    securityRefusals++;
+                    continue;
+                }
+                details = confirmation.Details;
                 progress.Report("Résolution du lien officiel Microsoft...");
                 var urls = await MicrosoftCatalogClient.GetDownloadUrlsAsync(attempt.SourceItemId, ct).ConfigureAwait(false);
                 var url = urls.FirstOrDefault(u => u.EndsWith(".cab", StringComparison.OrdinalIgnoreCase)) ?? urls.FirstOrDefault();
@@ -299,6 +317,18 @@ public sealed class DriverInstaller
                 reasons.Add($"{attempt.Title} : {why}");
                 continue;
             }
+            if (fromCatalog)
+            {
+                // L'INF signé fait foi : il doit porter la version et l'éditeur annoncés (ceux qu'ont vus la politique et les anneaux).
+                var (matching, mismatch) = CatalogPackageCheck.CheckInfs(infs, attempt.Title, attempt.Version, details);
+                if (matching.Count == 0)
+                {
+                    reasons.Add($"{attempt.Title} : paquet refusé, {mismatch}");
+                    securityRefusals++;
+                    continue;
+                }
+                infs = matching;
+            }
 
             if (options.DryRun)
                 return new InstallOutcome(c, InstallStatus.Skipped, $"Simulation : {infs.Count} INF vérifié(s) ({string.Join(", ", infs.Select(Path.GetFileName))}).");
@@ -328,7 +358,8 @@ public sealed class DriverInstaller
             reasons.Add(string.Join(" ; ", messages));
         }
 
-        return new InstallOutcome(c, InstallStatus.Failed, string.Join(" | ", reasons));
+        var status = securityRefusals > 0 && securityRefusals == reasons.Count ? InstallStatus.Blocked : InstallStatus.Failed;
+        return new InstallOutcome(c, status, string.Join(" | ", reasons));
     }
 
     // ------------------------------------------------------------------ Installeurs constructeurs

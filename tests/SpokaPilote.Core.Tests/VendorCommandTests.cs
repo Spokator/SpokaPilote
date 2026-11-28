@@ -71,12 +71,57 @@ public sealed class VendorCommandTests : IDisposable
     [InlineData(@"\\attaquant\partage\x.exe", "paquet")]
     [InlineData(@"%PACKAGEPATH%\..\..\..\Windows\System32\cmd.exe /c calc", "..")]
     [InlineData(@"%LOGPATH%\x.exe", "paquet")]
+    // Programmes que l'installation refuserait toujours : écartés dès l'analyse (pas d'échec à chaque maintenance).
+    [InlineData(@"%PACKAGEPATH%\x.ps1", "type de programme non autorisé (.ps1)")]
+    [InlineData("\"setup.msi\" /qn", "type de programme non autorisé (.msi)")]
+    [InlineData(@"%PACKAGEPATH%\Install.VBS //B", "type de programme non autorisé (.vbs)")]
+    [InlineData("driver.inf", "type de programme non autorisé (.inf)")]
+    [InlineData("SP12345.zip -s", "type de programme non autorisé (.zip)")]
+    // Unicode : converti « au mieux » dans la page de code d'un installeur ANSI, U+FF02 devient « " » (injection d'arguments).
+    [InlineData("%PACKAGEPATH%\\setup.exe /s /v\uFF02/qn REBOOT=R\uFF02", "non ASCII")]
+    [InlineData("%PACKAGEPATH%\\setup.exe /s \uFF0F\uFF0F x", "non ASCII")]
+    [InlineData("%PACKAGEPATH%\\setup.exe /DIR=C:\\Données", "non ASCII")]
+    [InlineData("%PACKAGEPATH%\\setup\u2215..\u2215cmd.exe", "non ASCII")]
+    [InlineData("%PACKAGEPATH%\\setup.exe \u00A0-s", "non ASCII")]
     public void Injected_or_unexpected_commands_are_refused(string command, string reason)
     {
         var problem = VendorCommand.Validate(command);
         Assert.NotNull(problem);
         Assert.Contains(reason, problem);
         Assert.Throws<SecurityException>(() => VendorCommand.Resolve(command, _file, _package, _package, packageAllowed: true));
+    }
+
+    [Theory]
+    [InlineData("n32ww12w.exe", null)]
+    [InlineData("SP170001.EXE", null)]
+    [InlineData("install.cmd", null)]
+    [InlineData("pack.msi", ".msi")]
+    [InlineData("driver.zip", ".zip")]
+    [InlineData("setup", "sans extension")]
+    public void Downloaded_installer_must_be_a_launchable_type(string fileName, string? refused)
+    {
+        // « %FILE% » = l'installeur téléchargé : son type est connu dès l'analyse (nom du fichier dans le catalogue).
+        var problem = VendorCommand.Validate("\"%FILE%\" /s", fileName);
+        if (refused is null) Assert.Null(problem);
+        else Assert.Contains(refused, problem);
+        Assert.Null(VendorCommand.Validate("\"%FILE%\" /s")); // nom inconnu : contrôlé à l'exécution
+    }
+
+    [Fact]
+    public void Scan_and_install_agree_on_the_program_types()
+    {
+        // Tout ce que l'analyse accepte, l'installation l'accepte (programme présent) : plus de paquet proposé à chaque
+        // analyse puis refusé à chaque maintenance (et compté comme échec par le disjoncteur des anneaux).
+        foreach (var name in new[] { "a.exe", "b.cmd", "c.bat", "d.ps1", "e.msi", "f.vbs", "g.js", "h.com", "i.scr", "j.hta" })
+        {
+            File.WriteAllText(Path.Combine(_package, name), "");
+            var command = $@"%PACKAGEPATH%\{name}";
+            var accepted = VendorCommand.Validate(command) is null;
+            var runs = true;
+            try { VendorCommand.Resolve(command, _file, _package, _package, packageAllowed: true); }
+            catch (SecurityException) { runs = false; }
+            Assert.Equal(runs, accepted);
+        }
     }
 
     [Fact]
@@ -166,6 +211,11 @@ public sealed class VendorCommandTests : IDisposable
             uri, "Networking", LenovoContext()));
         Assert.Null(LenovoSource.ParseDescriptor(LenovoDescriptor("cmd /c n32ul16w.exe", @"%PACKAGEPATH%\setup.exe -s"), uri, "Networking", LenovoContext()));
         Assert.Null(LenovoSource.ParseDescriptor(LenovoDescriptor(extract, "C:\\Windows\\System32\\cmd.exe /c calc"), uri, "Networking", LenovoContext()));
+        // Programme que l'installation refuserait toujours, ou argument Unicode : écarté dès l'analyse.
+        Assert.Null(LenovoSource.ParseDescriptor(LenovoDescriptor(extract, @"%PACKAGEPATH%\setup.msi /qn"), uri, "Networking", LenovoContext()));
+        Assert.Null(LenovoSource.ParseDescriptor(LenovoDescriptor(extract, @"%PACKAGEPATH%\install.ps1"), uri, "Networking", LenovoContext()));
+        Assert.Null(LenovoSource.ParseDescriptor(LenovoDescriptor(extract, "%PACKAGEPATH%\\setup.exe /v\uFF02/qn\uFF02"), uri, "Networking", LenovoContext()));
+        Assert.Null(LenovoSource.ParseDescriptor(LenovoDescriptor("n32ul16w.zip /x", @"%PACKAGEPATH%\setup.exe -s"), uri, "Networking", LenovoContext()));
     }
 
     [Fact]

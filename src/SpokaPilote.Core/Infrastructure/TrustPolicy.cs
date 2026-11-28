@@ -12,9 +12,9 @@ public sealed class TrustPolicy
 
     /// <summary>
     /// Éditeurs approuvés : organisation (O=) du certificat de signature, ou son CN= s'il n'a pas d'O=. La comparaison est
-    /// EXACTE après normalisation (<see cref="NormalizePublisher"/> : casse, ponctuation, forme juridique finale « Inc. »,
-    /// « Corp. », « Ltd. »...) : « Canon Inc. » est approuvé, « Canonical Ltd. » ne l'est pas. Noms relevés sur les
-    /// certificats réels des éditeurs.
+    /// EXACTE après normalisation (<see cref="NormalizePublisher"/> : casse, ponctuation, espaces, « Inc » = « Incorporated »,
+    /// « Corp » = « Corporation », « Ltd » = « Limited », « Co » = « Company ») ; la forme juridique compte : « Canon Inc. »
+    /// est approuvé, ni « Canon Ltd » ni « Canonical Ltd. » ne le sont. Noms relevés sur les certificats réels des éditeurs.
     /// </summary>
     public static readonly string[] BuiltInPublishers =
     {
@@ -170,39 +170,36 @@ public sealed class TrustPolicy
         return string.IsNullOrWhiteSpace(name) ? null : name;
     }
 
-    /// <summary>Formes juridiques retirées en fin de nom (« Dell Inc » = « Dell Inc. » = « Dell, Inc. »).</summary>
-    private static readonly HashSet<string> LegalForms = new(StringComparer.Ordinal)
+    /// <summary>
+    /// Formes juridiques écrites de deux façons : abrégée et complète désignent la même société (« Synaptics Inc. » =
+    /// « Synaptics Incorporated »). Toute autre forme (GmbH, S.A., LLC...) reste telle quelle.
+    /// </summary>
+    private static readonly Dictionary<string, string> LegalFormSpellings = new(StringComparer.Ordinal)
     {
-        "inc", "incorporated", "corp", "corporation", "co", "company", "ltd", "limited", "llc", "gmbh", "ag", "sa", "bv", "nv",
-        "plc", "kk", "sarl", "sas", "spa", "srl", "ab", "oy", "pte", "pty",
+        ["incorporated"] = "inc",
+        ["corporation"] = "corp",
+        ["limited"] = "ltd",
+        ["company"] = "co",
     };
 
     /// <summary>
-    /// Nom d'éditeur normalisé pour la comparaison : forme de compatibilité Unicode, minuscules, points, virgules et
-    /// guillemets remplacés par des espaces, espaces fusionnés, formes juridiques finales retirées (« HP Inc. » → « hp »,
-    /// « Ricoh Company, Ltd. » → « ricoh », « Logitech Europe S.A. » → « logitech europe »). Le nom lui-même n'est jamais
-    /// tronqué : « canonical » reste différent de « canon ».
+    /// Nom d'éditeur normalisé pour la comparaison : forme de compatibilité Unicode, minuscules, points retirés (« Inc. » =
+    /// « Inc », « S.A. » = « SA »), virgules, points-virgules et guillemets remplacés par des espaces, espaces fusionnés,
+    /// formes juridiques complètes ramenées à leur abréviation (Incorporated → inc, Corporation → corp, Limited → ltd,
+    /// Company → co). La forme juridique est GARDÉE : « Canon Ltd » n'est pas « Canon Inc. », « NVIDIA GmbH » n'est pas
+    /// « NVIDIA Corporation », « HP Co » n'est pas « HP Inc. » (sociétés distinctes, certificats distincts) ; et le nom
+    /// lui-même n'est jamais tronqué : « canonical » reste différent de « canon ».
     /// </summary>
     internal static string NormalizePublisher(string name)
     {
-        var chars = name.Normalize(System.Text.NormalizationForm.FormKC).ToLowerInvariant()
-            .Select(c => c is '.' or ',' or ';' or '"' || char.IsWhiteSpace(c) || char.IsControl(c) ? ' ' : c).ToArray();
-        var tokens = new string(chars).Split(' ', StringSplitOptions.RemoveEmptyEntries).ToList();
-        while (tokens.Count > 1)
+        var text = new System.Text.StringBuilder(name.Length);
+        foreach (var c in name.Normalize(System.Text.NormalizationForm.FormKC).ToLowerInvariant())
         {
-            if (LegalForms.Contains(tokens[^1]))
-            {
-                tokens.RemoveAt(tokens.Count - 1);
-                continue;
-            }
-            // « S.A. », « K.K. » : lettres isolées une fois les points retirés.
-            if (tokens.Count > 2 && tokens[^1].Length == 1 && tokens[^2].Length == 1 && LegalForms.Contains(tokens[^2] + tokens[^1]))
-            {
-                tokens.RemoveRange(tokens.Count - 2, 2);
-                continue;
-            }
-            break;
+            if (c == '.') continue;
+            text.Append(c is ',' or ';' or '"' || char.IsWhiteSpace(c) || char.IsControl(c) ? ' ' : c);
         }
+        var tokens = text.ToString().Split(' ', StringSplitOptions.RemoveEmptyEntries)
+            .Select(t => LegalFormSpellings.GetValueOrDefault(t, t));
         return string.Join(' ', tokens);
     }
 

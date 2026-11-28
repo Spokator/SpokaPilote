@@ -137,7 +137,8 @@ public sealed class HpSource : IDriverSource
             if (string.IsNullOrWhiteSpace(candidate.SilentCommand)) continue;
             // Ligne de commande exécutée en SYSTEM : même contrôle de forme que pour Lenovo (référence HP signée, mais
             // défense en profondeur) ; un SoftPaq à la commande inattendue est écarté.
-            if (VendorCommand.Validate(candidate.SilentCommand) is { } problem)
+            if ((VendorCommand.Validate(candidate.ExtractCommand, Path.GetFileName(new Uri(candidate.DownloadUrl).AbsolutePath)) ??
+                 VendorCommand.Validate(candidate.SilentCommand)) is { } problem)
             {
                 Log.Warn($"SoftPaq HP écarté ({id}) : commande refusée ({problem}) : {candidate.SilentCommand}");
                 continue;

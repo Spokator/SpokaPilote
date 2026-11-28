@@ -104,6 +104,12 @@ public sealed class DellSource : IDriverSource
                 InfoUrl = $"https://www.dell.com/support/home/drivers/driversdetails?driverid={el.Attribute("releaseID")?.Value}",
                 Kind = type is "BIOS" or "FRMW" ? CandidateKind.Firmware : CandidateKind.Update,
             };
+            // Le DUP est lancé tel quel : un fichier que l'installation refuserait toujours (.msi, .zip...) est écarté ici.
+            if (VendorCommand.Validate(candidate.SilentCommand, Path.GetFileName(path)) is { } problem)
+            {
+                Log.Warn($"Paquet Dell écarté ({path}) : commande refusée ({problem}).");
+                continue;
+            }
 
             var pciInfos = el.Element("SupportedDevices")?.Descendants("PCIInfo").ToList() ?? new();
             if (pciInfos.Count > 0)

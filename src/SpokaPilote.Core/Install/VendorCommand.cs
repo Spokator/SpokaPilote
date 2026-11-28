@@ -9,7 +9,8 @@ public sealed record VendorInvocation(string FileName, string Arguments);
 /// Lignes de commande des installeurs constructeurs. Elles viennent de métadonnées (catalogues Dell, HP, descripteurs
 /// Lenovo) et sont exécutées en SYSTEM : elles ne sont jamais confiées telles quelles à un interpréteur.
 /// <list type="bullet">
-/// <item>modèle : ni enchaînement, ni redirection, ni variable d'environnement (<c>&amp; | &lt; &gt; ^ !</c>, caractère de
+/// <item>modèle : ASCII imprimable seulement (pas de conversion « best fit » vers la page de code d'un installeur ANSI),
+///   ni enchaînement, ni redirection, ni variable d'environnement (<c>&amp; | &lt; &gt; ^ !</c>, caractère de
 ///   contrôle, retour à la ligne, <c>%</c> hors des emplacements <c>%FILE%</c>, <c>%PACKAGEPATH%</c>, <c>%LOGPATH%</c>),
 ///   guillemets appariés ;</item>
 /// <item>programme : l'installeur téléchargé et vérifié (<c>%FILE%</c>, ou son nom) ou un fichier extrait du paquet
@@ -44,15 +45,24 @@ public static class VendorCommand
         "certutil", "bitsadmin", "wmic", "schtasks", "reg", "net", "sc", "bash", "wsl", "curl", "explorer",
     ];
 
-    /// <summary>Motif du refus de ce modèle de commande, ou null s'il est acceptable.</summary>
-    public static string? Validate(string? template)
+    /// <summary>
+    /// Motif du refus de ce modèle de commande, ou null s'il est acceptable. Mêmes règles qu'à l'exécution
+    /// (<see cref="Resolve"/>) pour tout ce qui se décide sans le paquet : un paquet que l'installation refuserait
+    /// toujours (programme .msi, .ps1, .vbs...) est écarté dès l'analyse. <paramref name="installerFileName"/> = nom de
+    /// l'installeur téléchargé (<c>%FILE%</c>), pour contrôler aussi son type quand la commande le lance.
+    /// </summary>
+    public static string? Validate(string? template, string? installerFileName = null)
     {
         if (string.IsNullOrWhiteSpace(template)) return "commande vide";
         if (template.Length > MaxLength) return "commande trop longue";
+        // ASCII imprimable seulement : un caractère Unicode (guillemet pleine chasse U+FF02...) peut devenir un « " » ou
+        // un « \ » une fois converti dans la page de code ANSI d'un installeur (conversion « best fit ») et injecter des
+        // arguments que ce contrôle n'a pas vus.
+        if (NonAsciiCharacter(template) is { } u) return $"caractère non ASCII interdit {u}";
         if (UnsafeCharacter(StripPlaceholders(template)) is { } c) return $"caractère interdit {c}";
         if (template.Count(ch => ch == '"') % 2 != 0) return "guillemets non appariés";
         var (program, _) = Split(template);
-        return ValidateProgram(program);
+        return ValidateProgram(program, installerFileName);
     }
 
     /// <summary>
@@ -97,11 +107,17 @@ public static class VendorCommand
     private static SecurityException Refused(string program, string why) =>
         new($"Commande d'installation refusée : « {program} » ({why}).");
 
-    private static string? ValidateProgram(string program)
+    private static string? ValidateProgram(string program, string? installerFileName)
     {
         if (program.Length == 0) return "aucun programme";
         if (program.Contains('"')) return "programme mal délimité";
-        if (program.Equals(FilePlaceholder, StringComparison.OrdinalIgnoreCase)) return null;
+        if (program.Equals(FilePlaceholder, StringComparison.OrdinalIgnoreCase))
+        {
+            // L'installeur téléchargé lui-même : son nom est connu dès l'analyse, son type doit être lançable.
+            if (installerFileName is null) return null;
+            var ext = Path.GetExtension(installerFileName);
+            return ProgramExtensions.Contains(ext, StringComparer.OrdinalIgnoreCase) ? null : $"type de programme non autorisé ({Describe(ext)})";
+        }
         var relative = program.StartsWith(PackagePlaceholder + "\\", StringComparison.OrdinalIgnoreCase)
             ? program[(PackagePlaceholder.Length + 1)..]
             : program;
@@ -111,6 +127,24 @@ public static class VendorCommand
             return "chemin relatif interdit (..)";
         if (relative == program && SystemPrograms.Contains(Path.GetFileNameWithoutExtension(relative), StringComparer.OrdinalIgnoreCase))
             return $"programme du système interdit ({relative})";
+        // Extension explicite : .exe, .cmd ou .bat, comme à l'exécution (sans extension : .exe/.cmd/.bat du paquet,
+        // résolu à l'installation).
+        var extension = Path.GetExtension(relative);
+        if (extension.Length > 0 && !ProgramExtensions.Contains(extension, StringComparer.OrdinalIgnoreCase))
+            return $"type de programme non autorisé ({Describe(extension)})";
+        return null;
+    }
+
+    private static string Describe(string extension) => extension.Length == 0 ? "sans extension" : extension.ToLowerInvariant();
+
+    /// <summary>
+    /// Premier caractère au-delà de l'ASCII imprimable (après U+007E), ou null ; les caractères de contrôle sont refusés
+    /// par <see cref="UnsafeCharacter"/>.
+    /// </summary>
+    private static string? NonAsciiCharacter(string text)
+    {
+        foreach (var c in text)
+            if (c > '~') return $"(U+{(int)c:X4})";
         return null;
     }
 
