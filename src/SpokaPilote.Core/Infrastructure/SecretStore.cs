@@ -75,6 +75,17 @@ public static class SecretStore
         }
     }
 
+    /// <summary>
+    /// Jeton contenu dans ce fichier (server-token.dat mis en quarantaine, déjà lu en mémoire). Null si le format est
+    /// inconnu ou le jeton vide ; Win32Exception s'il est indéchiffrable sur ce poste.
+    /// </summary>
+    internal static string? Decode(byte[] data)
+    {
+        if (data.Length <= Magic.Length || !data.AsSpan(0, Magic.Length).SequenceEqual(Magic)) return null;
+        var token = Encoding.UTF8.GetString(Unprotect(data[Magic.Length..]));
+        return string.IsNullOrWhiteSpace(token) ? null : token;
+    }
+
     /// <summary>Jeton indéchiffrable sur ce poste : erreur claire, fichier supprimé (le poste fonctionne sans console).</summary>
     private static void DiscardUnreadable(string path, string reason)
     {

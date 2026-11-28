@@ -49,9 +49,11 @@ internal interface IFileSecurity
 /// <item>dossiers privés (<see cref="DataRootProtector.PrivateFolders"/> : Cache, Work, Mount, Quarantaine...) et jeton de la
 /// console (<see cref="SecretStore.TokenFileName"/>) : SYSTEM et Administrateurs seulement ;</item>
 /// <item>aucun « CREATOR OWNER », aucune écriture des utilisateurs nulle part ;</item>
-/// <item>tout élément qui n'appartient ni à SYSTEM, ni aux Administrateurs, ni à TrustedInstaller est repris puis supprimé
-/// (données régénérables) ou mis en quarantaine (configuration, historique, sauvegardes) ; les liens (jonctions, liens
-/// symboliques) sont supprimés sans être suivis.</item>
+/// <item>tout élément qui n'appartient ni à SYSTEM, ni aux Administrateurs, ni à TrustedInstaller, ni à un compte membre
+/// du groupe local Administrateurs (<see cref="IsTrustedOwner"/>) est repris puis supprimé (données régénérables) ou mis en
+/// quarantaine (configuration, historique, sauvegardes) ; un élément d'un compte administrateur est conservé et repris
+/// (propriétaire Administrateurs) ; les liens (jonctions, liens symboliques) sont supprimés sans être suivis ;</item>
+/// <item>configuration mise en quarantaine (settings.json, jeton) : jamais perdue en silence, voir <see cref="ConfigQuarantine"/>.</item>
 /// </list>
 /// Rien n'est fait en mode portable (clé FAT32/exFAT sans ACL : la clé du technicien est réputée de confiance) ni par
 /// un processus non élevé (qui écrit alors dans %LocalAppData%\SpokaPilote, voir <see cref="AppLayout.UserRoot"/>). Un
@@ -131,8 +133,26 @@ public static class DataProtection
 
     internal static IFileSecurity Security { get; set; } = WindowsFileSecurity.Instance;
 
+    /// <summary>
+    /// Propriétaire de confiance pour les exécutions élevées : SYSTEM, le groupe Administrateurs, TrustedInstaller, ou un
+    /// compte membre du groupe local Administrateurs (<see cref="AdministratorOwners"/> : membre direct, administrateur
+    /// élevé courant, membre par un groupe de domaine imbriqué). Jamais Utilisateurs, Utilisateurs authentifiés, Tout le
+    /// monde, INTERACTIF, CREATOR OWNER ni un compte qui n'est pas administrateur.
+    /// </summary>
     public static bool IsTrustedOwner(SecurityIdentifier? sid) =>
+        sid is not null && (IsBuiltInTrustedOwner(sid) || AdministratorOwners.IsAdministrator(sid));
+
+    /// <summary>SYSTEM, Administrateurs ou TrustedInstaller : propriétaire attendu, rétabli sur ce que SpokaPilote écrit.</summary>
+    public static bool IsBuiltInTrustedOwner(SecurityIdentifier? sid) =>
         sid is not null && (sid == SystemSid || sid == AdministratorsSid || sid == TrustedInstallerSid);
+
+    /// <summary>Tests : faux annuaire des membres du groupe Administrateurs (null = API Windows).</summary>
+    internal static IDisposable OverrideMembershipForTest(IAdministratorsMembership? membership)
+    {
+        var previous = AdministratorOwners.Membership;
+        AdministratorOwners.Membership = membership ?? WindowsAdministratorsMembership.Instance;
+        return new Restore(() => AdministratorOwners.Membership = previous);
+    }
 
     /// <summary>
     /// Démarrage de la CLI et de l'interface. Élevé (hors portable) : protège le dossier de données (contrôle rapide, reprise
@@ -158,9 +178,16 @@ public static class DataProtection
             }
             var report = Protect(layout.Root, forceFullPass);
             if (report is null) return null;
+            // Configuration mise en quarantaine (ici ou par la version 4.0.1) : marqueur affiché par la CLI et l'interface,
+            // restauration automatique quand son propriétaire est un administrateur reconnu.
+            ConfigQuarantine.AfterProtection(report, DateTime.Now);
             Settings.MigrateLegacyToken();
+            // settings.json écrit par le compte d'un administrateur : propriétaire Administrateurs, pour que les tâches
+            // SYSTEM s'y fient sans dépendre de l'annuaire (domaine injoignable).
+            if (File.Exists(AppPaths.SettingsFile) && IsWrittenByAdministrators(AppPaths.SettingsFile)) ClaimOwnership(AppPaths.SettingsFile);
             WorkDirectory.CleanupLeftovers();
             Install.SystemProtection.PruneBackupsAtStartup();
+            ConfigQuarantine.Prune(DateTime.Now);
             return report;
         }
         catch (Exception ex)
@@ -186,7 +213,11 @@ public static class DataProtection
         }
         var report = new DataRootProtector(Security).Ensure(root, DateTime.Now, forceFullPass);
         if (report.FullPass) Log.Write(report.Quarantined.Count + report.Deleted.Count + report.LinksRemoved.Count + report.Errors.Count > 0 ? LogLevel.Warning : LogLevel.Info, report.Summary(root));
-        foreach (var q in report.Quarantined) Log.Warn($"Élément non créé par un administrateur mis en quarantaine (ignoré) : {q}");
+        foreach (var q in report.Quarantined)
+        {
+            if (report.QuarantinedConfig.Any(c => q.StartsWith(c.Name + " ", StringComparison.OrdinalIgnoreCase))) continue; // erreur dédiée (ConfigQuarantine)
+            Log.Warn($"Élément non créé par un administrateur mis en quarantaine (ignoré) : {q}");
+        }
         foreach (var e in report.Errors) Log.Warn($"Protection du dossier de données : {e}");
         return report;
     }
@@ -218,7 +249,7 @@ public static class DataProtection
 
     /// <summary>
     /// Un processus élevé peut-il se fier à cet élément du dossier de données ? Oui si l'élément ET chaque dossier qui le
-    /// contient, depuis la racine du dossier de données, appartiennent à SYSTEM, aux Administrateurs ou à TrustedInstaller
+    /// contient, depuis la racine du dossier de données, appartiennent à un propriétaire de confiance (<see cref="IsTrustedOwner"/>)
     /// et ne sont pas des liens (jonction créée dans Cache par un descripteur ouvert avant la protection, par exemple). Hors
     /// du dossier de données (dépôt réseau...), seul l'élément lui-même est contrôlé. Toujours oui quand les contrôles sont
     /// inactifs.
@@ -290,7 +321,7 @@ public static class DataProtection
         try
         {
             var isDir = Directory.Exists(path);
-            if (!IsTrustedOwner(Security.GetOwner(path, isDir))) Security.SetOwner(path, isDir, AdministratorsSid);
+            if (!IsBuiltInTrustedOwner(Security.GetOwner(path, isDir))) Security.SetOwner(path, isDir, AdministratorsSid);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
         {
@@ -487,6 +518,10 @@ public sealed class ProtectionReport
     public List<string> Renewed { get; } = new();
     public List<string> Errors { get; } = new();
     public string? QuarantineFolder { get; set; }
+    /// <summary>settings.json ou jeton mis en quarantaine (premier niveau) : signalés par <see cref="ConfigQuarantine"/>.</summary>
+    public List<QuarantinedConfig> QuarantinedConfig { get; } = new();
+    /// <summary>Éléments d'un compte administrateur (PC\Pierre...) conservés, propriétaire ramené au groupe Administrateurs.</summary>
+    public int Adopted { get; set; }
     /// <summary>
     /// Reprise inachevée (dossier régénérable impossible à renouveler, ancien dossier impossible à supprimer : élément encore
     /// ouvert par un autre processus) : le témoin n'est pas écrit, la reprise complète recommence au prochain démarrage élevé.
@@ -500,6 +535,7 @@ public sealed class ProtectionReport
         : $"Dossier de données protégé : {root} ({Checked} élément(s) contrôlé(s), {Reset} droit(s) rétabli(s), " +
           $"{Deleted.Count} supprimé(s), {Quarantined.Count} mis en quarantaine, {LinksRemoved.Count} lien(s) retiré(s), " +
           $"{Renewed.Count} dossier(s) renouvelé(s)" +
+          (Adopted > 0 ? $", {Adopted} élément(s) d'un compte administrateur conservé(s)" : "") +
           (Errors.Count > 0 ? $", {Errors.Count} erreur(s)" : "") +
           (Incomplete ? " ; reprise à terminer au prochain démarrage élevé" : "") + ").";
 }
@@ -533,6 +569,7 @@ internal sealed class DataRootProtector(IFileSecurity security)
         "settings.json", MarkerFileName, "Logs", "History", "Cache", "Backups", "Reports", WorkDirectory.FolderName, "Downloads", "Extracted",
         MountFolderName, QuarantineFolderName, "Mises-a-jour", SecretStore.TokenFileName, AppPaths.PolicyCacheFileName,
         AppPaths.RolloutDecisionsCacheFileName, "deploiement.json", "ui.json", "maintenance-task.xml", "agent-task.xml", "Postes",
+        ConfigQuarantine.MarkerFileName,
     ];
 
     internal static bool IsKnownRootEntry(string name) =>
@@ -574,7 +611,7 @@ internal sealed class DataRootProtector(IFileSecurity security)
         // 1. Racine : dès que sa DACL est protégée, l'héritage retire aux utilisateurs l'écriture dans toute l'arborescence
         //    (la propagation ne suit pas les jonctions). Restent les éléments qu'ils possèdent (étape 3) et les descripteurs
         //    qu'ils ont ouverts avant (étape 2).
-        if (!DataProtection.IsTrustedOwner(security.GetOwner(_root, true))) security.SetOwner(_root, true, DataProtection.AdministratorsSid);
+        if (!DataProtection.IsBuiltInTrustedOwner(security.GetOwner(_root, true))) security.SetOwner(_root, true, DataProtection.AdministratorsSid);
         security.SetProtectedDacl(_root, true, DataProtection.RootRules);
         // 2. Dossiers régénérables remplacés par des dossiers neufs : un descripteur ouvert avant la protection (qui garde
         //    les droits accordés à son ouverture) ne désigne plus que l'ancien dossier, aussitôt supprimé.
@@ -594,7 +631,7 @@ internal sealed class DataRootProtector(IFileSecurity security)
         if (File.Exists(marker)) File.Delete(marker);
         if (_report.Incomplete) return _report;
         File.WriteAllText(marker, MarkerContent);
-        if (!DataProtection.IsTrustedOwner(security.GetOwner(marker, false))) security.SetOwner(marker, false, DataProtection.AdministratorsSid);
+        if (!DataProtection.IsBuiltInTrustedOwner(security.GetOwner(marker, false))) security.SetOwner(marker, false, DataProtection.AdministratorsSid);
         return _report;
     }
 
@@ -643,7 +680,7 @@ internal sealed class DataRootProtector(IFileSecurity security)
             if (!Directory.Exists(path) || (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0) return false; // lien : retiré par Walk
             if (!Directory.EnumerateFileSystemEntries(path).Any()) return true;
             _report.MountInUse = true;
-            if (!DataProtection.IsTrustedOwner(security.GetOwner(path, true))) security.SetOwner(path, true, DataProtection.AdministratorsSid);
+            if (!DataProtection.IsBuiltInTrustedOwner(security.GetOwner(path, true))) security.SetOwner(path, true, DataProtection.AdministratorsSid);
             if (!Matches(security.GetDacl(path, true), DataProtection.PrivateRules, isDirectory: true))
             {
                 security.SetOwnDaclOnly(path, true, DataProtection.PrivateRules);
@@ -748,7 +785,8 @@ internal sealed class DataRootProtector(IFileSecurity security)
                     continue;
                 }
 
-                if (!DataProtection.IsTrustedOwner(security.GetOwner(path, isDir)))
+                var owner = security.GetOwner(path, isDir);
+                if (!DataProtection.IsTrustedOwner(owner))
                 {
                     // Reprise au mieux : même si elle échoue, un fichier reste supprimable ou déplaçable (contrôle total
                     // des administrateurs sur le dossier parent), et tout usage élevé le refuse (IsTrustedForElevatedUse).
@@ -760,16 +798,23 @@ internal sealed class DataRootProtector(IFileSecurity security)
                     if (!isDir)
                     {
                         if (IsRegenerable(top)) { File.Delete(path); _report.Deleted.Add(Relative(path)); }
-                        else Quarantine(path);
+                        else Quarantine(path, owner, depth);
                         continue;
                     }
                     // Dossier repris (propriétaire, droits) : son contenu est ensuite jugé élément par élément, car un
                     // dossier créé par l'interface non élevée d'une version antérieure contient souvent des fichiers légitimes.
                 }
-                else if (!HasExpectedDacl(path, isDir, name, depth))
+                else
                 {
-                    ApplyExpectedDacl(path, isDir, name, depth);
-                    _report.Reset++;
+                    // Élément d'un compte administrateur (UAC sans invite, stratégie « créateur de l'objet », fichier copié
+                    // par un technicien) : conservé ; propriétaire ramené au groupe Administrateurs (au mieux), pour que
+                    // les tâches SYSTEM s'y fient sans interroger l'annuaire.
+                    if (!DataProtection.IsBuiltInTrustedOwner(owner)) Adopt(path, isDir);
+                    if (!HasExpectedDacl(path, isDir, name, depth))
+                    {
+                        ApplyExpectedDacl(path, isDir, name, depth);
+                        _report.Reset++;
+                    }
                 }
 
                 if (isDir) Walk(path, depth + 1, top);
@@ -790,7 +835,20 @@ internal sealed class DataRootProtector(IFileSecurity security)
         _report.Reset++;
     }
 
-    private void Quarantine(string path)
+    private void Adopt(string path, bool isDir)
+    {
+        try
+        {
+            security.SetOwner(path, isDir, DataProtection.AdministratorsSid);
+            _report.Adopted++;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException or PrivilegeNotHeldException)
+        {
+            Log.Debug($"Propriétaire de {Relative(path)} (compte administrateur) conservé : {ex.Message}");
+        }
+    }
+
+    private void Quarantine(string path, SecurityIdentifier? originalOwner, int depth)
     {
         var folder = Path.Combine(_root, QuarantineFolderName, _now.ToString("yyyyMMdd-HHmmss"));
         if (!Directory.Exists(Path.Combine(_root, QuarantineFolderName)))
@@ -804,6 +862,9 @@ internal sealed class DataRootProtector(IFileSecurity security)
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException) { _report.Errors.Add($"{target} : {ex.Message}"); }
         _report.QuarantineFolder = folder;
         _report.Quarantined.Add($"{Relative(path)} → {target}");
+        var name = Path.GetFileName(path);
+        if (depth == 0 && ConfigQuarantine.IsConfigFile(name))
+            _report.QuarantinedConfig.Add(new QuarantinedConfig(name, Relative(target), originalOwner?.Value, _now));
     }
 
     private bool HasExpectedDacl(string path, bool isDir, string name, int depth)
@@ -924,7 +985,7 @@ internal sealed class WindowsFileSecurity : IFileSecurity
         if (parent is not null && !Directory.Exists(parent)) Directory.CreateDirectory(parent);
         new DirectoryInfo(path).Create((DirectorySecurity)Build(isDirectory: true, rules));
         // Propriétaire par défaut : SYSTEM, ou Administrateurs pour un compte élevé (sauf stratégie « créateur de l'objet »).
-        if (!DataProtection.IsTrustedOwner(GetOwner(path, true)))
+        if (!DataProtection.IsBuiltInTrustedOwner(GetOwner(path, true)))
         {
             try { SetOwner(path, true, DataProtection.AdministratorsSid); }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException) { Log.Debug($"Propriétaire de {path} non modifié : {ex.Message}"); }

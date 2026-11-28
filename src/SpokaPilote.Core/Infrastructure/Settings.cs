@@ -111,9 +111,18 @@ public sealed class Settings
         PropertyNameCaseInsensitive = true,
     };
 
-    public static Settings Load()
+    public static Settings Load() => WithToken(LoadFile(AppPaths.SettingsFile) ?? new Settings());
+
+    /// <summary>
+    /// Configuration lue dans ce texte (settings.json mis en quarantaine, restauré par <see cref="ConfigQuarantine"/>) : un
+    /// jeton en clair est déplacé vers <see cref="SecretStore"/> au prochain <see cref="Save"/> ; sans jeton, celui déjà
+    /// enregistré est conservé. JsonException si le texte n'est pas une configuration.
+    /// </summary>
+    internal static Settings FromJson(string json) =>
+        WithToken(JsonSerializer.Deserialize<Settings>(json, JsonOptions) ?? throw new JsonException("Configuration vide."));
+
+    private static Settings WithToken(Settings settings)
     {
-        var settings = LoadFile(AppPaths.SettingsFile) ?? new Settings();
         if (SecretStore.UsesTokenFile)
         {
             if (string.IsNullOrWhiteSpace(settings.ServerToken)) settings.ServerToken = SecretStore.ReadToken();
@@ -132,7 +141,7 @@ public sealed class Settings
             // utilisateur avec ses propres éditeurs approuvés ou sa console) n'est jamais pris en compte.
             if (!DataProtection.IsTrustedForElevatedUse(path))
             {
-                Log.Warn($"Configuration ignorée : {path} n'appartient ni à SYSTEM ni aux Administrateurs. Valeurs par défaut utilisées ; " +
+                Log.Warn($"Configuration ignorée : {path} n'a été écrit ni par SYSTEM ni par un administrateur. Valeurs par défaut utilisées ; " +
                          "redéployez le fichier depuis un compte administrateur.");
                 return null;
             }
