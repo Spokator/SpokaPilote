@@ -405,14 +405,38 @@ rapide ; reprise complète si les droits ont été modifiés) :
   puis supprimé (cache, téléchargements) ou déplacé dans `Quarantaine\<date>` (configuration, historique, sauvegardes,
   journaux) — jamais utilisé. Les jonctions et liens symboliques sont retirés sans être suivis. Avant tout usage, une
   exécution élevée refuse un `settings.json`, une entrée d'historique, une sauvegarde ou un fichier en cache qui
-  n'appartient pas aux administrateurs, et un fichier en cache daté dans le futur est périmé.
+  n'appartient pas aux administrateurs — ou dont **un des dossiers**, depuis `%ProgramData%\SpokaPilote`, est un lien
+  ou appartient à un autre compte (jonction `Cache\catalog` créée plus tard) —, et un fichier en cache daté dans le
+  futur est périmé.
+- **Descripteurs ouverts avant la protection** : un fichier ou dossier ouvert par un utilisateur sous la 4.0.0 garde
+  les droits obtenus à son ouverture. À chaque reprise complète, `Cache`, `Work` (et les anciens `Downloads`,
+  `Extracted`) sont donc renommés, supprimés sans suivre les liens et recréés neufs : un tel descripteur ne désigne plus
+  qu'un dossier supprimé. Si un fichier y est encore ouvert, le renommage échoue : c'est écrit dans le journal, le
+  contenu est contrôlé élément par élément, et la reprise complète recommence au démarrage élevé suivant.
+- **Images montées (`Mount`)** : rien sous `Mount` n'est jamais contrôlé, repris, réinitialisé ni supprimé (une image
+  montée par DISM serait endommagée) ; seuls les droits du dossier `Mount` lui-même sont posés, sans propagation. Il
+  n'est renouvelé que s'il est vide.
+- **`SPOKAPILOTE_HOME` sur FAT32 / exFAT ou partage réseau** : pas de propriétaires ni d'ACL fiables ; l'emplacement est
+  traité comme une clé portable (rien n'y est modifié ni mis en quarantaine, jeton dans `settings.json`), avec un
+  avertissement à chaque démarrage élevé. Un dossier existant n'est protégé que s'il est vide, déjà protégé, ou ne
+  contient que des éléments de SpokaPilote dont `settings.json` : un dossier de l'utilisateur qui contient par hasard
+  `Logs` ou `Reports` n'est jamais repris.
 - **Jeton de la console** : hors de `settings.json`, dans `server-token.dat` (DPAPI « machine » + droits réservés aux
   administrateurs). Un `serverToken` en clair dans `settings.json` (4.0.0, fichier déployé par GPO / Intune, kit
-  `deploy\Install-SpokaPilote.ps1`) est déplacé et retiré du fichier **à chaque démarrage élevé**. Le jeton n'est jamais
-  affiché (`spokapilote config` : « (défini, …) » ; Paramètres : champ masqué).
+  `deploy\Install-SpokaPilote.ps1` antérieur) est déplacé et retiré du fichier **à chaque démarrage élevé** ; le kit
+  4.0.1 et `spokapilote config set ServerToken -` (jeton lu sur l'entrée standard, absent de la ligne de commande)
+  l'enregistrent directement, sans jamais l'écrire dans `settings.json`. C'est la DACL qui le protège des
+  utilisateurs du poste (DPAPI « machine » est déchiffrable par tout compte local) ; une copie du fichier seul est
+  inexploitable, pas une image disque complète. Un jeton indéchiffrable (poste cloné depuis une image qui le
+  contenait) est signalé dans le journal, supprimé, et le poste continue sans console jusqu'au redéploiement. Le jeton
+  n'est jamais affiché (`spokapilote config` : « (défini, …) » ; Paramètres : champ masqué) ; le désinstalleur le
+  supprime toujours.
 - **Interface ou console non élevée** : elle lit la configuration commune mais écrit ses journaux, rapports, cache et
   dossiers de travail dans `%LocalAppData%\SpokaPilote` ; elle ne lit pas le jeton (l'envoi à la console est fait par
-  les exécutions administrateur et les tâches SYSTEM). Modifier les paramètres demande l'élévation.
+  les exécutions administrateur et les tâches SYSTEM). Elle affiche les blocages et retenues de l'organisation d'après
+  la dernière politique reçue par les exécutions SYSTEM du poste (`policy-cache.json`, `rollout-decisions.json`, lus
+  seulement s'ils ont été écrits par un administrateur), et le signale : la politique à jour est revérifiée, avec les
+  droits administrateur, au moment d'installer. Modifier les paramètres demande l'élévation.
 - **Fichiers déposés à la main** : déposez `settings.json` depuis un compte administrateur **élevé**, un script SYSTEM
   (Intune, GPO) ou `spokapilote config set`. Si la stratégie « Objets système : propriétaire par défaut des objets
   créés par les membres du groupe Administrateurs » est réglée sur « Créateur de l'objet », donnez le fichier aux

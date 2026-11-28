@@ -7,7 +7,7 @@ habituels de l'IT : **Microsoft Intune**, **Configuration Manager (MECM / SCCM)*
 
 | Fichier | Rôle |
 |---|---|
-| `Install-SpokaPilote.ps1` | Installe ou met à jour en silence (bonne architecture, SHA-256 vérifié), écrit `settings.json`, active l'agent et la maintenance. `-Product SpokaPrint` pour SpokaPrint |
+| `Install-SpokaPilote.ps1` | Installe ou met à jour en silence (bonne architecture, SHA-256 vérifié), enregistre le jeton d'enrôlement chiffré (jamais dans `settings.json`), écrit `settings.json`, active l'agent et la maintenance. `-Product SpokaPrint` pour SpokaPrint |
 | `Uninstall-SpokaPilote.ps1` | Désinstalle en silence, sans laisser de tâche planifiée ; `-RemoveData` pour effacer aussi les données |
 | `Detect-SpokaPilote.ps1` · `Detect-SpokaPrint.ps1` | Règle de détection personnalisée (Intune, MECM) : version minimale installée |
 | `settings.template.json` | Modèle commenté de `settings.json` (console, dépôt, politique, cache) |
@@ -16,7 +16,11 @@ habituels de l'IT : **Microsoft Intune**, **Configuration Manager (MECM / SCCM)*
 Les scripts sont compatibles **Windows PowerShell 5.1** (présent sur tous les postes) et PowerShell 7, fonctionnent
 dans un processus 32 ou 64 bits (Intune lance souvent les commandes en 32 bits), sont **idempotents** (relancés sur un
 poste conforme, ils ne changent rien) et n'écrivent **jamais** le jeton d'enrôlement dans un journal ni sur une ligne
-de commande. Chaque script a une aide complète : `Get-Help .\Install-SpokaPilote.ps1 -Full`.
+de commande. Avec SpokaPilote 4.0.1 et ultérieurs, le jeton n'est pas non plus écrit dans `settings.json` (lisible par
+tous les utilisateurs du poste) : le kit le confie à `spokapilote config set ServerToken -` par l'entrée standard, qui
+l'enregistre chiffré dans `server-token.dat` (SYSTEM et Administrateurs seulement), et n'y touche pas s'il est déjà le
+même — un script de démarrage GPO ou une remédiation Intune relancés à chaque démarrage ne le réécrivent donc jamais en
+clair. Chaque script a une aide complète : `Get-Help .\Install-SpokaPilote.ps1 -Full`.
 
 ## 1. Ce qui est installé, et où
 
@@ -255,8 +259,9 @@ par défaut (*Délai d'attente maximal pour les scripts de stratégie de groupe*
 Possible pour les réglages **sans secret** : *Configuration ordinateur › Préférences › Paramètres Windows › Fichiers*,
 action **Remplacer**, source `\\srv-fichiers\spoka$\kit\settings.json`, destination
 `%CommonAppDataDir%\SpokaPilote\settings.json`. Limites : le fichier est **réécrit en entier** à chaque
-actualisation de la stratégie (toute autre clé est perdue, y compris `serverToken` s'il n'est pas dans la source), et
-il faut des clés en camelCase exact (§ 9). Le script de démarrage, qui **fusionne** les réglages, est préférable ; ne
+actualisation de la stratégie (toute autre clé est perdue), et il faut des clés en camelCase exact (§ 9). N'y mettez
+**jamais** `serverToken` : le fichier recopié serait lisible par tous les utilisateurs jusqu'au démarrage élevé suivant
+(qui l'en retire), puis recopié en clair à l'actualisation suivante. Le script de démarrage, qui **fusionne** les réglages, est préférable ; ne
 combinez pas les deux.
 
 ## 6. RMM et PowerShell à distance
@@ -320,7 +325,7 @@ connues (avec un avertissement dans le journal).
 | Clé | Défaut | Rôle |
 |---|---|---|
 | `serverUrl` | — | console centrale (HTTPS obligatoire, sauf `localhost` ; adresse finale, sans redirection) |
-| `serverToken` | — | jeton d'**enrôlement** (jamais le jeton administrateur) |
+| `serverToken` | — | jeton d'**enrôlement** (jamais le jeton administrateur). **4.0.1 et ultérieurs : ne le mettez pas dans `settings.json`** ; il est enregistré chiffré dans `server-token.dat` (kit, `config set ServerToken -`). Un jeton trouvé dans `settings.json` y est retiré au démarrage élevé suivant (mode portable : reste dans `settings.json` de la clé) |
 | `repositoryPaths` | `[]` | dépôts de pilotes indexés en priorité (partages lisibles par les comptes ordinateur) |
 | `policySource` | — | politique de pilotes : chemin, UNC ou HTTPS ; sinon celle de la console ([POLITIQUE.md](POLITIQUE.md#déployer-sur-le-parc)) |
 | `useConsoleCache` | `auto` | cache de pilotes de la console : `auto`, `on` (avertit à chaque repli), `off` |
@@ -333,10 +338,17 @@ connues (avec un avertissement dans le journal).
 | `printerCatalogUrl` | — | catalogue d'imprimantes de l'organisation (HTTPS) |
 | `catalogConcurrency` | `4` | requêtes simultanées vers les catalogues |
 
-Avec le kit : `-SettingsTemplate` (fichier JSON fusionné), puis `-ServerUrl`, `-ServerToken` / `-ServerTokenFile` /
-`-ServerTokenVariable`, `-RepositoryPath` (remplace la liste), `-PolicySource`, `-UseConsoleCache`. Les autres clés du
-poste sont conservées ; une valeur `null` dans le modèle retire la clé. Un `settings.json` illisible arrête le script
-sans rien modifier.
+Avec le kit : `-SettingsTemplate` (fichier JSON fusionné), puis `-ServerUrl`, `-RepositoryPath` (remplace la liste),
+`-PolicySource`, `-UseConsoleCache`. Les autres clés du poste sont conservées ; une valeur `null` dans le modèle retire
+la clé. Un `settings.json` illisible arrête le script sans rien modifier.
+
+Le jeton (`-ServerTokenFile`, `-ServerTokenVariable`, `-ServerToken`, ou `serverToken` d'un modèle, déconseillé) suit
+un autre chemin : SpokaPilote 4.0.1 et ultérieurs le reçoivent par `spokapilote config set ServerToken -` (entrée
+standard : absent de la ligne de commande du processus, visible des autres utilisateurs du poste et des journaux
+d'audit), l'enregistrent chiffré dans `server-token.dat`, et ne modifient rien si le jeton enregistré est déjà le même.
+Un ancien jeton en clair laissé dans `settings.json` par un kit précédent est enregistré à part puis retiré du fichier.
+SpokaPrint et SpokaPilote 4.0.0 ne connaissent pas cette commande : le kit écrit alors le jeton dans `settings.json`,
+avec un avertissement dans son journal (déployez la 4.0.1 avant, ou avec, le jeton).
 
 ### Sans le kit : la ligne de commande
 
@@ -350,9 +362,17 @@ spokapilote config add-repo \\srv-fichiers\pilotes$
 spokapilote server status          # adresse, certificat HTTPS, jeton
 ```
 
-Évitez `config set ServerToken <jeton>` en déploiement de masse : la ligne de commande est conservée par les journaux
-d'audit (événement 4688, EDR, outil de déploiement). Et ne journalisez pas la sortie de `spokapilote config` : en
-4.0.0 elle affiche le jeton en clair.
+Le jeton se donne par l'**entrée standard** (4.0.1 et ultérieurs) : `config set ServerToken <jeton>` laisserait le
+jeton sur la ligne de commande, conservée par les journaux d'audit (événement 4688, EDR, outil de déploiement) et
+visible des autres utilisateurs du poste pendant l'exécution.
+
+```powershell
+Get-Content \\srv-fichiers\spoka$\secret\token.txt -TotalCount 1 | spokapilote config set ServerToken -
+spokapilote config set ServerToken -        # en console : saisie masquée
+```
+
+Le jeton est enregistré chiffré dans `server-token.dat` (jamais dans `settings.json`) ; un jeton identique ne change
+rien. Ne journalisez pas la sortie de `spokapilote config` d'un poste en 4.0.0 : elle affiche le jeton en clair.
 
 ## 10. Agent et maintenance à grande échelle
 
@@ -402,11 +422,32 @@ d'audit (événement 4688, EDR, outil de déploiement). Et ne journalisez pas la
   d'un outil qui la journalise, contenu d'un point de distribution MECM. Le kit ne l'écrit dans aucun journal (il le
   masque même si une commande le renvoyait). En cas de fuite : changez-le dans la console (§ 2 de
   [CONSOLE-CENTRALE.md](CONSOLE-CENTRALE.md#2-jetons-comptes-et-rôles)) puis redéployez avec `-ConfigureOnly`.
+- **Stockage du jeton sur le poste (4.0.1 et ultérieurs)** : `%ProgramData%\SpokaPilote\server-token.dat`, lisible des
+  seuls SYSTEM et Administrateurs, chiffré par DPAPI « machine ». C'est la **DACL** qui le protège des utilisateurs du
+  poste : Microsoft documente qu'avec `CRYPTPROTECT_LOCAL_MACHINE`, *tout utilisateur de l'ordinateur* peut déchiffrer
+  la donnée ([CryptProtectData, Remarques](https://learn.microsoft.com/windows/win32/api/dpapi/nf-dpapi-cryptprotectdata#remarks)).
+  DPAPI rend inexploitable une copie du fichier **seul** (sauvegarde de fichiers, copie vers un autre PC) ; une **image
+  disque complète** ou une sauvegarde système contient les ruches `SYSTEM` et `SECURITY` qui permettent de le déchiffrer
+  hors ligne : protégez ces sauvegardes comme le poste, et changez le jeton en cas de doute.
+- **Images de référence (sysprep, clonage)** : **n'intégrez jamais le jeton dans une image de référence.** Que
+  `sysprep /generalize` conserve ou non la clé DPAPI machine n'est pas documenté par Microsoft (la documentation de
+  [Sysprep](https://learn.microsoft.com/windows-hardware/manufacture/desktop/sysprep-command-line-options#generalize)
+  indique seulement que les informations propres au système sont retirées) : un poste cloné peut ne pas pouvoir le
+  lire. Déployez le jeton **après** sysprep, sur chaque poste (kit en tâche de fin de séquence MECM / MDT, application
+  Intune, script de démarrage). Si un poste trouve un `server-token.dat` indéchiffrable, il l'écrit dans son journal
+  (« Jeton de la console indéchiffrable sur ce poste »), supprime le fichier et continue sans console jusqu'au
+  redéploiement du jeton.
 - **Droits sur `%ProgramData%\SpokaPilote`** : **SpokaPilote 4.0.1 et ultérieures protègent ce dossier : seuls les
   administrateurs peuvent le modifier, et le jeton d'enrôlement n'est pas lisible par les utilisateurs standard.**
   En **4.0.0**, le dossier hérite des droits de `%ProgramData%` : tout utilisateur du poste peut **lire**
   `settings.json` (donc le jeton) et **créer** des fichiers dans le dossier. Sur un parc en 4.0.0, déployez la 4.0.1
   avant (ou avec) le jeton ; le kit l'indique dans son journal.
+- **`SPOKAPILOTE_HOME`** (essais, `-DataDirectory`) sur un volume **FAT32 / exFAT** ou un **partage réseau** : ces
+  emplacements n'ont pas de propriétaires ni d'ACL fiables. SpokaPilote les traite comme une clé portable (aucun droit
+  modifié, rien de mis en quarantaine, jeton dans `settings.json`, contenu cru par les exécutions élevées) et l'écrit
+  dans son journal à chaque démarrage élevé : ne les utilisez pas sur un poste de production. Un dossier existant
+  n'est protégé (repris, mis en quarantaine) que s'il est vide, déjà protégé, ou ne contient que des éléments de
+  SpokaPilote dont `settings.json`.
 - **Le kit** n'écrit `settings.json` qu'en administrateur ou en SYSTEM. Il modifie un fichier existant **en place**
   (les droits posés par l'application sont conservés) ou le crée avec les droits hérités du dossier. Un
   `settings.json` dont le propriétaire n'est ni SYSTEM, ni les Administrateurs, ni le compte qui exécute le script
@@ -435,7 +476,15 @@ Le script supprime les tâches `\SpokaPilote\Maintenance`, `\SpokaPilote\Agent` 
 dossier `\SpokaPilote` du Planificateur s'il est vide. C'est indispensable pour les postes en **4.0.0** : leur
 désinstalleur laisse ces tâches, qui lanceraient un exécutable supprimé. Les désinstalleurs suivants les retirent
 eux-mêmes. Le désinstalleur seul (`"%ProgramFiles%\SpokaPilote\unins000.exe" /VERYSILENT /SUPPRESSMSGBOXES
-/NORESTART`) conserve toujours les données en mode silencieux.
+/NORESTART`) conserve les réglages et les journaux en mode silencieux.
+
+À partir de la 4.0.1, le désinstalleur supprime **toujours** le jeton (`server-token.dat`, un secret) : une mise à jour
+ne désinstalle rien et le conserve ; une réinstallation le redéploie (kit, Intune). Quand l'utilisateur choisit de
+supprimer aussi les données (question posée par une désinstallation interactive), ou avec `-RemoveData`, partent
+également `Quarantaine` (qui peut contenir un ancien `settings.json` avec un jeton en clair), `Work`, les caches de
+politique et de décisions de diffusion, l'état du kit (`deploiement.json`) et le témoin de protection. Le dossier
+`Mount` n'est supprimé que s'il est vide : une image Windows encore montée se démonte d'abord (`spokapilote image
+cleanup` ou `dism /Cleanup-Mountpoints`).
 
 ## 14. Recette du kit sur une machine jetable
 
@@ -472,6 +521,10 @@ laisse aucune tâche (versions postérieures à 4.0.0).
   `settings.json` dans un dossier d'essai (casse des clés, commentaires, idempotence, relecture par l'application),
   absence du jeton dans les journaux, codes `64`, et tous les parcours en simulation (`-WhatIf`) dont la
   désinstallation ; compilation de l'installeur modifié.
+- **Jeton par la ligne de commande (4.0.1)** : exécuté en administrateur avec une copie du kit pointant vers la ligne
+  de commande compilée et un dossier de données d'essai : premier enregistrement, relance identique (ni le jeton ni
+  `settings.json` réécrits), ancien jeton en clair retiré de `settings.json`, rotation du jeton, absence du jeton dans
+  les journaux et dans `settings.json`.
 - **Pas encore exécuté pour de vrai** (droits administrateur et machine jetable nécessaires) : installation,
   mise à jour et désinstallation silencieuses par le kit, création des tâches, suppression des tâches par le nouveau
   désinstalleur. `Test-DeploymentKit.ps1` (§ 14) fait cette recette ; menez-la avant le premier anneau.
