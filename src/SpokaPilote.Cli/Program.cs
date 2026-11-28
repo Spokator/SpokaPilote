@@ -681,6 +681,8 @@ internal static partial class Program
                 if (key is null || value is null) throw new ArgumentException("Usage : spokapilote config set <clé> <valeur>");
                 var prop = typeof(Settings).GetProperties().FirstOrDefault(p => p.Name.Equals(key, StringComparison.OrdinalIgnoreCase))
                            ?? throw new ArgumentException($"Clé inconnue : {key}");
+                // Jeton : message seul (pas d'affichage de toute la configuration dans le journal du déploiement).
+                if (prop.Name == nameof(Settings.ServerToken)) return SetServerToken(settings, value);
                 if (prop.Name == nameof(Settings.UseConsoleCache) && !Core.Online.ConsoleCache.IsValidMode(value))
                     throw new ArgumentException("UseConsoleCache : auto (défaut), on ou off.");
                 if (prop.Name == nameof(Settings.UseConsoleCache)) value = value.Trim().ToLowerInvariant();
@@ -703,6 +705,68 @@ internal static partial class Program
         // Jeton jamais affiché (journal de déploiement, capture d'écran, historique de la console).
         Console.WriteLine(settings.ToDisplayJson().ToJsonString(new System.Text.Json.JsonSerializerOptions { WriteIndented = true, Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping }));
         return ExitOk;
+    }
+
+    /// <summary>
+    /// « config set ServerToken &lt;jeton&gt; | - » : « - » lit le jeton sur l'entrée standard (kit de déploiement, Intune,
+    /// RMM : le jeton n'apparaît pas dans la ligne de commande, visible des autres utilisateurs du poste) ou, en console, le
+    /// demande sans l'afficher. Version installée : écrit directement le fichier chiffré (<see cref="SecretStore"/>), jamais
+    /// settings.json, et ne touche à rien si le jeton enregistré est déjà le même. Vide : jeton supprimé.
+    /// </summary>
+    private static int SetServerToken(Settings settings, string value)
+    {
+        if (value == "-") value = ReadSecret("Jeton d'enrôlement : ") ?? "";
+        var token = value.Trim();
+        if (token.Length > 0 && token.Any(char.IsWhiteSpace))
+        {
+            WriteLine("Jeton invalide : ni espace ni retour à la ligne.", ConsoleColor.Red);
+            return ExitUsage;
+        }
+        if (string.Equals(token, settings.ServerToken?.Trim() ?? "", StringComparison.Ordinal))
+        {
+            WriteLine(token.Length == 0 ? "Aucun jeton enregistré : rien à faire." : "Jeton déjà enregistré : inchangé.", ConsoleColor.Gray);
+            return ExitOk;
+        }
+        if (!SecretStore.UsesTokenFile)
+        {
+            // Mode portable / emplacement sans ACL : settings.json de la clé, comme les autres réglages.
+            settings.ServerToken = token.Length == 0 ? null : token;
+            return settings.Save() ? ExitOk : ExitError;
+        }
+        if (!Elevation.IsAdministrator())
+        {
+            WriteLine("Le jeton de la console s'enregistre depuis une console administrateur (ou en SYSTEM) : il n'est lisible que des administrateurs.", ConsoleColor.Red);
+            return ExitError;
+        }
+        try
+        {
+            SecretStore.WriteToken(token.Length == 0 ? null : token);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
+        {
+            WriteLine($"Jeton non enregistré : {ex.Message}", ConsoleColor.Red);
+            return ExitError;
+        }
+        settings.ServerToken = token.Length == 0 ? null : token;
+        WriteLine(token.Length == 0 ? "Jeton supprimé." : $"Jeton enregistré (chiffré, lisible des seuls administrateurs) : {SecretStore.TokenFile}", ConsoleColor.Green);
+        return ExitOk;
+    }
+
+    /// <summary>Ligne lue sur l'entrée standard redirigée, ou saisie masquée en console ; null si rien n'est lu.</summary>
+    private static string? ReadSecret(string prompt)
+    {
+        if (Console.IsInputRedirected) return Console.In.ReadLine();
+        Console.Write(prompt);
+        var text = new StringBuilder();
+        while (true)
+        {
+            var key = Console.ReadKey(intercept: true);
+            if (key.Key == ConsoleKey.Enter) break;
+            if (key.Key == ConsoleKey.Backspace) { if (text.Length > 0) text.Length--; }
+            else if (!char.IsControl(key.KeyChar)) text.Append(key.KeyChar);
+        }
+        Console.WriteLine();
+        return text.ToString();
     }
 
     /// <summary>
@@ -944,6 +1008,9 @@ internal static partial class Program
                                    « show » indique aussi l'emplacement des données (installé ou mode portable)
               spokapilote config set UseConsoleCache auto|on|off   cache de pilotes de la console centrale (4.0) ;
                                    « server status » en donne l'état (taille, taux de réussite)
+              spokapilote config set ServerToken -          jeton d'enrôlement lu sur l'entrée standard (ou saisi sans
+                                   affichage), hors de la ligne de commande ; console administrateur ; enregistré chiffré
+                                   dans server-token.dat, jamais dans settings.json ; inchangé s'il est déjà le même
               spokapilote secure-data [--force]            protège %ProgramData%\SpokaPilote (SYSTEM et Administrateurs ;
                                    lecture seule pour les utilisateurs) ; fait à chaque démarrage élevé et par l'installeur
 
