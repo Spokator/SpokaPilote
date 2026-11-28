@@ -569,29 +569,36 @@ public sealed class DriverCacheTests : IDisposable
         Assert.Equal(2, _origin.Requests.Count);
     }
 
+    /// <summary>
+    /// 4.0.1 : la boîte de téléchargement du Microsoft Update Catalog (fichier + empreinte attendue) et les métadonnées non
+    /// signées (XML Lenovo, réponses NVIDIA) ne sont plus relayées. Les postes 4.0.0 qui les demandent encore reçoivent un
+    /// refus (403 « refused ») et passent en accès direct ; rien n'est demandé à la source par la console.
+    /// </summary>
     [Fact]
-    public async Task Download_dialog_is_posted_like_the_client_and_cached_by_update_id()
+    public async Task Download_dialog_and_unsigned_metadata_are_never_relayed()
     {
-        const string id = "0a1b2c3d-1111-2222-3333-444455556666";
-        string? posted = null;
-        _origin.Dynamic = req =>
-        {
-            if (!req.RequestUri!.AbsoluteUri.EndsWith("DownloadDialog.aspx", StringComparison.Ordinal) || req.Method != HttpMethod.Post) return null;
-            posted = req.Content!.ReadAsStringAsync().GetAwaiter().GetResult();
-            return new FakeOrigin.Resource
-            {
-                Body = Encoding.UTF8.GetBytes("downloadInformation[0].files[0].url = 'https://catalog.s.download.windowsupdate.com/d/msdownload/x_0123456789abcdef0123456789abcdef01234567.cab';"),
-                ContentType = "text/html",
-            };
-        };
+        var originCalls = 0;
+        _origin.Dynamic = _ => { originCalls++; return null; };
         var client = _host.Client(AgentToken);
-        var r = await client.GetAsync($"/api/cache/catalog/mscatalog-download?updateId={id}");
-        Assert.Equal(HttpStatusCode.OK, r.StatusCode);
-        Assert.Contains("files[0].url", await r.Content.ReadAsStringAsync());
-        Assert.Contains("updateIDs", posted);
-        Assert.Equal("hit", (await client.GetAsync($"/api/cache/catalog/mscatalog-download?updateId={id.ToUpperInvariant()}"))
-            .Headers.GetValues(DriverCacheEndpoints.CacheHeader).Single());
-        Assert.Equal(HttpStatusCode.BadRequest, (await client.GetAsync("/api/cache/catalog/mscatalog-download?updateId=../../x")).StatusCode);
+
+        var dialog = await client.GetAsync("/api/cache/catalog/mscatalog-download?updateId=0a1b2c3d-1111-2222-3333-444455556666");
+        Assert.Equal(HttpStatusCode.Forbidden, dialog.StatusCode);
+        Assert.Equal("refused", dialog.Headers.GetValues(DriverCacheEndpoints.CacheHeader).Single());
+
+        foreach (var url in new[]
+                 {
+                     "https://download.lenovo.com/catalog/21CB_Win11.xml",
+                     "https://download.lenovo.com/pccbbs/mobiles/n32uj36w_2_.xml",
+                     "https://download.lenovo.com/cdrt/td/catalogv2.xml",
+                 })
+        {
+            var r = await client.GetAsync($"/api/cache/catalog?url={Uri.EscapeDataString(url)}");
+            Assert.Equal(HttpStatusCode.Forbidden, r.StatusCode);
+            Assert.Equal("refused", r.Headers.GetValues(DriverCacheEndpoints.CacheHeader).Single());
+        }
+        Assert.Equal(0, originCalls);
+        Assert.True(DriverCacheEndpoints.IsRelayableCatalog(new Uri("https://downloads.dell.com/catalog/CatalogPC.cab")));
+        Assert.False(DriverCacheEndpoints.IsRelayableCatalog(new Uri("https://download.lenovo.com/catalog/21CB_Win11.xml")));
     }
 
     // ------------------------------------------------------------------ réglages, purge, audit, supervision
@@ -693,8 +700,9 @@ public sealed class DriverCacheTests : IDisposable
         Assert.Contains("https://hpia.hpcloud.hp.com/downloads/driverpackcatalog/HPClientDriverPackCatalog.cab", catalogs);
         Assert.Equal(["https://ftp.hp.com/pub/softpaq/sp150001-150500/sp150123.exe"], packages.Keys);
 
+        // 4.0.1 : les catalogues XML Lenovo (non signés) ne sont plus relayés, donc plus préchargés.
         catalogs.Clear();
         DriverCachePrefetch.Collect("""{ "system": { "manufacturer": "LENOVO", "model": "21CBCTO1WW", "osBuild": 19045 } }""", catalogs, null);
-        Assert.Contains("https://download.lenovo.com/catalog/21CB_Win10.xml", catalogs);
+        Assert.Empty(catalogs);
     }
 }

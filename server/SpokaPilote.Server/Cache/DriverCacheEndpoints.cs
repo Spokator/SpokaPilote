@@ -55,7 +55,13 @@ public static partial class DriverCacheEndpoints
             if (Disabled(http, cache, catalogs: true) is { } off) return Task.FromResult(off);
             if (!TryParseOfficial(url, out var uri, out var error)) return Task.FromResult(Refuse(http, cache, error));
             if (uri.Host.EndsWith("catalog.update.microsoft.com", StringComparison.OrdinalIgnoreCase))
-                return Task.FromResult(Bad("Microsoft Update Catalog : utilisez /api/cache/catalog/mscatalog-search ou mscatalog-download."));
+                return Task.FromResult(Bad("Microsoft Update Catalog : utilisez /api/cache/catalog/mscatalog-search."));
+            // 4.0.1 : seuls les catalogues .cab (signés Authenticode par l'éditeur, signature vérifiée par le poste) sont
+            // relayés. Les métadonnées non signées (XML Lenovo, réponses NVIDIA…) désignent des exécutables et leurs
+            // empreintes : relayées, elles permettraient à une console compromise de choisir ce que les postes exécutent.
+            // Les postes 4.0.0 qui les demandent encore reçoivent un refus et vont directement à la source officielle.
+            if (!IsRelayableCatalog(uri))
+                return Task.FromResult(Refuse(http, cache, "Métadonnée non signée : téléchargez-la directement depuis la source officielle."));
             return CatalogAsync(http, cache, new DriverCacheStore.CatalogRequest("catalog:" + DriverCacheStore.Normalize(uri), uri,
                 u => new HttpRequestMessage(HttpMethod.Get, u)), ct);
         });
@@ -68,22 +74,11 @@ public static partial class DriverCacheEndpoints
             return CatalogAsync(http, cache, new DriverCacheStore.CatalogRequest("mscatalog-search:" + query.ToLowerInvariant(), uri,
                 u => new HttpRequestMessage(HttpMethod.Get, u), ClassifySearch, MicrosoftCatalog: true), ct);
         });
-        agent.MapGet("/catalog/mscatalog-download", (HttpContext http, string? updateId, DriverCacheStore cache, CancellationToken ct) =>
-        {
-            if (Disabled(http, cache, catalogs: true) is { } off) return Task.FromResult(off);
-            if (!Guid.TryParseExact(updateId ?? "", "D", out var id)) return Task.FromResult(Bad("Identifiant de mise à jour invalide."));
-            var idText = id.ToString("D");
-            var uri = new Uri($"{MicrosoftCatalogBase}/DownloadDialog.aspx");
-            return CatalogAsync(http, cache, new DriverCacheStore.CatalogRequest("mscatalog-download:" + idText, uri, u =>
-                {
-                    // Même requête que le client (MicrosoftCatalogClient.GetDownloadUrlsAsync).
-                    var payload = $"[{{\"size\":0,\"languages\":\"\",\"uidInfo\":\"{idText}\",\"updateID\":\"{idText}\"}}]";
-                    return new HttpRequestMessage(HttpMethod.Post, u)
-                    {
-                        Content = new FormUrlEncodedContent([new KeyValuePair<string, string>("updateIDs", payload)]),
-                    };
-                }, ClassifyDownloadDialog, MicrosoftCatalog: true), ct);
-        });
+        // 4.0.1 : la boîte de téléchargement du Microsoft Update Catalog (adresse du fichier ET son empreinte SHA-1) n'est
+        // plus relayée : la console choisirait à la fois le fichier et l'empreinte attendue. Les postes 4.0.1 la demandent
+        // directement à Microsoft ; les postes 4.0.0 reçoivent un refus et font de même.
+        agent.MapGet("/catalog/mscatalog-download", (HttpContext http, DriverCacheStore cache) =>
+            Refuse(http, cache, "Boîte de téléchargement du Microsoft Update Catalog : demandez-la directement à Microsoft."));
 
         var admin = api.MapGroup("").RequireAccess(Access.Admin);
 
@@ -275,6 +270,9 @@ public static partial class DriverCacheEndpoints
         http.Response.Headers[CacheHeader] = "refused";
         return Results.Json(new ApiError(message), statusCode: StatusCodes.Status403Forbidden);
     }
+
+    /// <summary>Catalogue relayable : fichier .cab (catalogues Dell / HP signés Authenticode, vérifiés par le poste).</summary>
+    internal static bool IsRelayableCatalog(Uri uri) => uri.AbsolutePath.EndsWith(".cab", StringComparison.OrdinalIgnoreCase);
 
     private static IResult Bad(string message) => Results.Json(new ApiError(message), statusCode: StatusCodes.Status400BadRequest);
 

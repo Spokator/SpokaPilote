@@ -143,12 +143,8 @@ public sealed class DriverCachePrefetch(ServerStore store, DriverCacheStore cach
                 if (platform is { Length: 4 } && platform.All(char.IsAsciiLetterOrDigit) && release is { Length: 4 } && release.All(char.IsAsciiLetterOrDigit))
                     catalogs.Add($"https://hpia.hpcloud.hp.com/ref/{platform}/{platform}_64_{(win11 ? "11" : "10")}.0.{release}.cab");
             }
-            else if (manufacturer.Contains("Lenovo", StringComparison.OrdinalIgnoreCase))
-            {
-                catalogs.Add("https://download.lenovo.com/cdrt/td/catalogv2.xml");
-                if (model.Length >= 4 && model[..4].All(char.IsAsciiLetterOrDigit))
-                    catalogs.Add($"https://download.lenovo.com/catalog/{model[..4].ToUpperInvariant()}_{(win11 ? "Win11" : "Win10")}.xml");
-            }
+            // Lenovo : catalogues XML non signés, jamais relayés (4.0.1) : les postes les lisent directement chez Lenovo.
+            // Seuls les paquets proposés (ci-dessous, vérifiés par empreinte et signature sur le poste) sont préchargés.
         }
         if (packages is null || !root.TryGetProperty("candidates", out var candidates) || candidates.ValueKind != JsonValueKind.Array) return;
         foreach (var c in candidates.EnumerateArray())
