@@ -96,6 +96,7 @@ utilisez désormais [SpokaPrint](https://github.com/Spokator/SpokaPrint).
 
 ## Documentation
 - [Console centrale](docs/CONSOLE-CENTRALE.md) — installation Docker, comptes, groupes, planification, alertes, grands parcs
+- [Déploiement en entreprise](docs/DEPLOIEMENT-ENTREPRISE.md) — Intune, MECM, GPO, RMM : kit `deploy/` (installation, configuration, détection, désinstallation)
 - [Mode portable](docs/MODE-PORTABLE.md) — clé USB du technicien
 - [Boîte à outils du technicien](docs/OUTILS-TECHNICIEN.md) — santé, BIOS, réparation guidée, nettoyage du magasin
 - [Politique de pilotes](docs/POLITIQUE.md) · [Packs constructeur et images](docs/PACKS-ET-IMAGES.md) ·

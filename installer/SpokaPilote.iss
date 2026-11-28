@@ -100,6 +100,17 @@ Filename: "{app}\{#AppExe}"; Description: "{cm:LaunchApp}"; Flags: nowait postin
 ; Un déploiement de parc (/VERYSILENT sans ce paramètre) n'ouvre rien sur les postes.
 Filename: "{app}\{#AppExe}"; Flags: nowait runasoriginaluser; Check: RelaunchRequested
 
+[UninstallRun]
+; Les tâches planifiées SYSTEM lanceraient un exécutable supprimé : elles partent avec le programme (pas lors d'une mise
+; à jour, qui ne désinstalle rien). \SpokaPilote\Analyse est la tâche d'analyse hebdomadaire proposée par
+; docs\CONSOLE-CENTRALE.md (§ 3). La ligne de commande supprime ensuite le dossier \SpokaPilote du Planificateur s'il
+; est vide ; schtasks sert de secours si elle ne démarre pas (les erreurs « tâche introuvable » sont sans conséquence).
+Filename: "{sys}\schtasks.exe"; Parameters: "/Delete /TN ""\SpokaPilote\Analyse"" /F"; Flags: runhidden waituntilterminated; RunOnceId: "RemoveAnalyseTask"
+Filename: "{app}\{#CliExe}"; Parameters: "schedule disable"; Flags: runhidden waituntilterminated skipifdoesntexist; RunOnceId: "RemoveMaintenanceTask"
+Filename: "{app}\{#CliExe}"; Parameters: "agent disable"; Flags: runhidden waituntilterminated skipifdoesntexist; RunOnceId: "RemoveAgentTask"
+Filename: "{sys}\schtasks.exe"; Parameters: "/Delete /TN ""\SpokaPilote\Maintenance"" /F"; Flags: runhidden waituntilterminated; RunOnceId: "RemoveMaintenanceTaskFallback"
+Filename: "{sys}\schtasks.exe"; Parameters: "/Delete /TN ""\SpokaPilote\Agent"" /F"; Flags: runhidden waituntilterminated; RunOnceId: "RemoveAgentTaskFallback"
+
 [Code]
 function RelaunchRequested(): Boolean;
 begin
@@ -156,6 +167,8 @@ begin
         DelTree(DataDir + '\Logs', True, True, True);
         DelTree(DataDir + '\Reports', True, True, True);
         DeleteFile(DataDir + '\settings.json');
+        DeleteFile(DataDir + '\maintenance-task.xml');
+        DeleteFile(DataDir + '\agent-task.xml');
       end;
     end;
   end;
