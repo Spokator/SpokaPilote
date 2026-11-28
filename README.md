@@ -40,8 +40,9 @@ fonctionne sans Internet, historique et sauvegardes rangés sur la clé, un doss
 
 ### 3. Sur tout un parc, quelle que soit sa taille
 1. **Dépôt de pilotes** sur un partage : pack officiel de chaque modèle (`spokapilote driverpack download`).
-2. **Installation silencieuse** par GPO / Intune / RMM : `SpokaPilote-Setup-<version>.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART`,
-   avec un `settings.json` commun (dépôt, console, politique).
+2. **Installation silencieuse** par Intune / Configuration Manager / GPO / RMM avec le kit `deploy/` : installeur
+   vérifié par SHA-256, configuration commune (dépôt, console, politique), jeton enregistré chiffré, règle de détection.
+   → [docs/DEPLOIEMENT-ENTREPRISE.md](docs/DEPLOIEMENT-ENTREPRISE.md)
 3. **Console centrale** (Docker) : chaque poste y remonte son état ; vous filtrez par groupe (site, modèle,
    sous-réseau…), lancez des actions à distance, planifiez (« pilotes manquants chaque lundi pour le groupe X »),
    recevez des alertes (e-mail, Teams, Slack, Discord) et gardez un journal d'audit par technicien.
@@ -64,6 +65,11 @@ Une chaîne de contrôle stricte, **non désactivable** :
 4. **Filets de sécurité** — point de restauration, sauvegarde des pilotes, historique et annulation en un clic ;
    un pilote Windows qui fonctionne n'est jamais remplacé automatiquement ; un BIOS n'est jamais mis à jour sans
    demande explicite.
+5. **La console n'est qu'un relais** — un poste n'accepte une copie servie par la console que s'il connaît l'empreinte
+   officielle du fichier par une autre voie ; une console compromise ne peut rien faire installer ni exécuter.
+6. **Poste durci** — dossier de données modifiable par les seuls administrateurs, jeton de la console chiffré,
+   lignes de commande des constructeurs vérifiées et lancées sans interpréteur de commandes. Revue de sécurité
+   indépendante avant chaque version majeure.
 
 ## Ce que ça couvre
 
