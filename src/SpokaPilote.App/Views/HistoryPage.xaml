@@ -20,7 +20,7 @@
             <StackPanel>
                 <TextBlock Style="{StaticResource PageTitle}" Text="Historique" />
                 <TextBlock Style="{StaticResource PageSubtitle}"
-                           Text="Chaque installation, réparation ou nettoyage est enregistré. Annuler une intervention retire les pilotes qu'elle a ajoutés : chaque périphérique revient à son pilote précédent." />
+                           Text="Tout ce que SpokaPilote a modifié sur ce poste (installations, réparations, nettoyages). Sélectionnez une intervention pour voir son détail ; «&#160;Annuler cette intervention&#160;» retire les pilotes qu'elle a ajoutés et chaque périphérique revient à son pilote précédent." />
             </StackPanel>
         </DockPanel>
 
@@ -31,7 +31,7 @@
                 <app:Glyph Style="{StaticResource Icon}" FontSize="32" HorizontalAlignment="Center" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Text="&#xE81C;" />
                 <TextBlock Margin="0,12,0,4" HorizontalAlignment="Center" Style="{StaticResource CardTitle}" Text="Aucune intervention pour l'instant" />
                 <TextBlock HorizontalAlignment="Center" TextAlignment="Center" MaxWidth="460" Style="{StaticResource Secondary}"
-                           Text="Les installations faites avec SpokaPilote apparaîtront ici, avec la possibilité de les annuler." />
+                           Text="Les installations, réparations et nettoyages faits avec SpokaPilote apparaîtront ici, avec la possibilité de les annuler." />
             </StackPanel>
         </Border>
 
@@ -41,12 +41,20 @@
                 <ColumnDefinition Width="16" />
                 <ColumnDefinition Width="1.2*" />
             </Grid.ColumnDefinitions>
-            <ListBox ItemsSource="{Binding Interventions}" SelectedItem="{Binding SelectedIntervention}" Padding="4"
+            <ListBox ItemsSource="{Binding Interventions}" SelectedItem="{Binding SelectedRow}" Padding="4"
                      Background="{DynamicResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1"
                      ScrollViewer.HorizontalScrollBarVisibility="Disabled" AutomationProperties.Name="Interventions">
+                <ListBox.ItemContainerStyle>
+                    <Style TargetType="ListBoxItem" BasedOn="{StaticResource {x:Type ListBoxItem}}">
+                        <Setter Property="AutomationProperties.Name" Value="{Binding AccessibleName}" />
+                    </Style>
+                </ListBox.ItemContainerStyle>
                 <ListBox.ItemTemplate>
-                    <DataTemplate DataType="{x:Type install:Intervention}">
-                        <TextBlock Margin="4,6" TextWrapping="Wrap" Text="{Binding Summary}" AutomationProperties.Name="{Binding Summary}" />
+                    <DataTemplate DataType="{x:Type vm:InterventionRow}">
+                        <StackPanel Margin="4,6">
+                            <TextBlock TextWrapping="Wrap" Text="{Binding Title}" />
+                            <TextBlock Style="{StaticResource Caption}" Text="{Binding State}" />
+                        </StackPanel>
                     </DataTemplate>
                 </ListBox.ItemTemplate>
             </ListBox>
@@ -66,16 +74,22 @@
             </Border>
         </Grid>
 
+        <!-- Sauvegardes : recours si l'annulation ne suffit pas. -->
         <Border Grid.Row="2" Style="{StaticResource Card}" Margin="0,16,0,0" Padding="16,12">
-            <DockPanel>
-                <Button DockPanel.Dock="Right" Margin="12,0,0,0" Content="Réinstaller cette sauvegarde" Command="{Binding RestoreBackupCommand}"
-                        Visibility="{Binding HasBackups, Converter={StaticResource BoolToVisibility}}" />
-                <TextBlock DockPanel.Dock="Left" VerticalAlignment="Center" Margin="0,0,12,0" Text="Sauvegardes de pilotes :" />
-                <TextBlock VerticalAlignment="Center" Style="{StaticResource Secondary}" Text="Aucune sauvegarde pour l'instant."
-                           Visibility="{Binding HasBackups, Converter={StaticResource VisibleWhen}, ConverterParameter=not}" />
-                <ComboBox ItemsSource="{Binding Backups}" SelectedItem="{Binding SelectedBackup}" AutomationProperties.Name="Sauvegardes de pilotes"
-                          Visibility="{Binding HasBackups, Converter={StaticResource BoolToVisibility}}" />
-            </DockPanel>
+            <StackPanel>
+                <DockPanel>
+                    <Button DockPanel.Dock="Right" Margin="12,0,0,0" Content="Réinstaller cette sauvegarde" Command="{Binding RestoreBackupCommand}"
+                            Visibility="{Binding HasBackups, Converter={StaticResource BoolToVisibility}}" />
+                    <TextBlock DockPanel.Dock="Left" VerticalAlignment="Center" Margin="0,0,12,0" FontWeight="SemiBold" Text="Sauvegardes de pilotes" />
+                    <TextBlock VerticalAlignment="Center" Style="{StaticResource Secondary}" Text="Aucune sauvegarde pour l'instant."
+                               Visibility="{Binding HasBackups, Converter={StaticResource VisibleWhen}, ConverterParameter=not}" />
+                    <ComboBox ItemsSource="{Binding Backups}" SelectedItem="{Binding SelectedBackup}" DisplayMemberPath="Label"
+                              ToolTip="{Binding SelectedBackup.Path}" AutomationProperties.Name="Sauvegardes de pilotes"
+                              Visibility="{Binding HasBackups, Converter={StaticResource BoolToVisibility}}" />
+                </DockPanel>
+                <TextBlock Margin="0,6,0,0" Style="{StaticResource Caption}"
+                           Text="Les pilotes en place sont sauvegardés avant chaque installation (option de la page Pilotes). Réinstaller une sauvegarde est le recours si l'annulation ne suffit pas." />
+            </StackPanel>
         </Border>
     </Grid>
 </UserControl>

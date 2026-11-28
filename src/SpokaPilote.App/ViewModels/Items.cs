@@ -123,6 +123,53 @@ public sealed class DeviceItem
     public string State => Device.HasProblem ? "problem" : Device.Health == DeviceHealth.Disabled ? "disabled" : "ok";
 }
 
+/// <summary>Intervention de l'Historique : quoi, quand, et si elle peut encore être annulée (en clair, traduit).</summary>
+public sealed class InterventionRow
+{
+    public InterventionRow(Intervention intervention) => Intervention = intervention;
+    public Intervention Intervention { get; }
+
+    /// <summary>« 25/11/2026 22:34 · Installation de 2 pilotes ».</summary>
+    public string Title
+    {
+        get
+        {
+            var i = Intervention;
+            var what = i.Kind switch
+            {
+                InterventionKinds.DeviceRepair => Loc.F("Réparation : {0}", string.Join(", ", i.Items.Select(x => x.Title).Distinct())),
+                InterventionKinds.DriverStoreClean => Loc.F("Nettoyage du magasin de pilotes ({0} paquet(s) retiré(s))", i.RemovedDriverPackages.Count),
+                _ => i.Items.Count(x => x.Status == nameof(InstallStatus.Installed)) is var n && n == 1
+                    ? Loc.T("Installation de 1 pilote")
+                    : Loc.F("Installation de {0} pilotes", n),
+            };
+            return $"{i.Timestamp.ToString(Loc.IsEnglish ? "yyyy-MM-dd HH:mm" : "dd/MM/yyyy HH:mm", System.Globalization.CultureInfo.InvariantCulture)} · {what}";
+        }
+    }
+
+    /// <summary>« Annulée le … », « Peut être annulée » ou « Rien à annuler ».</summary>
+    public string State => Intervention switch
+    {
+        { RolledBackAt: { } at } => Loc.F("Annulée le {0:dd/MM/yyyy HH:mm}", at),
+        { CanRollback: true } => Loc.T("Peut être annulée"),
+        _ => Loc.T("Rien à annuler"),
+    };
+
+    public string AccessibleName => $"{Title}. {State}";
+}
+
+/// <summary>Sauvegarde de pilotes (dossier daté) : libellé lisible, chemin complet en infobulle.</summary>
+public sealed class BackupRow
+{
+    public BackupRow(string path) => Path = path;
+    public string Path { get; }
+    public string Label => DateTime.TryParseExact(System.IO.Path.GetFileName(Path), "yyyyMMdd-HHmmss",
+        System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var date)
+        ? Loc.F("Sauvegarde du {0:dd/MM/yyyy} à {0:HH:mm}", date)
+        : System.IO.Path.GetFileName(Path);
+    public override string ToString() => Label;
+}
+
 /// <summary>Constat de santé affiché à l'Accueil (titre simple, détail à la demande).</summary>
 public sealed class FindingItem
 {
