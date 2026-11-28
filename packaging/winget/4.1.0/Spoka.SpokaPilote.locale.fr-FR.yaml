@@ -1,0 +1,59 @@
+# Généré par scripts/winget-manifest.ps1 — ne pas modifier à la main.
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.10.0.schema.json
+
+PackageIdentifier: Spoka.SpokaPilote
+PackageVersion: 4.1.0
+PackageLocale: fr-FR
+Publisher: Spoka
+PublisherUrl: https://github.com/Spokator
+PublisherSupportUrl: https://github.com/Spokator/SpokaPilote/issues
+Author: Spokator
+PackageName: SpokaPilote
+PackageUrl: https://spokator.github.io/SpokaPilote/
+License: MIT
+LicenseUrl: https://github.com/Spokator/SpokaPilote/blob/main/LICENSE
+Copyright: Copyright (c) 2026 Spokator
+ShortDescription: Les bons pilotes pour tout le poste et les imprimantes d'entreprise, depuis les sources officielles uniquement.
+Description: |-
+  SpokaPilote inventorie le poste, identifie chaque composant par son identifiant matériel exact et va chercher le pilote
+  chez Microsoft (Windows Update, Microsoft Update Catalog), chez le constructeur du PC (Dell, HP, Lenovo) ou chez NVIDIA.
+  Chaque pilote est vérifié (domaine officiel en HTTPS, empreinte, signature numérique, compatibilité réelle) avant
+  installation, avec point de restauration, sauvegarde et annulation en un clic. SpokaPilote configure aussi les
+  imprimantes et copieurs réseau et remonte l'état du parc dans une console centrale auto-hébergée.
+  Interface graphique et commande « spokapilote » pour les scripts de déploiement.
+Moniker: spokapilote
+Tags:
+- pilotes
+- drivers
+- imprimantes
+- printers
+- windows-update
+- parc-informatique
+- deploiement
+- administration
+ReleaseNotes: |-
+  Interface plus claire, relue page par page avec les yeux d'un nouvel utilisateur.
+
+  - **Le type d'analyse se choisit avant de lancer**, sur l'Accueil : *Analyse rapide (recommandée)* — pilotes manquants
+    et mises à jour recommandées — ou *Analyse complète* — vérifie aussi, dans le Microsoft Update Catalog, s'il existe
+    une version plus récente de chaque pilote de fabricant déjà installé. Le choix est retenu (F5). Après une analyse
+    rapide, l'Accueil dit ce qui a été couvert et propose *Lancer l'analyse complète* en un clic. L'ancienne case cachée
+    dans la page Pilotes disparaît.
+  - **Accueil** : lien direct vers les périphériques en erreur, pilotes bloqués ou retenus signalés.
+  - **Pilotes** : le filtre *Bloqués* explique la différence entre *bloqué* (politique, liste des pilotes à éviter) et
+    *retenu* (diffusion progressive) ; *Simuler* devient *Vérifier sans installer*.
+  - **Périphériques** : *Réparer ce périphérique* ; **Historique** : chaque intervention dit ce qu'elle a fait et si elle
+    peut encore être annulée ; réinstallation d'une sauvegarde confirmée.
+  - **Outils** rangés en *Pour ce poste* / *Pour le parc (avancé)* / *Autres outils* ; **Paramètres** rangés par intention,
+    options avancées repliées.
+  - **F1** ouvre l'aide de la page affichée (nouveau guide [docs/INTERFACE.md](docs/INTERFACE.md)) ; assistant de premier
+    lancement mis à jour ; interface anglaise complète, y compris le bandeau de configuration mise en quarantaine.
+  - Kit de déploiement validé en réel sur Windows 11 Entreprise vierge (machine virtuelle) : installation 4.0.0 avec
+    console, agent et maintenance, mise à jour 4.0.2, désinstallation sans tâche restante ; un compte standard ne peut ni
+    lire le jeton ni écrire dans le dossier de données.
+ReleaseNotesUrl: https://github.com/Spokator/SpokaPilote/releases/tag/v4.1.0
+Documentations:
+- DocumentLabel: Documentation
+  DocumentUrl: https://spokator.github.io/SpokaPilote/documentation.html
+ManifestType: defaultLocale
+ManifestVersion: 1.10.0
