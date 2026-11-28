@@ -331,6 +331,96 @@ lisible de façon fiable, aucune comparaison n'est faite.
 
 ---
 
+## 5. Retour arrière et sauvegardes (4.0.1)
+
+### Ce que l'annulation retire
+
+`spokapilote rollback` retire du magasin les paquets **que SpokaPilote a lui-même ajoutés**, et seulement s'ils sont
+toujours ceux qu'il a installés :
+
+- à l'installation, SpokaPilote enregistre pour chaque paquet le nom publié renvoyé par `pnputil /add-driver`
+  (`oem42.inf`), son INF d'origine, l'éditeur, la classe, la version et le dossier du magasin
+  (`e1d.inf_amd64_0123abcd`, dont le suffixe dépend du contenu du paquet). Un paquet « déjà présent » n'est pas
+  attribué à l'intervention. Pour un installeur constructeur ou Windows Update (aucun nom renvoyé), seuls les paquets
+  apparus **pendant cette étape** sont attribués — jamais ceux qu'ajoutent Windows Update, Intune ou un autre outil
+  entre deux étapes ;
+- à l'annulation, chaque paquet est relu dans le magasin : un nom `oemNN.inf` réattribué depuis à un autre pilote, ou
+  un pilote mis à jour entre-temps, est **laissé en place** et signalé ;
+- `pnputil /delete-driver oemNN.inf /uninstall`, **sans `/force`** : un paquet que Windows ne peut pas libérer
+  (périphérique en service) reste en place, il est signalé et l'intervention reste annulable (seuls les paquets
+  restants seront retentés).
+
+| Commande | Limite |
+|---|---|
+| `spokapilote rollback last`, tâche distante `rollback-last` | intervention de moins de `RollbackLastMaxAgeDays` jours (30 par défaut) ; refusée au-delà, avec l'identifiant à utiliser |
+| `spokapilote rollback <id>`, bouton **Annuler** de l'historique | sans limite d'âge, avec les mêmes vérifications |
+
+Une intervention enregistrée **avant la 4.0.1** (noms `oemNN.inf` seuls) ne s'annule que par son identifiant
+(`rollback <id>`, ou l'interface) : seuls les paquets encore présents dont le fichier `oemNN.inf` a été créé pendant
+l'intervention sont retirés.
+
+### Sauvegardes des pilotes
+
+Avant chaque installation, `pnputil /export-driver *` copie tous les pilotes tiers (1 à 4 Go) dans
+`%ProgramData%\SpokaPilote\Backups\<date>`. Depuis la 4.0.1 :
+
+- **pas de nouvelle copie si le magasin n'a pas changé** depuis la dernière sauvegarde complète (même liste de
+  `oemNN.inf`, mêmes tailles et dates) : la sauvegarde existante est réutilisée ;
+- **rétention** : les `BackupRetentionCount` dernières (3 par défaut), puis les plus anciennes retirées tant que
+  l'ensemble dépasse `BackupMaxTotalSizeMB` (10 240 Mo par défaut, 0 = sans limite). La plus récente et celle de la
+  dernière intervention encore annulable ne sont jamais supprimées. Les sauvegardes du nettoyage du magasin
+  (`driverstore-<date>`, paquets retirés seulement) ne sont pas concernées ;
+- les téléchargements et extractions se font dans un dossier propre à chaque exécution (`Work\<…>`), supprimé à la
+  fin, réussite ou échec ; les dossiers abandonnés (processus interrompu) sont supprimés après 2 jours ou au-delà de
+  10 Go. Les anciens dossiers `Downloads` et `Extracted` (4.0.0) sont supprimés au premier démarrage élevé.
+
+```powershell
+spokapilote config set BackupRetentionCount 5
+spokapilote config set BackupMaxTotalSizeMB 20480
+spokapilote config set RollbackLastMaxAgeDays 14
+```
+
+---
+
+## 6. Dossier de données et droits (4.0.1)
+
+Les tâches planifiées et l'agent s'exécutent en **SYSTEM** : ce qu'ils lisent et exécutent dans
+`%ProgramData%\SpokaPilote` doit être hors de portée des utilisateurs du poste (postes partagés, RDS). Jusqu'à la
+4.0.0, le dossier héritait des droits par défaut de `%ProgramData%` (les utilisateurs pouvaient y créer des fichiers :
+DLL déposée à côté d'un installeur, fichier téléchargé remplacé entre sa vérification et son exécution,
+`settings.json` créé d'avance, catalogue en cache daté dans le futur).
+
+Disposition appliquée par l'installeur (`spokapilote secure-data`) puis vérifiée à **chaque démarrage élevé** (contrôle
+rapide ; reprise complète si les droits ont été modifiés) :
+
+```
+%ProgramData%\SpokaPilote          propriétaire Administrateurs, héritage de ProgramData coupé
+  SYSTEM et Administrateurs : contrôle total ; Utilisateurs : lecture et exécution ; aucun CREATOR OWNER
+  settings.json  Logs\  History\  Backups\  Reports\       hérités (lisibles par l'interface non élevée)
+  server-token.dat                                     jeton de la console : SYSTEM et Administrateurs seulement
+  Cache\  Work\  Mount\  Quarantaine\                     SYSTEM et Administrateurs seulement
+```
+
+- **Éléments suspects** : tout ce qui n'appartient ni à SYSTEM, ni aux Administrateurs, ni à TrustedInstaller est repris
+  puis supprimé (cache, téléchargements) ou déplacé dans `Quarantaine\<date>` (configuration, historique, sauvegardes,
+  journaux) — jamais utilisé. Les jonctions et liens symboliques sont retirés sans être suivis. Avant tout usage, une
+  exécution élevée refuse un `settings.json`, une entrée d'historique, une sauvegarde ou un fichier en cache qui
+  n'appartient pas aux administrateurs, et un fichier en cache daté dans le futur est périmé.
+- **Jeton de la console** : hors de `settings.json`, dans `server-token.dat` (DPAPI « machine » + droits réservés aux
+  administrateurs). Un `serverToken` en clair dans `settings.json` (4.0.0, fichier déployé par GPO / Intune, kit
+  `deploy\Install-SpokaPilote.ps1`) est déplacé et retiré du fichier **à chaque démarrage élevé**. Le jeton n'est jamais
+  affiché (`spokapilote config` : « (défini, …) » ; Paramètres : champ masqué).
+- **Interface ou console non élevée** : elle lit la configuration commune mais écrit ses journaux, rapports, cache et
+  dossiers de travail dans `%LocalAppData%\SpokaPilote` ; elle ne lit pas le jeton (l'envoi à la console est fait par
+  les exécutions administrateur et les tâches SYSTEM). Modifier les paramètres demande l'élévation.
+- **Fichiers déposés à la main** : déposez `settings.json` depuis un compte administrateur **élevé**, un script SYSTEM
+  (Intune, GPO) ou `spokapilote config set`. Si la stratégie « Objets système : propriétaire par défaut des objets
+  créés par les membres du groupe Administrateurs » est réglée sur « Créateur de l'objet », donnez le fichier aux
+  administrateurs : `icacls settings.json /setowner *S-1-5-32-544`.
+- `spokapilote secure-data --force` refait la reprise complète et en affiche le détail.
+
+---
+
 ## Pour l'intégration (interface, scripts)
 
 API du cœur (`SpokaPilote.Core`), sans dépendance à l'interface :

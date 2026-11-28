@@ -75,7 +75,7 @@ spokapilote driverpack download D:\Pilotes --model "Latitude 7420" --os win11
    reste fait à l'installation) ;
 5. rangement dans `D:\Pilotes\<Fabricant>\<Modèle>\<WinXX-arch>\` avec un fichier `spokapilote-pack.json`
    (origine, version, date, empreintes, signataire, nombre d'INF signés) ; le fichier téléchargé est supprimé
-   (`--keep-download` pour le garder).
+   (`--keep-download` pour le garder : il est alors copié à côté du pack, dans le dossier du modèle du dépôt).
 
 Relancer la commande ne retélécharge rien si le même pack est déjà dans le dépôt (`--force` pour forcer).
 Quand le constructeur publie une nouvelle version, elle remplace l'ancienne dans le même dossier.

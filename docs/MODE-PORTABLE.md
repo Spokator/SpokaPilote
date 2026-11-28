@@ -31,10 +31,11 @@ E:\SpokaPilote\
   Data\                        créé au premier lancement
     settings.json              configuration (partagée par tous les postes)
     ui.json                    préférences d'interface (langue, assistant de bienvenue)
-    Cache\  Downloads\  Extracted\  Reports\  Mises-a-jour\
+    Cache\  Work\  Reports\  Mises-a-jour\
     Postes\
       PC-COMPTA_3f2a9c1b\      un dossier par poste
         Logs\  History\  Backups\
+        policy-cache.json  rollout-decisions.json   politique et décisions de diffusion de CE poste (4.0.1)
 ```
 
 > Une version installée et une copie portable peuvent coexister sur le même PC : elles ne partagent rien.
@@ -77,9 +78,15 @@ jamais leur historique.
 
 | Propre à chaque poste (`Postes\<POSTE>`) | Partagé par tous les postes (`Data`) |
 |---|---|
-| journaux (`Logs`), historique des interventions (`History`), sauvegardes de pilotes (`Backups`) | configuration, cache des catalogues, téléchargements, pilotes extraits, rapports (nommés `<POSTE>-<date>.json`) |
+| journaux (`Logs`), historique des interventions (`History`), sauvegardes de pilotes (`Backups`), dernière politique de pilotes et dernières décisions de diffusion reçues de la console (`policy-cache.json`, `rollout-decisions.json`) | configuration, cache des catalogues, rapports (nommés `<POSTE>-<date>.json`) |
 
-Les téléchargements partagés évitent de récupérer deux fois le même pilote pour un parc de modèles identiques.
+**Politique et anneaux de diffusion (4.0.1)** : chaque poste garde sa propre copie hors ligne de la politique et des
+décisions de diffusion. Jusqu'à la 4.0.0, ces caches étaient à la racine de `Data`, communs à tous les postes : un poste
+de l'anneau pilote y laissait « autorisé », et un poste de l'anneau général hors ligne le réutilisait. Les anciens
+fichiers partagés sont supprimés au premier lancement de la 4.0.1 (rien n'est recopié vers un poste).
+
+**Téléchargements** : chaque exécution télécharge et extrait dans son propre dossier `Work\<…>`, supprimé à la fin
+(4.0.1) ; un fichier n'est plus réutilisé d'une exécution à l'autre.
 
 ---
 
@@ -125,6 +132,15 @@ Uniquement ce qu'exige l'installation des pilotes :
 Rien dans `%ProgramData%\SpokaPilote`, rien dans `%LocalAppData%\SpokaPilote`, aucune tâche planifiée, aucune
 modification du PATH.
 
+### Une clé de confiance
+
+Une clé FAT32/exFAT n'a pas de droits d'accès : quiconque la manipule peut modifier `Data\settings.json` (éditeurs
+approuvés, console), l'historique ou le dépôt, et ce que SpokaPilote exécute ensuite en administrateur sur le poste.
+Le mode portable est fait pour **la clé personnelle du technicien**, qu'il garde sur lui : ne laissez pas une clé
+SpokaPilote en libre-service, ne la branchez pas sur un poste dont vous ne maîtrisez pas les comptes, et chiffrez-la
+(BitLocker To Go) si elle contient un `ServerToken`. Pour la même raison, en mode portable le jeton de la console reste
+dans `Data\settings.json` (la protection du dossier de données de la version installée ne s'applique pas à la clé).
+
 ---
 
 ## 6. Retour arrière
@@ -134,13 +150,15 @@ L'historique des interventions est sur la clé, dans le dossier du poste. Pour a
 
 ```
 spokapilote history
-spokapilote rollback last
+spokapilote rollback last           intervention de moins de 30 jours (RollbackLastMaxAgeDays)
+spokapilote rollback <id>           intervention désignée explicitement (plus ancienne, ou enregistrée avant la 4.0.1)
 spokapilote restore                 réinstalle une sauvegarde de pilotes (Data\Postes\<POSTE>\Backups)
 ```
 
 L'annulation retire du magasin les paquets ajoutés par l'intervention (`oem42.inf`…). Ces noms sont propres à
 chaque poste : SpokaPilote **refuse d'annuler l'intervention d'un autre poste** (identifiant MachineGuid enregistré
-avec l'intervention, ou à défaut le nom du poste).
+avec l'intervention, ou à défaut le nom du poste). Depuis la 4.0.1, seuls les paquets que SpokaPilote a lui-même
+ajoutés, et qui n'ont pas changé depuis, sont retirés (voir [OUTILS-TECHNICIEN.md, § 5](OUTILS-TECHNICIEN.md#5-retour-arrière-et-sauvegardes-401)).
 
 Sans la clé, le point de restauration Windows créé avant l'intervention reste disponible
 (`rstrui.exe`).
