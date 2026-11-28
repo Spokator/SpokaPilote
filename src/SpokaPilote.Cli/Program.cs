@@ -578,9 +578,18 @@ internal static partial class Program
         WriteLine($"Nouvelle version disponible : {update.Version.ToString(3)} ({update.ReleaseUrl})", ConsoleColor.Cyan);
         if (AppPaths.IsPortable) return await PortableUpdateAsync(a, update, ct);
         if (!a.Flag("yes") && !Confirm("Installer la mise à jour ?")) return ExitOk;
-        var file = await UpdateChecker.DownloadAsync(update, null, ct);
-        WriteLine("Installeur téléchargé et vérifié (taille + SHA-256). Installation silencieuse lancée.", ConsoleColor.Green);
-        UpdateChecker.LaunchInstaller(file, relaunch: false);
+        string file;
+        try
+        {
+            file = await UpdateChecker.DownloadAsync(update, null, ct);
+            UpdateChecker.LaunchInstaller(update, file, relaunch: false);
+        }
+        catch (UpdateIntegrityException ex)
+        {
+            WriteLine(ex.Message, ConsoleColor.Red);
+            return ExitError;
+        }
+        WriteLine("Installeur téléchargé et vérifié (taille + SHA-256 publiés par GitHub, signature si présente). Installation silencieuse lancée.", ConsoleColor.Green);
         return ExitOk;
     }
 

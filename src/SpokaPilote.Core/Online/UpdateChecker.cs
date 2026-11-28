@@ -3,6 +3,7 @@ using System.Reflection;
 using System.Security.Cryptography;
 using System.Text.Json;
 using SpokaPilote.Core.Infrastructure;
+using SpokaPilote.Core.Install;
 
 namespace SpokaPilote.Core.Online;
 
@@ -145,24 +146,61 @@ public static class UpdateChecker
 
     internal static string? CheckIntegrity(long expectedSize, string? expectedSha256, long length, string sha256Hex)
     {
+        if (expectedSha256 is null)
+            return "GitHub n'annonce pas l'empreinte SHA-256 du fichier";
         if (expectedSize > 0 && length != expectedSize)
             return $"fichier incomplet ({length:N0} octets reçus sur {expectedSize:N0})";
-        if (expectedSha256 != null && !string.Equals(expectedSha256, sha256Hex, StringComparison.OrdinalIgnoreCase))
+        if (!string.Equals(expectedSha256, sha256Hex, StringComparison.OrdinalIgnoreCase))
             return "l'empreinte du fichier ne correspond pas à celle publiée sur GitHub";
         return null;
     }
 
     /// <summary>
-    /// Télécharge l'installeur dans un « .part », contrôle taille et SHA-256, puis seulement lui donne son nom
-    /// définitif. En cas d'échec, le fichier partiel est supprimé : un installeur abîmé ou altéré n'est jamais lancé.
+    /// Hôtes EXACTS d'un téléchargement de Release : github.com (adresse publiée dans la Release), puis les serveurs de
+    /// fichiers vers lesquels GitHub redirige. Chaque redirection est vérifiée.
     /// </summary>
-    public static Task<string> DownloadAsync(UpdateInfo update, IProgress<double>? progress, CancellationToken ct = default)
+    internal static readonly string[] ReleaseDownloadHosts = ["github.com", "objects.githubusercontent.com", "release-assets.githubusercontent.com"];
+
+    internal static bool IsReleaseDownloadHost(Uri uri) =>
+        uri.IsAbsoluteUri && uri.Scheme == Uri.UriSchemeHttps && uri.IsDefaultPort && string.IsNullOrEmpty(uri.UserInfo) &&
+        ReleaseDownloadHosts.Contains(uri.Host, StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Adresse d'un fichier de Release du produit en vigueur : https://github.com/&lt;dépôt&gt;/releases/download/...</summary>
+    internal static bool IsCurrentProductReleaseUrl(Uri uri) =>
+        IsReleaseDownloadHost(uri) && uri.Host.Equals("github.com", StringComparison.OrdinalIgnoreCase) &&
+        uri.AbsolutePath.StartsWith($"/{CurrentRepository}/releases/download/", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Client sans redirection automatique : chaque saut est contrôlé (<see cref="ReleaseDownloadHosts"/>).</summary>
+    private static readonly Lazy<HttpClient> DownloadClient = new(() =>
+    {
+        var handler = new System.Net.Http.SocketsHttpHandler
+        {
+            AllowAutoRedirect = false,
+            UseProxy = true,
+            DefaultProxyCredentials = System.Net.CredentialCache.DefaultCredentials,
+            PooledConnectionLifetime = TimeSpan.FromMinutes(5),
+        };
+        var client = new HttpClient(handler) { Timeout = Timeout.InfiniteTimeSpan };
+        client.DefaultRequestHeaders.UserAgent.Add(new System.Net.Http.Headers.ProductInfoHeaderValue(AppIdentity.Current.ProductName, CurrentVersion.ToString(3)));
+        return client;
+    });
+
+    /// <summary>
+    /// Télécharge l'installeur dans un « .part », contrôle taille et SHA-256 (empreinte publiée par GitHub OBLIGATOIRE),
+    /// puis la signature Authenticode s'il est signé (<see cref="CheckInstallerSignature(string)"/>), et seulement ensuite
+    /// lui donne son nom définitif. En cas d'échec, le fichier partiel est supprimé : un installeur abîmé, altéré ou sans
+    /// empreinte publiée n'est jamais lancé.
+    /// </summary>
+    public static Task<string> DownloadAsync(UpdateInfo update, IProgress<double>? progress, CancellationToken ct = default) =>
+        DownloadAsync(update, progress, DownloadClient.Value, ct);
+
+    internal static Task<string> DownloadAsync(UpdateInfo update, IProgress<double>? progress, HttpClient client, CancellationToken ct)
     {
         if (AppPaths.IsPortable)
             throw new InvalidOperationException("Mode portable : l'installeur n'est pas téléchargé (utilisez l'archive portable).");
         var identity = AppIdentity.Current;
         var target = Path.Combine(Path.GetTempPath(), identity.DataFolderName, $"{identity.ProductName}-Setup-{update.Version}.exe");
-        return DownloadVerifiedAsync(update.DownloadUrl, update.Size, update.Sha256, target, progress, ct);
+        return DownloadVerifiedAsync(update.DownloadUrl, update.Size, update.Sha256, target, progress, client, ct, update.ReleaseUrl);
     }
 
     /// <summary>
@@ -177,24 +215,26 @@ public static class UpdateChecker
         if (update.PortableSha256 is null)
             throw new UpdateIntegrityException($"GitHub n'annonce pas l'empreinte SHA-256 de l'archive portable : téléchargez-la depuis {update.ReleaseUrl}.");
         var target = Path.Combine(folder, PortableAssetName(update.Version.ToString(3), HostArchitecture));
-        return DownloadVerifiedAsync(update.PortableUrl, update.PortableSize, update.PortableSha256, target, progress, ct);
+        return DownloadVerifiedAsync(update.PortableUrl, update.PortableSize, update.PortableSha256, target, progress, DownloadClient.Value, ct, update.ReleaseUrl);
     }
 
-    private static async Task<string> DownloadVerifiedAsync(string url, long expectedSize, string? expectedSha256, string target,
-        IProgress<double>? progress, CancellationToken ct)
+    internal static async Task<string> DownloadVerifiedAsync(string url, long expectedSize, string? expectedSha256, string target,
+        IProgress<double>? progress, HttpClient client, CancellationToken ct, string releaseUrl)
     {
         var uri = new Uri(url);
-        // Release GitHub du produit en vigueur uniquement (« https://github.com/<dépôt>/releases/download/... ») : un
-        // produit construit sur ce moteur ne télécharge jamais l'installeur d'un autre.
-        if (uri.Scheme != Uri.UriSchemeHttps || !uri.Host.EndsWith("github.com", StringComparison.OrdinalIgnoreCase) ||
-            !uri.AbsolutePath.StartsWith($"/{CurrentRepository}/releases/download/", StringComparison.OrdinalIgnoreCase))
+        // Release GitHub du produit en vigueur uniquement (« https://github.com/<dépôt>/releases/download/... », hôte
+        // exact) : un produit construit sur ce moteur ne télécharge jamais l'installeur d'un autre.
+        if (!IsCurrentProductReleaseUrl(uri))
             throw new UpdateIntegrityException($"Adresse de mise à jour inattendue : seule une Release GitHub de {AppIdentity.Current.ProductName} est acceptée.");
+        // Sans empreinte publiée, rien ne permet de vérifier le fichier : il n'est même pas téléchargé.
+        if (expectedSha256 is null)
+            throw new UpdateIntegrityException($"GitHub n'annonce pas l'empreinte SHA-256 de ce fichier : mise à jour refusée. Téléchargez-la depuis {releaseUrl}.");
 
         var part = target + ".part";
         Directory.CreateDirectory(Path.GetDirectoryName(target)!);
         try
         {
-            using var response = await Http.Client.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
+            using var response = await GetFollowingReleaseRedirectsAsync(client, uri, ct).ConfigureAwait(false);
             response.EnsureSuccessStatusCode();
             var total = response.Content.Headers.ContentLength ?? expectedSize;
             using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
@@ -212,8 +252,10 @@ public static class UpdateChecker
                     if (total > 0) progress?.Report(done * 100.0 / total);
                 }
             }
+            var isInstaller = !target.EndsWith(".zip", StringComparison.OrdinalIgnoreCase);
             var problem = CheckIntegrity(expectedSize, expectedSha256, done, Convert.ToHexString(hash.GetHashAndReset()));
-            if (problem != null) throw new UpdateIntegrityException((target.EndsWith(".zip", StringComparison.OrdinalIgnoreCase) ? "Archive portable refusée : " : "Installeur refusé : ") + problem + ".");
+            if (problem is null && isInstaller) problem = CheckInstallerSignature(part);
+            if (problem != null) throw new UpdateIntegrityException((isInstaller ? "Installeur refusé : " : "Archive portable refusée : ") + problem + ".");
             File.Move(part, target, true);
             return target;
         }
@@ -225,13 +267,82 @@ public static class UpdateChecker
     }
 
     /// <summary>
-    /// Lance l'installeur en mode silencieux (il ferme SpokaPilote et met à jour). Avec <paramref name="relaunch"/>,
-    /// l'installeur relance l'interface à la fin (paramètre /RELAUNCH=1 interprété par SpokaPilote.iss).
+    /// GET qui suit au plus 5 redirections, chacune vers un hôte exact de <see cref="ReleaseDownloadHosts"/> en HTTPS ;
+    /// toute autre destination est refusée.
     /// </summary>
-    public static void LaunchInstaller(string installerPath, bool relaunch)
+    private static async Task<HttpResponseMessage> GetFollowingReleaseRedirectsAsync(HttpClient client, Uri uri, CancellationToken ct)
+    {
+        var current = uri;
+        for (var hop = 0; ; hop++)
+        {
+            var response = await client.GetAsync(current, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
+            if ((int)response.StatusCode is < 300 or >= 400 || response.Headers.Location is not { } location) return response;
+            response.Dispose();
+            var next = location.IsAbsoluteUri ? location : new Uri(current, location);
+            if (hop >= 5) throw new UpdateIntegrityException("Mise à jour refusée : trop de redirections.");
+            if (!IsReleaseDownloadHost(next))
+                throw new UpdateIntegrityException($"Mise à jour refusée : redirection vers {next.Host}, hors des serveurs de fichiers de GitHub.");
+            current = next;
+        }
+    }
+
+    /// <summary>Signataire de l'exécutable en cours s'il est signé (signature valide) : éditeur attendu des mises à jour.</summary>
+    private static readonly Lazy<string?> RunningPublisher = new(() =>
+    {
+        try
+        {
+            if (Environment.ProcessPath is not { } exe) return null;
+            var sig = SignatureVerifier.Verify(exe);
+            return sig.IsValid ? sig.Signer : null;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+    });
+
+    /// <summary>Contrôle Authenticode de l'installeur téléchargé ; null = accepté, sinon la raison du refus.</summary>
+    internal static string? CheckInstallerSignature(string path)
+    {
+        var signed = SignatureVerifier.GetSigner(path) is not null;
+        return CheckInstallerSignature(signed ? SignatureVerifier.Verify(path) : null, RunningPublisher.Value);
+    }
+
+    /// <summary>
+    /// Règle de signature de l'installeur (<paramref name="installer"/> null = non signé) :
+    /// <list type="bullet">
+    /// <item>signé : la signature doit être valide et, si la version en cours est elle-même signée
+    ///   (<paramref name="expectedPublisher"/>), du MÊME éditeur ;</item>
+    /// <item>non signé (Releases actuelles) : accepté sur la seule empreinte SHA-256 publiée par GitHub, sauf si la
+    ///   version en cours est signée (une mise à jour ne fait jamais perdre la signature).</item>
+    /// </list>
+    /// </summary>
+    internal static string? CheckInstallerSignature(SignatureResult? installer, string? expectedPublisher)
+    {
+        if (installer is null)
+            return expectedPublisher is null ? null : $"installeur non signé, alors que la version en cours est signée par {expectedPublisher}";
+        if (!installer.IsValid) return $"signature de l'installeur invalide ({installer.Detail})";
+        if (expectedPublisher is not null && !TrustPolicy.SamePublisher(installer.Signer, expectedPublisher))
+            return $"installeur signé par {installer.Signer}, éditeur attendu : {expectedPublisher}";
+        return null;
+    }
+
+    /// <summary>
+    /// Lance l'installeur en mode silencieux (il ferme SpokaPilote et met à jour). Avec <paramref name="relaunch"/>,
+    /// l'installeur relance l'interface à la fin (paramètre /RELAUNCH=1 interprété par SpokaPilote.iss). Juste avant le
+    /// lancement, le fichier est ouvert en lecture seule SANS partage en écriture ni suppression (il ne peut plus être
+    /// remplacé), puis son SHA-256 et sa signature sont revérifiés : rien n'est lancé sans empreinte publiée concordante.
+    /// </summary>
+    public static void LaunchInstaller(UpdateInfo update, string installerPath, bool relaunch)
     {
         if (AppPaths.IsPortable)
             throw new InvalidOperationException("Mode portable : l'installeur n'est jamais lancé depuis une copie portable.");
+        if (update.Sha256 is null)
+            throw new UpdateIntegrityException($"GitHub n'annonce pas l'empreinte SHA-256 de l'installeur : il n'est pas lancé. Voir {update.ReleaseUrl}.");
+        using var locked = new FileStream(installerPath, FileMode.Open, FileAccess.Read, FileShare.Read);
+        var problem = CheckIntegrity(update.Size, update.Sha256, locked.Length, Convert.ToHexString(SHA256.HashData(locked)))
+                      ?? CheckInstallerSignature(installerPath);
+        if (problem is not null) throw new UpdateIntegrityException($"Installeur refusé au lancement : {problem}.");
         var args = relaunch
             ? "/SILENT /SUPPRESSMSGBOXES /NORESTART /RELAUNCH=1"
             : "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART";
