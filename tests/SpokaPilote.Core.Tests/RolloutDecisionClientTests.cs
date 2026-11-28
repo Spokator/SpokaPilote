@@ -6,6 +6,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using SpokaPilote.Core.Engine;
 using SpokaPilote.Core.Infrastructure;
+using SpokaPilote.Core.Install;
 using SpokaPilote.Core.Models;
 using SpokaPilote.Core.Policy;
 using Xunit.Abstractions;
@@ -299,6 +300,13 @@ public sealed class RolloutDecisionClientTests : IDisposable
         var noId = new DriverCandidate { Id = "x", Source = DriverSourceKind.Dell, Title = "Pilote", Manufacturer = "Dell", Date = new DateTime(2024, 5, 17) };
         Assert.Equal("dell:date=2024-05-17;fournisseur=dell", DriverIdentity.ItemKey(noId));
         Assert.NotEqual(RolloutDecisions.Key(wu), RolloutDecisions.Key(For(Printer, "HP - Printer", null, DriverSourceKind.WindowsUpdate, "autre")));
+        // Rapport envoyé à la console : identité des propositions sans version (pas des liens informatifs, jamais installés).
+        var link = new DriverCandidate { Id = "intel", Source = DriverSourceKind.Intel, Title = "Pilote graphique Intel", IsInformational = true, InfoUrl = "https://www.intel.com" };
+        var report = ScanReport.From(new ScanResult { System = new SystemInfo(), Devices = [], Candidates = [wu, link] },
+            [new InstallOutcome(wu, InstallStatus.Failed, "0x80240022")]);
+        Assert.Equal("update:6f1c2a8e-1d2b-4c3d-9e4f-0123456789ab", report.Candidates[0].ItemId);
+        Assert.Null(report.Candidates[1].ItemId);
+        Assert.Equal(report.Candidates[0].ItemId, report.Installation![0].ItemId);
 
         Assert.Equal(@"PCI\VEN_8086", DriverIdentity.HardwareVendor(@"PCI\VEN_8086&DEV_9A49&SUBSYS_0A1F1028&REV_01"));
         Assert.Equal(@"HDAUDIO\VEN_10EC", DriverIdentity.HardwareVendor(@"HDAUDIO\FUNC_01&VEN_10EC&DEV_0257&SUBSYS_10280A1F"));

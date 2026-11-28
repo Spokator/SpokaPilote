@@ -137,7 +137,7 @@ public sealed class ScanReport
             DownloadUrl = c.DownloadUrl,
             InfoUrl = c.InfoUrl,
             BlockedReason = c.BlockedReason,
-            ItemId = DriverIdentity.ItemKey(c),
+            ItemId = DriverIdentity.IsTrackable(c) ? DriverIdentity.ItemKey(c) : null, // lien informatif : jamais installé, pas suivi
         }).ToList(),
         Policy = scan.Policy is not { } p ? null : new ReportPolicy
         {
